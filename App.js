@@ -30,9 +30,11 @@ import {
 import {
   pb,
   restoreAuth,
-  registerPatientWithEmail,
+  ensureRoleProfile,
+  signUpWithEmail,
   loginWithEmail,
-  logout,
+  signInWithOAuth,
+  logoutUser,
 } from "./pocketbase";
 
 // --- THEME DEFINITIONS ---
@@ -2687,7 +2689,7 @@ const ThemeScreen = ({ onBack }) => {
   );
 };
 
-const PatientProfileScreen = () => {
+const PatientProfileScreen = ({ currentUser, patientProfile, onLogout }) => {
   const [showTheme, setShowTheme] = useState(false);
   const [profileImage, setProfileImage] = useState(null);
   const { theme, themeKey } = useTheme();
@@ -2756,7 +2758,7 @@ const PatientProfileScreen = () => {
               color: theme.textPrimary,
             }}
           >
-            Profile Name
+            {patientProfile?.full_name || currentUser?.name || "Profile Name"}
           </Text>
           <Text
             style={{
@@ -2765,7 +2767,7 @@ const PatientProfileScreen = () => {
               marginTop: RFValue(4),
             }}
           >
-            user@example.com
+            {currentUser?.email || "user@example.com"}
           </Text>
           <Text
             style={{
@@ -3010,6 +3012,7 @@ const PatientProfileScreen = () => {
 
           {/* Logout */}
           <TouchableOpacity
+            onPress={onLogout}
             style={{
               backgroundColor: "#FFFFFF",
               borderRadius: RFValue(18),
@@ -5435,6 +5438,13 @@ const AuthScreen = ({ onLogin }) => {
   const [role, setRole] = useState("patient");
   const [mobileNumber, setMobileNumber] = useState("");
 
+  const [authMode, setAuthMode] = useState("signup"); // signup | login
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
+
   useEffect(() => {
     const handleBack = () => {
       if (step === "OTP") {
@@ -5468,19 +5478,107 @@ const AuthScreen = ({ onLogin }) => {
     return () => subscription.remove();
   }, [step]);
 
-  if (step === "SPLASH") return <SplashScreen onNext={() => setStep("LANG")} />;
-  if (step === "LANG")
+  const handlePocketBaseAuth = async () => {
+    try {
+      setAuthLoading(true);
+      setAuthError("");
+
+      let result;
+
+      if (authMode === "signup") {
+        if (!name.trim()) {
+          throw new Error("Please enter your name");
+        }
+
+        result = await signUpWithEmail({
+          name: name.trim(),
+          email: email.trim(),
+          password: password.trim(),
+          role,
+        });
+      } else {
+        result = await loginWithEmail({
+          email: email.trim(),
+          password: password.trim(),
+        });
+      }
+
+      onLogin({
+        user: result.user,
+        profile: result.profile,
+      });
+    } catch (error) {
+      console.log("Auth error:", error);
+      setAuthError(error?.message || "Authentication failed");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    try {
+      setAuthLoading(true);
+      setAuthError("");
+
+      const result = await signInWithOAuth({
+        providerName: "google",
+        selectedRole: role,
+      });
+
+      onLogin({
+        user: result.user,
+        profile: result.profile,
+      });
+    } catch (error) {
+      console.log("Google auth error:", error);
+      setAuthError(error?.message || "Google authentication failed");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleAppleAuth = async () => {
+    try {
+      setAuthLoading(true);
+      setAuthError("");
+
+      const result = await signInWithOAuth({
+        providerName: "apple",
+        selectedRole: role,
+      });
+
+      onLogin({
+        user: result.user,
+        profile: result.profile,
+      });
+    } catch (error) {
+      console.log("Apple auth error:", error);
+      setAuthError(error?.message || "Apple authentication failed");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  if (step === "SPLASH") {
+    return <SplashScreen onNext={() => setStep("LANG")} />;
+  }
+
+  if (step === "LANG") {
     return (
       <LanguageScreen onNext={() => setStep("CAROUSEL")} onBack={() => {}} />
     );
-  if (step === "CAROUSEL")
+  }
+
+  if (step === "CAROUSEL") {
     return (
       <OnboardingCarousel
         onNext={() => setStep("ROLE")}
         onBack={() => setStep("LANG")}
       />
     );
-  if (step === "ROLE")
+  }
+
+  if (step === "ROLE") {
     return (
       <RoleScreen
         onNext={(r) => {
@@ -5490,45 +5588,212 @@ const AuthScreen = ({ onLogin }) => {
         onBack={() => setStep("CAROUSEL")}
       />
     );
+  }
+
   if (step === "REG") {
-    if (role === "doctor")
-      return (
-        <DoctorRegisterScreen
-          onFinish={(num) => {
-            setMobileNumber(num);
-            setStep("OTP");
-          }}
-          onBack={() => setStep("ROLE")}
-        />
-      );
-    if (role === "pharmacy")
-      return (
-        <PharmacyRegisterScreen
-          onFinish={(num) => {
-            setMobileNumber(num);
-            setStep("OTP");
-          }}
-          onBack={() => setStep("ROLE")}
-        />
-      );
     return (
-      <RegisterScreen
-        onFinish={(num) => {
-          setMobileNumber(num);
-          setStep("OTP");
-        }}
-        onBack={() => setStep("ROLE")}
-      />
+      <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1,
+            padding: RFValue(24),
+            justifyContent: "center",
+          }}
+        >
+          <View style={{ marginBottom: RFValue(24) }}>
+            <TouchableOpacity
+              onPress={() => setStep("ROLE")}
+              style={{ marginBottom: RFValue(20) }}
+            >
+              <Ionicons name="arrow-back" size={RFValue(24)} color="#1E1B4B" />
+            </TouchableOpacity>
+
+            <Text
+              style={{
+                fontSize: RFValue(28),
+                fontWeight: "800",
+                color: "#1E1B4B",
+                marginBottom: RFValue(8),
+              }}
+            >
+              {authMode === "signup" ? "Create account" : "Login"}
+            </Text>
+
+            <Text style={{ fontSize: RFValue(14), color: "#6B7280" }}>
+              Role selected: {role}
+            </Text>
+          </View>
+
+          {authMode === "signup" && (
+            <TextInput
+              placeholder="Full name"
+              value={name}
+              onChangeText={setName}
+              style={{
+                backgroundColor: "#FFFFFF",
+                borderRadius: RFValue(14),
+                paddingHorizontal: RFValue(16),
+                paddingVertical: RFValue(16),
+                marginBottom: RFValue(14),
+                borderWidth: 1,
+                borderColor: "#E5E7EB",
+                fontSize: RFValue(15),
+                color: "#1E1B4B",
+              }}
+              placeholderTextColor="#9CA3AF"
+            />
+          )}
+
+          <TextInput
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: RFValue(14),
+              paddingHorizontal: RFValue(16),
+              paddingVertical: RFValue(16),
+              marginBottom: RFValue(14),
+              borderWidth: 1,
+              borderColor: "#E5E7EB",
+              fontSize: RFValue(15),
+              color: "#1E1B4B",
+            }}
+            placeholderTextColor="#9CA3AF"
+          />
+
+          <TextInput
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: RFValue(14),
+              paddingHorizontal: RFValue(16),
+              paddingVertical: RFValue(16),
+              marginBottom: RFValue(14),
+              borderWidth: 1,
+              borderColor: "#E5E7EB",
+              fontSize: RFValue(15),
+              color: "#1E1B4B",
+            }}
+            placeholderTextColor="#9CA3AF"
+          />
+
+          {!!authError && (
+            <Text
+              style={{
+                color: "#DC2626",
+                marginBottom: RFValue(14),
+                fontSize: RFValue(14),
+              }}
+            >
+              {authError}
+            </Text>
+          )}
+
+          <TouchableOpacity
+            onPress={handlePocketBaseAuth}
+            disabled={authLoading}
+            style={{
+              backgroundColor: "#4338CA",
+              borderRadius: RFValue(16),
+              paddingVertical: RFValue(16),
+              alignItems: "center",
+              marginTop: RFValue(8),
+            }}
+          >
+            <Text
+              style={{
+                color: "#FFFFFF",
+                fontWeight: "700",
+                fontSize: RFValue(16),
+              }}
+            >
+              {authLoading
+                ? "Please wait..."
+                : authMode === "signup"
+                  ? "Create account"
+                  : "Login"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={handleGoogleAuth}
+            disabled={authLoading}
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: RFValue(16),
+              paddingVertical: RFValue(16),
+              alignItems: "center",
+              marginTop: RFValue(12),
+              borderWidth: 1,
+              borderColor: "#E5E7EB",
+              opacity: authLoading ? 0.7 : 1,
+            }}
+          >
+            <Text
+              style={{
+                color: "#1E1B4B",
+                fontWeight: "700",
+                fontSize: RFValue(15),
+              }}
+            >
+              Continue with Google
+            </Text>
+          </TouchableOpacity>
+
+          {Platform.OS === "ios" && (
+            <TouchableOpacity
+              onPress={handleAppleAuth}
+              disabled={authLoading}
+              style={{
+                backgroundColor: "#000000",
+                borderRadius: RFValue(16),
+                paddingVertical: RFValue(16),
+                alignItems: "center",
+                marginTop: RFValue(12),
+                opacity: authLoading ? 0.7 : 1,
+              }}
+            >
+              <Text
+                style={{
+                  color: "#FFFFFF",
+                  fontWeight: "700",
+                  fontSize: RFValue(15),
+                }}
+              >
+                Continue with Apple
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            onPress={() => {
+              setAuthMode(authMode === "signup" ? "login" : "signup");
+              setAuthError("");
+            }}
+            style={{ alignItems: "center", marginTop: RFValue(18) }}
+          >
+            <Text
+              style={{
+                color: "#4338CA",
+                fontWeight: "700",
+                fontSize: RFValue(14),
+              }}
+            >
+              {authMode === "signup"
+                ? "Already have an account? Login"
+                : "No account? Create one"}
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
     );
   }
-  if (step === "OTP")
-    return (
-      <OTPScreen
-        mobileNumber={mobileNumber}
-        onVerify={() => onLogin(role)}
-        onBack={() => setStep("REG")}
-      />
-    );
 
   return null;
 };
@@ -6436,7 +6701,7 @@ const DoctorEmergencyScreen = ({ navigation }) => {
   );
 };
 
-const DoctorProfileScreen = () => {
+const DoctorProfileScreen = ({ onLogout }) => {
   const [showTheme, setShowTheme] = useState(false);
 
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
@@ -6752,6 +7017,7 @@ const DoctorProfileScreen = () => {
 
           {/* Logout */}
           <TouchableOpacity
+            onPress={onLogout}
             style={{
               backgroundColor: "#FFFFFF",
               borderRadius: RFValue(18),
@@ -8922,7 +9188,7 @@ const CustomTabNavigator = ({ routes, activeColor }) => {
 };
 
 // --- PHARMACY DASHBOARD COMPONENTS ---
-const PharmacyProfileScreen = () => {
+const PharmacyProfileScreen = ({ onLogout }) => {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -8988,6 +9254,7 @@ const PharmacyProfileScreen = () => {
             </View>
           </View>
           <TouchableOpacity
+            onPress={onLogout}
             style={{
               flexDirection: "row",
               alignItems: "center",
@@ -10554,24 +10821,20 @@ export default function App() {
           setCurrentUser(user);
           setUserRole(user.role || "patient");
 
-          if ((user.role || "patient") === "patient") {
-            try {
-              const profile = await pb
-                .collection("patient_profile")
-                .getFirstListItem(`user="${user.id}"`);
-              setPatientProfile(profile);
-            } catch (e) {
-              setPatientProfile(null);
-            }
+          try {
+            const profile = await ensureRoleProfile(user.role || "patient");
+            setPatientProfile(profile);
+          } catch (e) {
+            setPatientProfile(null);
           }
         }
       } finally {
-        setAuthLoading(false);
+        setLoadingAuth(false);
       }
     })();
   }, []);
 
-  if (authLoading) {
+  if (loadingAuth) {
     return (
       <SafeAreaView
         style={{
@@ -10614,9 +10877,14 @@ export default function App() {
     </ThemeContext.Provider>
   );
 }
+
 const AppContent = ({
   userRole,
   setUserRole,
+  currentUser,
+  setCurrentUser,
+  patientProfile,
+  setPatientProfile,
   theme,
   wounds,
   setWounds,
@@ -10625,8 +10893,21 @@ const AppContent = ({
   patients,
   setPatients,
 }) => {
+  const handleAuthSuccess = ({ user, profile }) => {
+    setCurrentUser(user);
+    setUserRole(user.role || "patient");
+    setPatientProfile(profile || null);
+  };
+
+  const handleLogout = () => {
+    logoutUser();
+    setCurrentUser(null);
+    setPatientProfile(null);
+    setUserRole(null);
+  };
+
   if (!userRole) {
-    return <AuthScreen onLogin={(role) => setUserRole(role)} />;
+    return <AuthScreen onLogin={handleAuthSuccess} />;
   }
 
   if (userRole === "doctor") {
@@ -10705,7 +10986,9 @@ const AppContent = ({
             {
               name: "Profile",
               label: "Profile",
-              component: DoctorProfileScreen,
+              component: (props) => (
+                <DoctorProfileScreen {...props} onLogout={handleLogout} />
+              ),
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "person" : "person-outline"}
@@ -10759,7 +11042,9 @@ const AppContent = ({
             {
               name: "Profile",
               label: "Profile",
-              component: PharmacyProfileScreen,
+              component: (props) => (
+                <PharmacyProfileScreen {...props} onLogout={handleLogout} />
+              ),
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "person" : "person-outline"}
@@ -10842,7 +11127,14 @@ const AppContent = ({
           {
             name: "Profile",
             label: "Profile",
-            component: PatientProfileScreen,
+            component: (props) => (
+              <PatientProfileScreen
+                {...props}
+                patientProfile={patientProfile}
+                currentUser={currentUser}
+                onLogout={handleLogout}
+              />
+            ),
             icon: ({ color, focused }) => (
               <Ionicons
                 name={focused ? "person" : "person-outline"}
@@ -10856,7 +11148,6 @@ const AppContent = ({
     </SafeAreaView>
   );
 };
-
 // --- STYLES ---
 const localStyles = StyleSheet.create({
   container: {
