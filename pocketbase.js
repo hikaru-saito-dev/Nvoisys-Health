@@ -1,11 +1,18 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import PocketBase, { AsyncAuthStore } from "pocketbase";
-import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
+import EventSource from "react-native-sse";
 
 WebBrowser.maybeCompleteAuthSession();
 
-const PB_URL = "http://100.88.125.1:8090";
+// PocketBase OAuth2 all-in-one flow relies on realtime.
+// React Native needs an EventSource polyfill for that.
+if (!global.EventSource) {
+  global.EventSource = EventSource;
+}
+
+const PB_URL =
+  "https://9cff-2405-201-4024-e04e-b055-bde6-8d56-dd1a.ngrok-free.app";
 
 const authStore = new AsyncAuthStore({
   save: async (serialized) => {
@@ -42,30 +49,6 @@ function getSessionPayload(profile) {
     profile,
     profileCollection: ROLE_TO_PROFILE_COLLECTION[user.role],
   };
-}
-
-function getRedirectUrl() {
-  return AuthSession.makeRedirectUri({
-    path: "oauth",
-  });
-}
-
-function getProvidersFromAuthMethods(authMethods) {
-  return (
-    authMethods?.oauth2?.providers ||
-    authMethods?.authProviders ||
-    authMethods?.oauth2?.authProviders ||
-    []
-  );
-}
-
-function buildAuthUrl(provider, redirectUrl) {
-  if (!provider?.authUrl && !provider?.authURL) {
-    throw new Error("Missing provider auth URL");
-  }
-
-  const baseUrl = provider.authUrl || provider.authURL;
-  return `${baseUrl}${encodeURIComponent(redirectUrl)}`;
 }
 
 export async function restoreAuth() {
@@ -126,75 +109,74 @@ export async function loginWithEmail({ email, password }) {
 export async function signInWithOAuth({ providerName, selectedRole }) {
   normalizeRole(selectedRole);
 
-  const res = await fetch(`${PB_URL}/api/collections/UsersAuth/auth-methods`);
-  const authMethods = await res.json();
+  try {
+    // Optional sanity check to keep your earlier logging behavior.
+    const res = await fetch(`${PB_URL}/api/collections/UsersAuth/auth-methods`);
+    const authMethods = await res.json();
 
-  console.log("RAW authMethods:", JSON.stringify(authMethods, null, 2));
+    console.log("RAW authMethods:", JSON.stringify(authMethods, null, 2));
 
-  const providers = getProvidersFromAuthMethods(authMethods);
-  const provider = providers.find((item) => item.name === providerName);
+    const providers =
+      authMethods?.oauth2?.providers ||
+      authMethods?.authProviders ||
+      authMethods?.oauth2?.authProviders ||
+      [];
 
-  if (!provider) {
-    throw new Error(
-      `${providerName} missing. authMethods=${JSON.stringify(authMethods)}`,
-    );
+    const providerExists = providers.some((item) => item.name === providerName);
+
+    if (!providerExists) {
+      throw new Error(
+        `${providerName} missing. authMethods=${JSON.stringify(authMethods)}`,
+      );
+    }
+
+    // Clear any stale auth before starting a fresh OAuth attempt.
+    pb.authStore.clear();
+
+    // PocketBase-native OAuth flow:
+    // - PocketBase handles the provider callback at /api/oauth2-redirect
+    // - auth result comes back through a one-off realtime subscription
+    const authData = await pb.collection("UsersAuth").authWithOAuth2({
+      provider: providerName,
+      createData: {
+        role: selectedRole,
+      },
+      urlCallback: async (url) => {
+        console.log("OAuth vendor URL:", url);
+
+        // Use auth browser flow. No custom app redirect is needed here
+        // because PocketBase handles the callback on its own endpoint.
+        const result = await WebBrowser.openAuthSessionAsync(url);
+
+        console.log("OAuth browser result:", JSON.stringify(result, null, 2));
+
+        // On some devices/platforms the session may stay open until the user closes it.
+        // PocketBase should still receive the auth callback and complete over realtime.
+        return result;
+      },
+    });
+
+    console.log("OAuth authData:", JSON.stringify(authData, null, 2));
+
+    const profile = await ensureRoleProfile();
+    return getSessionPayload(profile);
+  } catch (error) {
+    console.log("Google auth error:", error);
+
+    // PocketBase errors are usually ClientResponseError with response/originalError.
+    if (error?.response) {
+      console.log(
+        "PocketBase error response:",
+        JSON.stringify(error.response, null, 2),
+      );
+    }
+
+    if (error?.originalError) {
+      console.log("PocketBase originalError:", error.originalError);
+    }
+
+    throw error;
   }
-
-  const redirectUrl = getRedirectUrl();
-
-  let authUrl = buildAuthUrl(provider, redirectUrl);
-
-  if (providerName === "apple") {
-    authUrl = authUrl.replace("response_mode=form_post", "response_mode=query");
-  }
-
-  console.log("OAuth redirectUrl:", redirectUrl);
-  console.log("OAuth authUrl:", authUrl);
-
-  const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
-
-  console.log("OAuth result:", JSON.stringify(result, null, 2));
-
-  if (result.type !== "success" || !result.url) {
-    throw new Error(`${providerName} sign-in cancelled`);
-  }
-
-  const returnedUrl = new URL(result.url);
-  const code = returnedUrl.searchParams.get("code");
-  const state = returnedUrl.searchParams.get("state");
-  const error = returnedUrl.searchParams.get("error");
-  const errorDescription =
-    returnedUrl.searchParams.get("error_description") ||
-    returnedUrl.searchParams.get("errorDescription");
-
-  if (error) {
-    throw new Error(
-      errorDescription
-        ? `${providerName} OAuth error: ${error} (${errorDescription})`
-        : `${providerName} OAuth error: ${error}`,
-    );
-  }
-
-  if (!code) {
-    throw new Error(`No OAuth code returned from ${providerName}`);
-  }
-
-  if (state !== provider.state) {
-    throw new Error("OAuth state mismatch");
-  }
-
-  await pb
-    .collection("UsersAuth")
-    .authWithOAuth2Code(
-      provider.name,
-      code,
-      provider.codeVerifier,
-      redirectUrl,
-      { role: selectedRole },
-    );
-
-  const profile = await ensureRoleProfile();
-  return getSessionPayload(profile);
 }
 
 export function logoutUser() {
