@@ -219,6 +219,190 @@ const THEMES = {
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
 
+const AppDataContext = createContext(null);
+const useAppData = () => useContext(AppDataContext);
+
+const WOUND_STATUS_LABELS = {
+  review_pending: "Review Pending",
+  under_review: "Under Review",
+  medication_prescribed: "Medication Prescribed",
+  closed: "Closed",
+};
+
+const ORDER_STATUS_LABELS = {
+  pending: "Pending",
+  packed: "Packed",
+  dispatched: "Dispatched",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+};
+
+const MEDICINE_PRICE_MAP = {
+  Amoxicillin: 220,
+  Warfarin: 180,
+  Ibuprofen: 120,
+  Neosporin: 150,
+};
+
+const DEFAULT_WOUND_SYSTEM_MESSAGE =
+  "Wound report submitted. Doctor will review shortly.";
+
+const safeArray = (value) => (Array.isArray(value) ? value : []);
+
+const humanizeWoundStatus = (value) => {
+  if (!value) return "Review Pending";
+  return WOUND_STATUS_LABELS[value] || value;
+};
+
+const normalizeWoundStatus = (value) => {
+  if (!value) return "review_pending";
+  const normalized = String(value).trim().toLowerCase().replace(/\s+/g, "_");
+  return WOUND_STATUS_LABELS[normalized] ? normalized : "review_pending";
+};
+
+const humanizeOrderStatus = (value) => {
+  if (!value) return "Pending";
+  return ORDER_STATUS_LABELS[value] || value;
+};
+
+const normalizeOrderStatus = (value) => {
+  if (!value) return "pending";
+  const normalized = String(value).trim().toLowerCase().replace(/\s+/g, "_");
+  return ORDER_STATUS_LABELS[normalized] ? normalized : "pending";
+};
+
+const formatCurrency = (amount) => `₹${Number(amount || 0)}`;
+
+const formatDateValue = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value).split("T")[0];
+  }
+  return date.toISOString().split("T")[0];
+};
+
+const formatTimeValue = (value) => {
+  if (!value) return "Now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Now";
+  try {
+    return date.toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch (error) {
+    return "Now";
+  }
+};
+
+const uniqueIds = (values) => [...new Set(safeArray(values).filter(Boolean))];
+
+const buildConversationTitle = (woundRecord) => {
+  const description = woundRecord?.description || "Wound Case";
+  return description.length > 40
+    ? `${description.slice(0, 40)}...`
+    : description;
+};
+
+const sumMedicationAmount = (items) =>
+  safeArray(items).reduce(
+    (total, name) => total + (MEDICINE_PRICE_MAP[name] || 100),
+    0,
+  );
+
+const mapMessageRecord = (record) => {
+  const senderRecord = record?.expand?.sender;
+  return {
+    id: record.id,
+    text: record.text || "",
+    kind: record.kind || "text",
+    senderId: record.sender || null,
+    senderRole: senderRecord?.role || (record.sender ? "user" : "system"),
+    senderName: senderRecord?.name || (record.sender ? "User" : "System"),
+    time: formatTimeValue(record.created),
+    created: record.created,
+    raw: record,
+  };
+};
+
+const mapWoundRecord = (record) => ({
+  id: record.id,
+  patient: record.patient || null,
+  patientId: record.patient || null,
+  patientName: record.expand?.patient?.name || record.patientName || "Patient",
+  description: record.description || "",
+  notes: record.notes || "",
+  severity: record.severity || "moderate",
+  status: humanizeWoundStatus(record.status),
+  statusKey: normalizeWoundStatus(record.status),
+  date: formatDateValue(record.created),
+  image: record.image || null,
+  doctor: record.doctor || null,
+  conversation: record.conversation || null,
+  hasPharmacy: !!record.hasPharmacy,
+  raw: record,
+});
+
+const mapOrderRecord = (record) => ({
+  id: record.id,
+  wound: record.wound || null,
+  conversation: record.conversation || null,
+  patient: record.expand?.patient?.name || "Patient",
+  patientId: record.patient || null,
+  itemsList: safeArray(record.items),
+  items: safeArray(record.items).join(", ") || "Medicine items",
+  totalAmount: Number(record.totalAmount || 0),
+  total: formatCurrency(record.totalAmount || 0),
+  status: humanizeOrderStatus(record.status),
+  statusKey: normalizeOrderStatus(record.status),
+  time: formatTimeValue(record.updated || record.created),
+  raw: record,
+});
+
+const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
+  const members = safeArray(record.expand?.members);
+  const otherMembers = members.filter((member) => member.id !== currentUserId);
+  const memberRoles = uniqueIds(otherMembers.map((member) => member.role));
+  const linkedWound = record.expand?.linkedWound;
+  const preview = previewMap[record.id];
+  return {
+    id: record.id,
+    title: record.title || buildConversationTitle(linkedWound),
+    linkedWoundId: record.linkedWound || linkedWound?.id || null,
+    linkedWoundDescription:
+      linkedWound?.description || record.title || "Wound discussion",
+    members: safeArray(record.members),
+    memberUsers: members,
+    displayName:
+      record.title ||
+      (otherMembers.length > 0
+        ? otherMembers.map((member) => member.name || member.role).join(", ")
+        : "Conversation"),
+    roleLabel:
+      memberRoles.length > 0
+        ? memberRoles.join(", ")
+        : linkedWound
+          ? "Wound Case"
+          : "Chat",
+    status: "Online",
+    image: linkedWound
+      ? "bandage-outline"
+      : memberRoles.includes("pharmacy")
+        ? "leaf"
+        : memberRoles.includes("doctor")
+          ? "medical"
+          : "chatbubble-ellipses",
+    lastMsg:
+      preview?.text || linkedWound?.description || "Tap to open conversation",
+    time: formatTimeValue(
+      record.lastMessageAt || record.updated || record.created,
+    ),
+    unread: 0,
+    raw: record,
+  };
+};
+
 // --- RESPONSIVE SCALING ---
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const scale = SCREEN_WIDTH / 375;
@@ -1707,103 +1891,86 @@ const PatientEmergencyScreen = ({ navigation }) => {
 
 const PatientChatScreen = () => {
   const { theme } = useTheme();
+  const {
+    currentUser,
+    currentUserId,
+    conversations,
+    loadConversationMessages,
+    sendConversationMessage,
+    dataLoading,
+    dataError,
+  } = useAppData();
   const [selectedContact, setSelectedContact] = useState(null);
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState({}); // Store messages per contact: { contactId: [messages] }
+  const [contactMessages, setContactMessages] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [loadingMessages, setLoadingMessages] = useState(false);
 
-  const contacts = [
-    {
-      id: 1,
-      name: "Dr. Rahul Sharma",
-      role: "Cardiologist",
-      status: "Online",
-      lastMsg: "Your vitals look stable today.",
-      time: "10:30 AM",
-      unread: 2,
-      image: "medical",
-    },
-    {
-      id: 2,
-      name: "Nurse Sneha",
-      role: "Support Team",
-      status: "Offline",
-      lastMsg: "Please take the medication after lunch.",
-      time: "Yesterday",
-      unread: 0,
-      image: "person",
-    },
-    {
-      id: 3,
-      name: "MediStore Pharmacy",
-      role: "Pharmacy",
-      status: "Online",
-      lastMsg: "Order #1024 has been shipped.",
-      time: "2 days ago",
-      unread: 0,
-      image: "leaf",
-    },
-    {
-      id: 4,
-      name: "Nvoisys Bot",
-      role: "AI Assistant",
-      status: "Online",
-      lastMsg: "How can I help you today?",
-      time: "Just now",
-      unread: 0,
-      image: "sparkles",
-    },
-  ];
-
-  const filteredContacts = contacts.filter(
+  const filteredContacts = conversations.filter(
     (c) =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.role.toLowerCase().includes(searchQuery.toLowerCase()),
+      c.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.roleLabel.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.lastMsg.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
-  const sendMessage = () => {
-    if (message.trim() && selectedContact) {
-      const contactId = selectedContact.id;
-      const newMsg = {
-        id: Date.now(),
-        text: message,
-        sender: "patient",
-        time: "Now",
-      };
-      setMessages((prev) => ({
-        ...prev,
-        [contactId]: [...(prev[contactId] || []), newMsg],
-      }));
-      setMessage("");
+  const loadSelectedMessages = async (conversationId) => {
+    if (!conversationId) return;
+    try {
+      setLoadingMessages(true);
+      const records = await loadConversationMessages(conversationId);
+      setContactMessages(records);
+    } finally {
+      setLoadingMessages(false);
     }
   };
 
-  const sendAttachment = (type) => {
-    if (!selectedContact) return;
-    const contactId = selectedContact.id;
-    const newMsg = {
-      id: Date.now(),
-      text: "",
-      image: "placeholder",
-      type,
-      sender: "patient",
-      time: "Now",
+  useEffect(() => {
+    if (!selectedContact?.id) return;
+
+    let mounted = true;
+    loadSelectedMessages(selectedContact.id);
+
+    const subscribe = async () => {
+      try {
+        await pb.collection("messages").subscribe("*", async ({ record }) => {
+          if (!mounted || record?.conversation !== selectedContact.id) return;
+          const records = await loadConversationMessages(selectedContact.id);
+          if (mounted) {
+            setContactMessages(records);
+          }
+        });
+      } catch (error) {
+        console.log("Message subscribe error:", error);
+      }
     };
-    setMessages((prev) => ({
-      ...prev,
-      [contactId]: [...(prev[contactId] || []), newMsg],
-    }));
+
+    subscribe();
+
+    return () => {
+      mounted = false;
+      pb.collection("messages").unsubscribe("*");
+    };
+  }, [selectedContact?.id]);
+
+  const sendMessage = async () => {
+    if (!message.trim() || !selectedContact?.id) return;
+    const text = message;
+    setMessage("");
+    await sendConversationMessage(selectedContact.id, text);
+    await loadSelectedMessages(selectedContact.id);
+  };
+
+  const sendAttachment = () => {
+    return;
   };
 
   if (selectedContact) {
-    const contactMessages = messages[selectedContact.id] || [];
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
         <StatusBar
           barStyle={theme.statusBarStyle}
           backgroundColor={theme.card}
         />
-        {/* Chat Header */}
         <View
           style={{
             backgroundColor: theme.card,
@@ -1855,7 +2022,7 @@ const PatientChatScreen = () => {
                 color: theme.textPrimary,
               }}
             >
-              {selectedContact.name}
+              {selectedContact.displayName}
             </Text>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <View
@@ -1863,28 +2030,22 @@ const PatientChatScreen = () => {
                   width: RFValue(6),
                   height: RFValue(6),
                   borderRadius: 3,
-                  backgroundColor:
-                    selectedContact.status === "Online"
-                      ? theme.success
-                      : theme.textTertiary,
+                  backgroundColor: theme.success,
                   marginRight: 6,
                 }}
               />
               <Text
                 style={{
                   fontSize: RFValue(11),
-                  color:
-                    selectedContact.status === "Online"
-                      ? theme.success
-                      : theme.textSecondary,
+                  color: theme.success,
                   fontWeight: "600",
                 }}
               >
-                {selectedContact.status}
+                {selectedContact.roleLabel}
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: "row" }}>
+          <View style={{ flexDirection: "row", opacity: 0.45 }}>
             <TouchableOpacity style={{ padding: 8 }}>
               <Ionicons name="call" size={RFValue(20)} color={theme.accent} />
             </TouchableOpacity>
@@ -1898,7 +2059,6 @@ const PatientChatScreen = () => {
           </View>
         </View>
 
-        {/* Messages */}
         <ScrollView
           contentContainerStyle={{
             padding: RFValue(16),
@@ -1906,79 +2066,96 @@ const PatientChatScreen = () => {
           }}
           style={{ flex: 1 }}
         >
-          {contactMessages.length > 0 ? (
-            contactMessages.map((msg) => (
-              <View
-                key={msg.id}
-                style={{
-                  marginBottom: RFValue(12),
-                  flexDirection: "row",
-                  justifyContent:
-                    msg.sender === "patient" ? "flex-end" : "flex-start",
-                }}
-              >
+          {loadingMessages ? (
+            <View style={{ alignItems: "center", marginTop: RFValue(80) }}>
+              <Text style={{ color: theme.textSecondary }}>
+                Loading chat...
+              </Text>
+            </View>
+          ) : contactMessages.length > 0 ? (
+            contactMessages.map((msg) => {
+              const isCurrentUser =
+                msg.senderId && msg.senderId === currentUserId;
+              const isSystem =
+                msg.kind === "system" || msg.senderRole === "system";
+              return (
                 <View
+                  key={msg.id}
                   style={{
-                    maxWidth: "75%",
-                    backgroundColor:
-                      msg.sender === "patient" ? theme.accent : theme.card,
-                    borderRadius: RFValue(16),
-                    borderBottomRightRadius:
-                      msg.sender === "patient" ? RFValue(4) : RFValue(16),
-                    borderBottomLeftRadius:
-                      msg.sender === "patient" ? RFValue(16) : RFValue(4),
-                    padding: RFValue(14),
-                    shadowColor: theme.shadowColor,
-                    shadowOpacity: 0.05,
-                    elevation: 1,
+                    marginBottom: RFValue(12),
+                    flexDirection: "row",
+                    justifyContent: isSystem
+                      ? "center"
+                      : isCurrentUser
+                        ? "flex-end"
+                        : "flex-start",
                   }}
                 >
-                  {msg.image ? (
-                    <View
-                      style={{
-                        width: RFValue(180),
-                        height: RFValue(120),
-                        backgroundColor: "rgba(0,0,0,0.05)",
-                        borderRadius: RFValue(12),
-                        justifyContent: "center",
-                        alignItems: "center",
-                      }}
-                    >
-                      <Ionicons
-                        name={msg.type === "camera" ? "camera" : "image"}
-                        size={40}
-                        color={msg.sender === "patient" ? "#FFF" : theme.accent}
-                        style={{ opacity: 0.5 }}
-                      />
-                    </View>
-                  ) : (
+                  <View
+                    style={{
+                      maxWidth: isSystem ? "88%" : "75%",
+                      backgroundColor: isSystem
+                        ? theme.bg
+                        : isCurrentUser
+                          ? theme.accent
+                          : theme.card,
+                      borderRadius: RFValue(16),
+                      borderBottomRightRadius:
+                        isSystem || isCurrentUser ? RFValue(4) : RFValue(16),
+                      borderBottomLeftRadius:
+                        isSystem || isCurrentUser ? RFValue(16) : RFValue(4),
+                      padding: RFValue(14),
+                      shadowColor: theme.shadowColor,
+                      shadowOpacity: 0.05,
+                      elevation: 1,
+                      borderWidth: isSystem ? 1 : 0,
+                      borderColor: isSystem ? theme.cardBorder : "transparent",
+                    }}
+                  >
+                    {!isSystem && !isCurrentUser ? (
+                      <Text
+                        style={{
+                          fontSize: RFValue(11),
+                          color: theme.textTertiary,
+                          marginBottom: 4,
+                          fontWeight: "700",
+                        }}
+                      >
+                        {msg.senderName}
+                      </Text>
+                    ) : null}
                     <Text
                       style={{
                         fontSize: RFValue(14),
-                        color:
-                          msg.sender === "patient" ? "#FFF" : theme.textPrimary,
+                        color: isSystem
+                          ? theme.textSecondary
+                          : isCurrentUser
+                            ? "#FFF"
+                            : theme.textPrimary,
                         lineHeight: RFValue(20),
+                        textAlign: isSystem ? "center" : "left",
                       }}
                     >
                       {msg.text}
                     </Text>
-                  )}
-                  <Text
-                    style={{
-                      fontSize: RFValue(9),
-                      color:
-                        msg.sender === "patient"
-                          ? "rgba(255,255,255,0.7)"
-                          : theme.textTertiary,
-                      marginTop: 4,
-                      textAlign: "right",
-                    }}
-                  >
-                    {msg.time}
-                  </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(9),
+                        color: isSystem
+                          ? theme.textTertiary
+                          : isCurrentUser
+                            ? "rgba(255,255,255,0.7)"
+                            : theme.textTertiary,
+                        marginTop: 4,
+                        textAlign: isSystem ? "center" : "right",
+                      }}
+                    >
+                      {msg.time}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            ))
+              );
+            })
           ) : (
             <View
               style={{
@@ -2008,14 +2185,12 @@ const PatientChatScreen = () => {
               <Text
                 style={{ color: theme.textSecondary, fontSize: RFValue(13) }}
               >
-                This is the start of your conversation with{" "}
-                {selectedContact.name}
+                This is the start of your conversation.
               </Text>
             </View>
           )}
         </ScrollView>
 
-        {/* Input Controls */}
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : null}
         >
@@ -2040,6 +2215,7 @@ const PatientChatScreen = () => {
                 justifyContent: "center",
                 alignItems: "center",
                 marginRight: RFValue(8),
+                opacity: 0.45,
               }}
             >
               <Ionicons
@@ -2058,6 +2234,7 @@ const PatientChatScreen = () => {
                 justifyContent: "center",
                 alignItems: "center",
                 marginRight: RFValue(8),
+                opacity: 0.45,
               }}
             >
               <Ionicons
@@ -2121,7 +2298,6 @@ const PatientChatScreen = () => {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
 
-      {/* List Header */}
       <View
         style={{
           backgroundColor: theme.card,
@@ -2173,9 +2349,14 @@ const PatientChatScreen = () => {
         </View>
       </View>
 
-      {/* Contact List */}
       <ScrollView contentContainerStyle={{ padding: RFValue(16) }}>
-        {filteredContacts.length > 0 ? (
+        {dataLoading ? (
+          <View style={{ alignItems: "center", paddingVertical: RFValue(60) }}>
+            <Text style={{ fontSize: RFValue(14), color: theme.textTertiary }}>
+              Loading conversations...
+            </Text>
+          </View>
+        ) : filteredContacts.length > 0 ? (
           filteredContacts.map((contact) => (
             <TouchableOpacity
               key={contact.id}
@@ -2209,21 +2390,19 @@ const PatientChatScreen = () => {
                   size={RFValue(28)}
                   color={theme.accent}
                 />
-                {contact.status === "Online" && (
-                  <View
-                    style={{
-                      position: "absolute",
-                      bottom: -2,
-                      right: -2,
-                      width: 14,
-                      height: 14,
-                      borderRadius: 7,
-                      backgroundColor: theme.success,
-                      borderWidth: 3,
-                      borderColor: theme.card,
-                    }}
-                  />
-                )}
+                <View
+                  style={{
+                    position: "absolute",
+                    bottom: -2,
+                    right: -2,
+                    width: 14,
+                    height: 14,
+                    borderRadius: 7,
+                    backgroundColor: theme.success,
+                    borderWidth: 3,
+                    borderColor: theme.card,
+                  }}
+                />
               </View>
               <View style={{ flex: 1 }}>
                 <View
@@ -2241,7 +2420,7 @@ const PatientChatScreen = () => {
                       color: theme.textPrimary,
                     }}
                   >
-                    {contact.name}
+                    {contact.displayName}
                   </Text>
                   <Text
                     style={{ fontSize: RFValue(11), color: theme.textTertiary }}
@@ -2256,37 +2435,28 @@ const PatientChatScreen = () => {
                     alignItems: "center",
                   }}
                 >
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      flex: 1,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {contact.lastMsg}
-                  </Text>
-                  {contact.unread > 0 && (
-                    <View
+                  <View style={{ flex: 1 }}>
+                    <Text
                       style={{
-                        backgroundColor: theme.accent,
-                        borderRadius: 10,
-                        paddingHorizontal: 6,
-                        paddingVertical: 2,
-                        marginLeft: 8,
+                        fontSize: RFValue(12),
+                        color: theme.textSecondary,
+                        fontWeight: "700",
+                        marginBottom: 2,
                       }}
+                      numberOfLines={1}
                     >
-                      <Text
-                        style={{
-                          color: "#FFF",
-                          fontSize: RFValue(10),
-                          fontWeight: "800",
-                        }}
-                      >
-                        {contact.unread}
-                      </Text>
-                    </View>
-                  )}
+                      {contact.roleLabel}
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(12),
+                        color: theme.textSecondary,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {contact.lastMsg}
+                    </Text>
+                  </View>
                 </View>
               </View>
             </TouchableOpacity>
@@ -2300,7 +2470,7 @@ const PatientChatScreen = () => {
               style={{ marginBottom: RFValue(16) }}
             />
             <Text style={{ fontSize: RFValue(14), color: theme.textTertiary }}>
-              No conversations found
+              {dataError || "No conversations found"}
             </Text>
           </View>
         )}
@@ -9475,7 +9645,10 @@ const ModernHeader = ({ title, subtitle }) => (
 
 const PatientWoundScreen = ({ navigation, wounds, setWounds }) => {
   const [showNewWound, setShowNewWound] = useState(false);
-  const [selectedWound, setSelectedWound] = useState(null);
+  const [selectedWoundId, setSelectedWoundId] = useState(null);
+  const selectedWound = (wounds || []).find(
+    (item) => item.id === selectedWoundId,
+  );
 
   if (showNewWound)
     return (
@@ -9489,7 +9662,7 @@ const PatientWoundScreen = ({ navigation, wounds, setWounds }) => {
     return (
       <WoundDetailScreen
         wound={selectedWound}
-        onBack={() => setSelectedWound(null)}
+        onBack={() => setSelectedWoundId(null)}
         userRole="patient"
         setWounds={setWounds}
       />
@@ -9546,7 +9719,7 @@ const PatientWoundScreen = ({ navigation, wounds, setWounds }) => {
           wounds.map((w) => (
             <TouchableOpacity
               key={w.id}
-              onPress={() => setSelectedWound(w)}
+              onPress={() => setSelectedWoundId(w.id)}
               style={{
                 backgroundColor: "#FFF",
                 borderRadius: RFValue(16),
@@ -9637,24 +9810,25 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   const [desc, setDesc] = useState("");
   const [image, setImage] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const { createWoundReport } = useAppData();
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!desc.trim()) return;
-    setSubmitting(true);
-
-    setTimeout(() => {
-      const newWound = {
-        id: wounds.length + 1,
-        patientName: "Self",
-        description: desc,
-        status: "Review Pending",
-        date: new Date().toISOString().split("T")[0],
-        image: image,
-      };
-      setWounds([newWound, ...wounds]);
+    try {
+      setSubmitting(true);
+      setSubmitError("");
+      await createWoundReport({
+        description: desc.trim(),
+        image,
+      });
       setSubmitting(false);
       onBack();
-    }, 1500);
+    } catch (error) {
+      console.log("Create wound error:", error);
+      setSubmitError(error?.message || "Unable to submit wound report");
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -9749,6 +9923,18 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           onChangeText={setDesc}
         />
 
+        {submitError ? (
+          <Text
+            style={{
+              marginTop: RFValue(14),
+              color: "#DC2626",
+              fontWeight: "600",
+            }}
+          >
+            {submitError}
+          </Text>
+        ) : null}
+
         <TouchableOpacity
           onPress={handleSubmit}
           disabled={submitting}
@@ -9758,6 +9944,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
             paddingVertical: RFValue(16),
             alignItems: "center",
             marginTop: RFValue(30),
+            opacity: submitting ? 0.75 : 1,
           }}
         >
           {submitting ? (
@@ -9789,30 +9976,111 @@ const WoundDetailScreen = ({
   setMedOrders,
 }) => {
   const [message, setMessage] = useState("");
-  const [chat, setChat] = useState(
-    wound.chat || [
-      {
-        from: "system",
-        text: "Wound report submitted. Doctor will review shortly.",
-        time: "10:00 AM",
-      },
-    ],
-  );
+  const [chat, setChat] = useState([]);
   const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
+  const [loadingChat, setLoadingChat] = useState(true);
+  const [localWound, setLocalWound] = useState(wound);
+  const {
+    currentUserId,
+    currentUser,
+    loadConversationMessages,
+    ensureConversationForWound,
+    sendConversationMessage,
+    prescribeForWound,
+    refreshAllData,
+    updateOrderStatus,
+    medOrders,
+  } = useAppData();
 
-  const sendMessage = () => {
-    if (!message.trim()) return;
-    const newMsg = { from: userRole, text: message, time: "Now" };
-    const updatedChat = [...chat, newMsg];
-    setChat(updatedChat);
+  useEffect(() => {
+    setLocalWound(wound);
+  }, [wound]);
 
-    // Persist to main state
-    setWounds((prev) =>
-      prev.map((w) => (w.id === wound.id ? { ...w, chat: updatedChat } : w)),
-    );
-
-    setMessage("");
+  const hydrateConversation = async () => {
+    try {
+      setLoadingChat(true);
+      const conversation = await ensureConversationForWound(localWound, {
+        includeCurrentUser: userRole !== "patient",
+      });
+      const messages = await loadConversationMessages(conversation.id);
+      setChat(messages);
+      setLocalWound((prev) => ({ ...prev, conversation: conversation.id }));
+    } catch (error) {
+      console.log("Hydrate wound conversation error:", error);
+    } finally {
+      setLoadingChat(false);
+    }
   };
+
+  useEffect(() => {
+    if (!localWound?.id) return;
+    let mounted = true;
+
+    hydrateConversation();
+
+    const subscribe = async () => {
+      try {
+        await pb.collection("messages").subscribe("*", async ({ record }) => {
+          if (!mounted) return;
+          if (
+            !localWound?.conversation &&
+            record?.conversation !== localWound?.conversation
+          ) {
+            return;
+          }
+          const conversationId =
+            localWound?.conversation || record?.conversation;
+          if (!conversationId || record?.conversation !== conversationId)
+            return;
+          const messages = await loadConversationMessages(conversationId);
+          if (mounted) {
+            setChat(messages);
+          }
+        });
+        await pb
+          .collection("wounds")
+          .subscribe(localWound.id, async ({ record }) => {
+            if (!mounted) return;
+            const refreshedWound = mapWoundRecord({
+              ...record,
+              expand: {
+                patient: localWound?.raw?.expand?.patient,
+              },
+            });
+            setLocalWound((prev) => ({
+              ...prev,
+              ...refreshedWound,
+              patientName: prev?.patientName || refreshedWound.patientName,
+            }));
+          });
+      } catch (error) {
+        console.log("Wound detail subscribe error:", error);
+      }
+    };
+
+    subscribe();
+
+    return () => {
+      mounted = false;
+      pb.collection("messages").unsubscribe("*");
+      pb.collection("wounds").unsubscribe(localWound?.id);
+    };
+  }, [localWound?.id, localWound?.conversation]);
+
+  const sendMessage = async () => {
+    if (!message.trim()) return;
+    const conversation = await ensureConversationForWound(localWound, {
+      includeCurrentUser: userRole !== "patient",
+    });
+    await sendConversationMessage(conversation.id, message);
+    setMessage("");
+    const messages = await loadConversationMessages(conversation.id);
+    setChat(messages);
+  };
+
+  const woundOrder = (medOrders || []).find(
+    (order) => order.wound === localWound.id,
+  );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
@@ -9840,30 +10108,31 @@ const WoundDetailScreen = ({
             Wound Detail
           </Text>
           <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
-            Status: {wound.status}
+            Status: {localWound.status}
           </Text>
         </View>
-        {userRole === "doctor" && wound.status !== "Medication Prescribed" && (
-          <TouchableOpacity
-            onPress={() => setShowPrescriptionModal(true)}
-            style={{
-              backgroundColor: "#059669",
-              paddingHorizontal: RFValue(12),
-              paddingVertical: RFValue(8),
-              borderRadius: RFValue(10),
-            }}
-          >
-            <Text
+        {userRole === "doctor" &&
+          localWound.status !== "Medication Prescribed" && (
+            <TouchableOpacity
+              onPress={() => setShowPrescriptionModal(true)}
               style={{
-                color: "#FFF",
-                fontWeight: "700",
-                fontSize: RFValue(12),
+                backgroundColor: "#059669",
+                paddingHorizontal: RFValue(12),
+                paddingVertical: RFValue(8),
+                borderRadius: RFValue(10),
               }}
             >
-              Prescribe
-            </Text>
-          </TouchableOpacity>
-        )}
+              <Text
+                style={{
+                  color: "#FFF",
+                  fontWeight: "700",
+                  fontSize: RFValue(12),
+                }}
+              >
+                Prescribe
+              </Text>
+            </TouchableOpacity>
+          )}
       </View>
 
       <KeyboardAvoidingView
@@ -9874,7 +10143,6 @@ const WoundDetailScreen = ({
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: RFValue(100) }}
         >
-          {/* Wound Photo Placeholder */}
           <View style={{ padding: RFValue(16) }}>
             <View
               style={{
@@ -9915,12 +10183,51 @@ const WoundDetailScreen = ({
                   marginTop: RFValue(4),
                 }}
               >
-                {wound.description}
+                {localWound.description}
               </Text>
             </View>
+
+            {woundOrder ? (
+              <View
+                style={{
+                  marginTop: RFValue(12),
+                  backgroundColor: "#F5F3FF",
+                  padding: RFValue(14),
+                  borderRadius: RFValue(12),
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    fontWeight: "700",
+                    color: "#6D28D9",
+                  }}
+                >
+                  Pharmacy Order
+                </Text>
+                <Text
+                  style={{
+                    color: "#5B21B6",
+                    marginTop: RFValue(4),
+                    fontSize: RFValue(12),
+                  }}
+                >
+                  {woundOrder.items}
+                </Text>
+                <Text
+                  style={{
+                    color: "#8B5CF6",
+                    marginTop: RFValue(4),
+                    fontSize: RFValue(12),
+                    fontWeight: "700",
+                  }}
+                >
+                  {woundOrder.status}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
-          {/* Chat Interface */}
           <View style={{ padding: RFValue(16) }}>
             <Text
               style={{
@@ -9932,47 +10239,73 @@ const WoundDetailScreen = ({
             >
               Doctor Discussion
             </Text>
-            {chat.map((c, i) => (
-              <View
-                key={i}
-                style={{
-                  alignSelf: c.from === userRole ? "flex-end" : "flex-start",
-                  backgroundColor:
-                    c.from === userRole
-                      ? "#4338CA"
-                      : c.from === "system"
+            {loadingChat ? (
+              <Text style={{ color: "#6B7280" }}>Loading chat...</Text>
+            ) : chat.length > 0 ? (
+              chat.map((c) => {
+                const isMine = c.senderId && c.senderId === currentUserId;
+                const isSystem =
+                  c.kind === "system" || c.senderRole === "system";
+                return (
+                  <View
+                    key={c.id}
+                    style={{
+                      alignSelf: isSystem
+                        ? "center"
+                        : isMine
+                          ? "flex-end"
+                          : "flex-start",
+                      backgroundColor: isSystem
                         ? "#F3F4F6"
-                        : "#FFF",
-                  padding: RFValue(12),
-                  borderRadius: RFValue(12),
-                  marginBottom: RFValue(8),
-                  maxWidth: "80%",
-                  shadowColor: "#000",
-                  shadowOpacity: 0.03,
-                  elevation: 1,
-                }}
-              >
-                <Text
-                  style={{
-                    color: c.from === userRole ? "#FFF" : "#1E1B4B",
-                    fontSize: RFValue(13),
-                  }}
-                >
-                  {c.text}
-                </Text>
-                <Text
-                  style={{
-                    color:
-                      c.from === userRole ? "rgba(255,255,255,0.7)" : "#9CA3AF",
-                    fontSize: RFValue(9),
-                    marginTop: RFValue(4),
-                    textAlign: "right",
-                  }}
-                >
-                  {c.time}
-                </Text>
-              </View>
-            ))}
+                        : isMine
+                          ? "#4338CA"
+                          : "#FFF",
+                      padding: RFValue(12),
+                      borderRadius: RFValue(12),
+                      marginBottom: RFValue(8),
+                      maxWidth: isSystem ? "92%" : "80%",
+                      shadowColor: "#000",
+                      shadowOpacity: 0.03,
+                      elevation: 1,
+                    }}
+                  >
+                    {!isSystem && !isMine ? (
+                      <Text
+                        style={{
+                          color: "#6B7280",
+                          fontSize: RFValue(10),
+                          fontWeight: "700",
+                          marginBottom: RFValue(4),
+                        }}
+                      >
+                        {c.senderName}
+                      </Text>
+                    ) : null}
+                    <Text
+                      style={{
+                        color: isMine ? "#FFF" : "#1E1B4B",
+                        fontSize: RFValue(13),
+                        textAlign: isSystem ? "center" : "left",
+                      }}
+                    >
+                      {c.text}
+                    </Text>
+                    <Text
+                      style={{
+                        color: isMine ? "rgba(255,255,255,0.7)" : "#9CA3AF",
+                        fontSize: RFValue(9),
+                        marginTop: RFValue(4),
+                        textAlign: isSystem ? "center" : "right",
+                      }}
+                    >
+                      {c.time}
+                    </Text>
+                  </View>
+                );
+              })
+            ) : (
+              <Text style={{ color: "#6B7280" }}>No messages yet.</Text>
+            )}
           </View>
         </ScrollView>
 
@@ -9987,25 +10320,28 @@ const WoundDetailScreen = ({
           }}
         >
           <TextInput
-            placeholder="Ask a question..."
             style={{
               flex: 1,
               backgroundColor: "#F9FAFB",
-              borderRadius: RFValue(20),
+              borderRadius: RFValue(24),
               paddingHorizontal: RFValue(16),
-              paddingVertical: RFValue(10),
-              marginRight: RFValue(10),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(14),
+              borderWidth: 1,
+              borderColor: "#E5E7EB",
             }}
+            placeholder="Type a message..."
             value={message}
             onChangeText={setMessage}
           />
           <TouchableOpacity
             onPress={sendMessage}
             style={{
-              width: RFValue(44),
-              height: RFValue(44),
-              borderRadius: RFValue(22),
+              marginLeft: RFValue(10),
               backgroundColor: "#4338CA",
+              width: RFValue(46),
+              height: RFValue(46),
+              borderRadius: RFValue(23),
               justifyContent: "center",
               alignItems: "center",
             }}
@@ -10018,35 +10354,19 @@ const WoundDetailScreen = ({
       {showPrescriptionModal && (
         <PrescriptionModal
           onBack={() => setShowPrescriptionModal(false)}
-          onConfirm={(selectedMeds) => {
-            // Update wound status
-            setWounds((prev) =>
-              prev.map((w) =>
-                w.id === wound.id
-                  ? { ...w, status: "Medication Prescribed" }
-                  : w,
-              ),
-            );
-
-            // Add to pharmacy orders
-            const newOrder = {
-              id: 1000 + Math.floor(Math.random() * 9000),
-              patient: wound.patientName || "Patient",
-              items: selectedMeds.join(", "),
-              total: "₹" + (selectedMeds.length * 200 + 50),
-              status: "Pending",
-              time: "Just now",
-            };
-            setMedOrders((prev) => [newOrder, ...prev]);
-
-            // Add system message to chat
-            const sysMsg = {
-              from: "system",
-              text: `Doctor prescribed: ${selectedMeds.join(", ")}. Order sent to pharmacy.`,
-              time: "Now",
-            };
-            setChat([...chat, sysMsg]);
-
+          onConfirm={async (selectedMeds) => {
+            await prescribeForWound(localWound, selectedMeds);
+            await refreshAllData();
+            const conversation = await ensureConversationForWound(localWound, {
+              includeCurrentUser: true,
+            });
+            const messages = await loadConversationMessages(conversation.id);
+            setChat(messages);
+            setLocalWound((prev) => ({
+              ...prev,
+              status: "Medication Prescribed",
+              conversation: conversation.id,
+            }));
             setShowPrescriptionModal(false);
           }}
         />
@@ -10307,13 +10627,16 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
 };
 
 const DoctorWoundsScreen = ({ wounds, setWounds, setMedOrders }) => {
-  const [selectedWound, setSelectedWound] = useState(null);
+  const [selectedWoundId, setSelectedWoundId] = useState(null);
+  const selectedWound = (wounds || []).find(
+    (item) => item.id === selectedWoundId,
+  );
 
   if (selectedWound)
     return (
       <WoundDetailScreen
         wound={selectedWound}
-        onBack={() => setSelectedWound(null)}
+        onBack={() => setSelectedWoundId(null)}
         userRole="doctor"
         setWounds={setWounds}
         setMedOrders={setMedOrders}
@@ -10349,7 +10672,7 @@ const DoctorWoundsScreen = ({ wounds, setWounds, setMedOrders }) => {
           wounds.map((w) => (
             <TouchableOpacity
               key={w.id}
-              onPress={() => setSelectedWound(w)}
+              onPress={() => setSelectedWoundId(w.id)}
               style={{
                 backgroundColor: "#FFF",
                 borderRadius: RFValue(16),
@@ -10404,7 +10727,7 @@ const DoctorWoundsScreen = ({ wounds, setWounds, setMedOrders }) => {
                     fontWeight: "700",
                   }}
                 >
-                  Review
+                  {w.status}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -10428,6 +10751,7 @@ const DoctorWoundsScreen = ({ wounds, setWounds, setMedOrders }) => {
 
 const PharmacyDashboard = ({ orders }) => {
   const [activeTab, setActiveTab] = useState("Pending");
+  const { updateOrderStatus } = useAppData();
   const filteredOrders = (orders || []).filter(
     (o) =>
       o.status === activeTab ||
@@ -10570,6 +10894,7 @@ const PharmacyDashboard = ({ orders }) => {
             {activeTab === "Pending" ? (
               <View style={{ flexDirection: "row" }}>
                 <TouchableOpacity
+                  onPress={() => updateOrderStatus(o, "dispatched")}
                   style={{
                     flex: 1,
                     backgroundColor: "#8B5CF6",
@@ -10584,6 +10909,7 @@ const PharmacyDashboard = ({ orders }) => {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  onPress={() => updateOrderStatus(o, "cancelled")}
                   style={{
                     flex: 1,
                     backgroundColor: "#FEE2E2",
@@ -10729,49 +11055,11 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [patientProfile, setPatientProfile] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
-  const [wounds, setWounds] = useState([
-    {
-      id: 1,
-      patientName: "Rahul Sharma",
-      description: "Deep cut on forearm from kitchen accident.",
-      status: "Review Pending",
-      date: "2026-04-07",
-      image: null,
-      chat: [
-        {
-          from: "system",
-          text: "Wound report submitted. Doctor will review shortly.",
-          time: "10:00 AM",
-        },
-      ],
-    },
-    {
-      id: 2,
-      patientName: "Sneha Gupta",
-      description: "Minor abrasion on knee, showing redness.",
-      status: "Medication Prescribed",
-      date: "2026-04-06",
-      image: null,
-      chat: [
-        { from: "system", text: "Wound report submitted.", time: "Yesterday" },
-        {
-          from: "doctor",
-          text: "Prescribed Neosporin twice daily.",
-          time: "Yesterday",
-        },
-      ],
-    },
-  ]);
-  const [medOrders, setMedOrders] = useState([
-    {
-      id: 101,
-      patient: "Sneha Gupta",
-      items: "Neosporin, Ibuprofen",
-      total: "₹450",
-      status: "Pending",
-      time: "2h ago",
-    },
-  ]);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [dataError, setDataError] = useState("");
+  const [wounds, setWounds] = useState([]);
+  const [medOrders, setMedOrders] = useState([]);
+  const [conversations, setConversations] = useState([]);
   const [patients, setPatients] = useState([
     {
       id: 1,
@@ -10809,8 +11097,354 @@ export default function App() {
   ]);
 
   const theme = THEMES[themeKey];
-
   const changeTheme = (key) => setThemeKey(key);
+
+  const fetchUsersByRole = async (role) => {
+    try {
+      return await pb.collection("UsersAuth").getFullList({
+        requestKey: null,
+        filter: `role="${role}"`,
+      });
+    } catch (error) {
+      console.log(`fetchUsersByRole(${role}) error:`, error);
+      return [];
+    }
+  };
+
+  const loadMessagePreviewMap = async (conversationIds) => {
+    if (!conversationIds.length) return {};
+    try {
+      const allMessages = await pb.collection("messages").getFullList({
+        requestKey: null,
+        sort: "-created",
+        expand: "sender",
+      });
+      const previewMap = {};
+      allMessages.forEach((record) => {
+        if (!conversationIds.includes(record.conversation)) return;
+        if (!previewMap[record.conversation]) {
+          previewMap[record.conversation] = mapMessageRecord(record);
+        }
+      });
+      return previewMap;
+    } catch (error) {
+      console.log("loadMessagePreviewMap error:", error);
+      return {};
+    }
+  };
+
+  const refreshAllData = async (
+    userOverride = currentUser,
+    roleOverride = userRole,
+  ) => {
+    const activeUser = userOverride;
+    const activeRole = roleOverride;
+
+    if (!activeUser || !activeRole) {
+      setWounds([]);
+      setMedOrders([]);
+      setConversations([]);
+      return;
+    }
+
+    try {
+      setDataLoading(true);
+      setDataError("");
+
+      const [woundRecords, orderRecords, conversationRecords] =
+        await Promise.all([
+          pb.collection("wounds").getFullList({
+            requestKey: null,
+            sort: "-created",
+            expand: "patient,doctor,conversation",
+          }),
+          pb.collection("orders").getFullList({
+            requestKey: null,
+            sort: "-updated,-created",
+            expand: "patient,conversation,wound",
+          }),
+          pb.collection("conversations").getFullList({
+            requestKey: null,
+            sort: "-updated,-created",
+            expand: "members,linkedWound",
+          }),
+        ]);
+
+      const allWounds = woundRecords.map(mapWoundRecord);
+      const allOrders = orderRecords.map(mapOrderRecord);
+      const memberConversations = conversationRecords.filter((record) =>
+        safeArray(record.members).includes(activeUser.id),
+      );
+      const previewMap = await loadMessagePreviewMap(
+        memberConversations.map((record) => record.id),
+      );
+      const allConversations = memberConversations.map((record) =>
+        mapConversationRecord(record, activeUser.id, previewMap),
+      );
+
+      if (activeRole === "patient") {
+        setWounds(
+          allWounds.filter((record) => record.patientId === activeUser.id),
+        );
+        setMedOrders(
+          allOrders.filter((record) => record.patientId === activeUser.id),
+        );
+      } else if (activeRole === "doctor") {
+        setWounds(allWounds);
+        setMedOrders(allOrders);
+      } else if (activeRole === "pharmacy") {
+        setWounds(allWounds.filter((record) => record.hasPharmacy));
+        setMedOrders(allOrders);
+      }
+
+      setConversations(allConversations);
+    } catch (error) {
+      console.log("refreshAllData error:", error);
+      setDataError(error?.message || "Unable to load app data");
+      setWounds([]);
+      setMedOrders([]);
+      setConversations([]);
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  const ensureConversationMembers = async (
+    conversationId,
+    membersToAdd = [],
+  ) => {
+    const conversation = await pb
+      .collection("conversations")
+      .getOne(conversationId, {
+        requestKey: null,
+        expand: "members,linkedWound",
+      });
+    const mergedMembers = uniqueIds([
+      ...safeArray(conversation.members),
+      ...safeArray(membersToAdd),
+    ]);
+
+    if (mergedMembers.length === safeArray(conversation.members).length) {
+      return conversation;
+    }
+
+    return await pb.collection("conversations").update(conversationId, {
+      members: mergedMembers,
+    });
+  };
+
+  const ensureConversationForWound = async (woundLike, options = {}) => {
+    const woundId = woundLike?.id || woundLike?.raw?.id;
+    if (!woundId) {
+      throw new Error("Wound not found");
+    }
+
+    let woundRecord = null;
+    try {
+      woundRecord = await pb.collection("wounds").getOne(woundId, {
+        requestKey: null,
+        expand: "patient,doctor,conversation",
+      });
+    } catch (error) {
+      woundRecord = woundLike?.raw || woundLike;
+    }
+
+    let conversationId =
+      woundRecord?.conversation || woundLike?.conversation || null;
+
+    if (!conversationId) {
+      const doctorUsers = await fetchUsersByRole("doctor");
+      const baseMembers = [
+        woundRecord?.patient,
+        ...doctorUsers.map((user) => user.id),
+      ];
+      if (options.includeCurrentUser && currentUser?.id) {
+        baseMembers.push(currentUser.id);
+      }
+      const createdConversation = await pb.collection("conversations").create({
+        title: buildConversationTitle(woundRecord),
+        linkedWound: woundId,
+        members: uniqueIds(baseMembers),
+        lastMessageAt: new Date().toISOString(),
+      });
+      conversationId = createdConversation.id;
+      await pb
+        .collection("wounds")
+        .update(woundId, { conversation: conversationId });
+      await pb.collection("messages").create({
+        conversation: conversationId,
+        kind: "system",
+        text: DEFAULT_WOUND_SYSTEM_MESSAGE,
+      });
+      await pb.collection("conversations").update(conversationId, {
+        lastMessageAt: new Date().toISOString(),
+      });
+    }
+
+    if (options.includeCurrentUser && currentUser?.id) {
+      await ensureConversationMembers(conversationId, [currentUser.id]);
+    }
+
+    return await pb.collection("conversations").getOne(conversationId, {
+      requestKey: null,
+      expand: "members,linkedWound",
+    });
+  };
+
+  const loadConversationMessages = async (conversationId) => {
+    try {
+      const records = await pb.collection("messages").getFullList({
+        requestKey: null,
+        sort: "created",
+        filter: `conversation="${conversationId}"`,
+        expand: "sender",
+      });
+      return records.map(mapMessageRecord);
+    } catch (error) {
+      console.log("loadConversationMessages filter error:", error);
+      const fallbackRecords = await pb.collection("messages").getFullList({
+        requestKey: null,
+        sort: "created",
+        expand: "sender",
+      });
+      return fallbackRecords
+        .filter((record) => record.conversation === conversationId)
+        .map(mapMessageRecord);
+    }
+  };
+
+  const sendConversationMessage = async (conversationId, text) => {
+    if (!currentUser?.id || !text?.trim()) return;
+    await pb.collection("messages").create({
+      conversation: conversationId,
+      sender: currentUser.id,
+      kind: "text",
+      text: text.trim(),
+    });
+    await pb.collection("conversations").update(conversationId, {
+      lastMessageAt: new Date().toISOString(),
+    });
+    await refreshAllData();
+  };
+
+  const createWoundReport = async ({ description, image }) => {
+    if (!currentUser?.id) {
+      throw new Error("Please login again");
+    }
+    const doctorUsers = await fetchUsersByRole("doctor");
+    const woundRecord = await pb.collection("wounds").create({
+      patient: currentUser.id,
+      description: description?.trim() || "",
+      severity: "moderate",
+      status: "review_pending",
+      notes: "",
+      hasPharmacy: false,
+    });
+    const conversation = await pb.collection("conversations").create({
+      title: buildConversationTitle(woundRecord),
+      linkedWound: woundRecord.id,
+      members: uniqueIds([
+        currentUser.id,
+        ...doctorUsers.map((user) => user.id),
+      ]),
+      lastMessageAt: new Date().toISOString(),
+    });
+    await pb.collection("wounds").update(woundRecord.id, {
+      conversation: conversation.id,
+    });
+    await pb.collection("messages").create({
+      conversation: conversation.id,
+      kind: "system",
+      text: DEFAULT_WOUND_SYSTEM_MESSAGE,
+    });
+    await refreshAllData();
+  };
+
+  const prescribeForWound = async (woundLike, selectedMeds = []) => {
+    const woundId = woundLike?.id || woundLike?.raw?.id;
+    if (!woundId) {
+      throw new Error("Wound not found");
+    }
+
+    const conversation = await ensureConversationForWound(woundLike, {
+      includeCurrentUser: true,
+    });
+    const pharmacyUsers = await fetchUsersByRole("pharmacy");
+
+    if (pharmacyUsers.length > 0) {
+      await ensureConversationMembers(
+        conversation.id,
+        pharmacyUsers.map((user) => user.id),
+      );
+    }
+
+    await pb.collection("wounds").update(woundId, {
+      status: "medication_prescribed",
+      hasPharmacy: pharmacyUsers.length > 0,
+      conversation: conversation.id,
+    });
+
+    const orderPayload = {
+      conversation: conversation.id,
+      wound: woundId,
+      patient: woundLike?.patientId || woundLike?.patient,
+      items: selectedMeds,
+      totalAmount: sumMedicationAmount(selectedMeds),
+      status: "pending",
+    };
+
+    let existingOrder = null;
+    try {
+      const records = await pb.collection("orders").getFullList({
+        requestKey: null,
+        filter: `wound="${woundId}"`,
+      });
+      existingOrder = records[0] || null;
+    } catch (error) {
+      existingOrder = null;
+    }
+
+    if (existingOrder) {
+      await pb.collection("orders").update(existingOrder.id, orderPayload);
+    } else {
+      await pb.collection("orders").create(orderPayload);
+    }
+
+    await pb.collection("messages").create({
+      conversation: conversation.id,
+      kind: "system",
+      text: `Doctor prescribed: ${selectedMeds.join(", ")}. Order sent to pharmacy.`,
+    });
+    await pb.collection("conversations").update(conversation.id, {
+      lastMessageAt: new Date().toISOString(),
+    });
+    await refreshAllData();
+  };
+
+  const updateOrderStatus = async (orderLike, nextStatus) => {
+    const orderId = orderLike?.id || orderLike?.raw?.id;
+    if (!orderId) return;
+
+    await pb.collection("orders").update(orderId, {
+      status: normalizeOrderStatus(nextStatus),
+    });
+
+    const conversationId =
+      orderLike?.conversation || orderLike?.raw?.conversation;
+    if (conversationId) {
+      await pb.collection("messages").create({
+        conversation: conversationId,
+        kind: "system",
+        text: `Pharmacy updated order status to ${humanizeOrderStatus(nextStatus)}.`,
+      });
+      await pb.collection("conversations").update(conversationId, {
+        lastMessageAt: new Date().toISOString(),
+      });
+    }
+
+    await refreshAllData();
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -10833,6 +11467,44 @@ export default function App() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!currentUser?.id || !userRole) {
+      setWounds([]);
+      setMedOrders([]);
+      setConversations([]);
+      return;
+    }
+    refreshAllData(currentUser, userRole);
+  }, [currentUser?.id, userRole]);
+
+  useEffect(() => {
+    if (!currentUser?.id || !userRole) return;
+
+    const subscribe = async () => {
+      try {
+        await pb.collection("wounds").subscribe("*", () => {
+          refreshAllData(currentUser, userRole);
+        });
+        await pb.collection("orders").subscribe("*", () => {
+          refreshAllData(currentUser, userRole);
+        });
+        await pb.collection("conversations").subscribe("*", () => {
+          refreshAllData(currentUser, userRole);
+        });
+      } catch (error) {
+        console.log("App subscription error:", error);
+      }
+    };
+
+    subscribe();
+
+    return () => {
+      pb.collection("wounds").unsubscribe("*");
+      pb.collection("orders").unsubscribe("*");
+      pb.collection("conversations").unsubscribe("*");
+    };
+  }, [currentUser?.id, userRole]);
 
   if (loadingAuth) {
     return (
@@ -10857,23 +11529,43 @@ export default function App() {
     );
   }
 
+  const appDataValue = {
+    userRole,
+    currentUser,
+    currentUserId: currentUser?.id || null,
+    wounds,
+    medOrders,
+    conversations,
+    dataLoading,
+    dataError,
+    refreshAllData,
+    ensureConversationForWound,
+    loadConversationMessages,
+    sendConversationMessage,
+    createWoundReport,
+    prescribeForWound,
+    updateOrderStatus,
+  };
+
   return (
     <ThemeContext.Provider value={{ theme, changeTheme, themeKey }}>
-      <AppContent
-        userRole={userRole}
-        setUserRole={setUserRole}
-        currentUser={currentUser}
-        setCurrentUser={setCurrentUser}
-        patientProfile={patientProfile}
-        setPatientProfile={setPatientProfile}
-        theme={theme}
-        wounds={wounds}
-        setWounds={setWounds}
-        medOrders={medOrders}
-        setMedOrders={setMedOrders}
-        patients={patients}
-        setPatients={setPatients}
-      />
+      <AppDataContext.Provider value={appDataValue}>
+        <AppContent
+          userRole={userRole}
+          setUserRole={setUserRole}
+          currentUser={currentUser}
+          setCurrentUser={setCurrentUser}
+          patientProfile={patientProfile}
+          setPatientProfile={setPatientProfile}
+          theme={theme}
+          wounds={wounds}
+          setWounds={setWounds}
+          medOrders={medOrders}
+          setMedOrders={setMedOrders}
+          patients={patients}
+          setPatients={setPatients}
+        />
+      </AppDataContext.Provider>
     </ThemeContext.Provider>
   );
 }
@@ -10972,6 +11664,18 @@ const AppContent = ({
               ),
             },
             {
+              name: "Chat",
+              label: "Chat",
+              component: PatientChatScreen,
+              icon: ({ color, focused }) => (
+                <Ionicons
+                  name={focused ? "chatbubble" : "chatbubble-outline"}
+                  size={RFValue(22)}
+                  color={color}
+                />
+              ),
+            },
+            {
               name: "Staff",
               label: "Staff",
               component: StaffManagementScreen,
@@ -11034,6 +11738,18 @@ const AppContent = ({
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "leaf" : "leaf-outline"}
+                  size={RFValue(22)}
+                  color={color}
+                />
+              ),
+            },
+            {
+              name: "Chat",
+              label: "Chat",
+              component: PatientChatScreen,
+              icon: ({ color, focused }) => (
+                <Ionicons
+                  name={focused ? "chatbubble" : "chatbubble-outline"}
                   size={RFValue(22)}
                   color={color}
                 />
@@ -11148,228 +11864,3 @@ const AppContent = ({
     </SafeAreaView>
   );
 };
-// --- STYLES ---
-const localStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  header: {
-    padding: RFValue(24),
-    paddingTop: RFValue(16),
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  headerTitle: {
-    fontSize: RFValue(26),
-    fontWeight: "800",
-    color: COLORS.textHigh,
-    letterSpacing: -0.5,
-  },
-  headerSubtitle: {
-    fontSize: RFValue(15),
-    color: COLORS.textMedium,
-    marginTop: RFValue(4),
-  },
-  headerIcon: {
-    paddingHorizontal: RFValue(10),
-    height: RFValue(36),
-    borderRadius: RFValue(22),
-    backgroundColor: COLORS.surface,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowOffset: { width: RFValue(0), height: RFValue(2) },
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  statusBadgeGreen: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.surface,
-    paddingHorizontal: RFValue(12),
-    paddingVertical: RFValue(6),
-    borderRadius: RFValue(20),
-  },
-  statusBadgeTextGreen: {
-    color: COLORS.success,
-    fontWeight: "700",
-    fontSize: RFValue(12),
-    marginLeft: RFValue(4),
-  },
-  nextActionBox: {
-    backgroundColor: "rgba(255,255,255,0.95)",
-    padding: RFValue(12),
-    borderRadius: RFValue(12),
-    marginTop: RFValue(12),
-  },
-  quickActionsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: RFValue(20),
-    marginTop: RFValue(8),
-    marginBottom: RFValue(16),
-  },
-  quickAction: {
-    alignItems: "center",
-    width: RFValue(70),
-  },
-  quickActionIcon: {
-    width: RFValue(56),
-    height: RFValue(56),
-    borderRadius: RFValue(20),
-    backgroundColor: COLORS.surface,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowOffset: { width: RFValue(0), height: RFValue(2) },
-    shadowRadius: 8,
-    elevation: 2,
-    marginBottom: RFValue(8),
-  },
-  quickActionLabel: {
-    fontSize: RFValue(12),
-    color: COLORS.textMedium,
-    fontWeight: "500",
-    textAlign: "center",
-  },
-  sectionTitleContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-    paddingHorizontal: RFValue(24),
-    marginTop: RFValue(20),
-    marginBottom: RFValue(8),
-  },
-  sectionTitle: {
-    fontSize: RFValue(18),
-    fontWeight: "700",
-    color: COLORS.textHigh,
-  },
-  sectionAction: {
-    fontSize: RFValue(14),
-    fontWeight: "600",
-    color: COLORS.primary,
-  },
-  divider: {
-    height: RFValue(1),
-    backgroundColor: COLORS.border,
-    marginVertical: 4,
-  },
-  familyAvatar: {
-    width: RFValue(40),
-    height: RFValue(40),
-    borderRadius: RFValue(20),
-    backgroundColor: COLORS.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  floatingEmergency: {
-    position: "absolute",
-    bottom: RFValue(20),
-    left: RFValue(20),
-    right: RFValue(20),
-  },
-  emergencyBtn: {
-    backgroundColor: COLORS.danger,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: RFValue(16),
-    borderRadius: RFValue(16),
-    shadowColor: COLORS.danger,
-    shadowOpacity: 0.3,
-    shadowOffset: { width: RFValue(0), height: RFValue(4) },
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  emergencyBtnText: {
-    color: COLORS.surface,
-    fontWeight: "700",
-    fontSize: RFValue(16),
-    marginLeft: RFValue(8),
-  },
-  vitalCard: {
-    width: "45%",
-    backgroundColor: COLORS.surface,
-    borderRadius: RFValue(20),
-    padding: RFValue(16),
-    margin: "2.5%",
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowOffset: { width: RFValue(0), height: RFValue(2) },
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  doctorImagePlaceholder: {
-    width: RFValue(64),
-    height: RFValue(64),
-    borderRadius: RFValue(32),
-    backgroundColor: COLORS.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  actionBtn: {
-    flex: 1,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: RFValue(12),
-    borderRadius: RFValue(12),
-  },
-  emergencyStatusPanel: {
-    margin: RFValue(24),
-    padding: RFValue(24),
-    backgroundColor: COLORS.successLight,
-    borderRadius: RFValue(16),
-    borderWidth: 1,
-    borderColor: COLORS.success,
-    alignItems: "center",
-  },
-  sosButton: {
-    width: RFValue(200),
-    height: RFValue(200),
-    borderRadius: RFValue(100),
-    backgroundColor: COLORS.dangerLight,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: COLORS.danger,
-    shadowOpacity: 0.3,
-    shadowOffset: { width: RFValue(0), height: RFValue(10) },
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  sosButtonPressed: {
-    backgroundColor: COLORS.warningLight,
-  },
-  sosButtonInner: {
-    width: RFValue(160),
-    height: RFValue(160),
-    borderRadius: RFValue(80),
-    backgroundColor: COLORS.danger,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 4,
-    borderColor: "#FFF",
-  },
-  sosButtonInnerPressed: {
-    backgroundColor: COLORS.warning,
-  },
-  sosText: {
-    color: "#FFF",
-    fontSize: RFValue(32),
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  secondaryWarningBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.border,
-    padding: RFValue(16),
-    borderRadius: RFValue(12),
-    marginBottom: RFValue(12),
-  },
-});

@@ -11,8 +11,7 @@ if (!global.EventSource) {
   global.EventSource = EventSource;
 }
 
-const PB_URL =
-  "https://9cff-2405-201-4024-e04e-b055-bde6-8d56-dd1a.ngrok-free.app";
+const PB_URL = "http://100.88.125.1:8090/";
 
 const authStore = new AsyncAuthStore({
   save: async (serialized) => {
