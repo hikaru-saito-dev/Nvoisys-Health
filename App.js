@@ -366,19 +366,22 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
   const memberRoles = uniqueIds(otherMembers.map((member) => member.role));
   const linkedWound = record.expand?.linkedWound;
   const preview = previewMap[record.id];
+  const displayName =
+    record.title ||
+    (otherMembers.length > 0
+      ? otherMembers.map((member) => member.name || member.role).join(", ")
+      : "Conversation");
+  const fallbackTitle = linkedWound ? buildConversationTitle(linkedWound) : null;
+  const linkedWoundDescription =
+    linkedWound?.description || record.title || displayName;
   return {
     id: record.id,
-    title: record.title || buildConversationTitle(linkedWound),
+    title: record.title || fallbackTitle || displayName,
     linkedWoundId: record.linkedWound || linkedWound?.id || null,
-    linkedWoundDescription:
-      linkedWound?.description || record.title || "Wound discussion",
+    linkedWoundDescription,
     members: safeArray(record.members),
     memberUsers: members,
-    displayName:
-      record.title ||
-      (otherMembers.length > 0
-        ? otherMembers.map((member) => member.name || member.role).join(", ")
-        : "Conversation"),
+    displayName,
     roleLabel:
       memberRoles.length > 0
         ? memberRoles.join(", ")
@@ -1892,11 +1895,12 @@ const PatientEmergencyScreen = ({ navigation }) => {
 const PatientChatScreen = () => {
   const { theme } = useTheme();
   const {
-    currentUser,
     currentUserId,
     conversations,
     loadConversationMessages,
     sendConversationMessage,
+    ensureDirectConversation,
+    loadDirectoryContacts,
     dataLoading,
     dataError,
   } = useAppData();
@@ -1905,13 +1909,88 @@ const PatientChatScreen = () => {
   const [contactMessages, setContactMessages] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [directoryContacts, setDirectoryContacts] = useState([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
+  const [startingChatId, setStartingChatId] = useState(null);
 
-  const filteredContacts = conversations.filter(
-    (c) =>
-      c.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.roleLabel.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.lastMsg.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredContacts = conversations.filter((c) => {
+    if (!normalizedQuery) return true;
+    return (
+      c.displayName.toLowerCase().includes(normalizedQuery) ||
+      c.roleLabel.toLowerCase().includes(normalizedQuery) ||
+      c.lastMsg.toLowerCase().includes(normalizedQuery)
+    );
+  });
+
+  const formatDirectoryContact = (user) => {
+    const role = user?.role === "pharmacy" ? "pharmacy" : "doctor";
+    const displayName = user?.name || user?.email || "Clinician";
+    return {
+      id: user?.id,
+      displayName,
+      role,
+      roleLabel: role === "pharmacy" ? "Pharmacy" : "Doctor",
+      icon: role === "pharmacy" ? "leaf" : "medical",
+      email: user?.email || "",
+    };
+  };
+
+  const showDirectoryResults = normalizedQuery.length > 0;
+  const directoryMatches = showDirectoryResults
+    ? directoryContacts
+        .filter((user) => user?.id && user.id !== currentUserId)
+        .map(formatDirectoryContact)
+        .filter((contact) => {
+          const searchValue = `${contact.displayName} ${contact.roleLabel} ${contact.email}`
+            .toLowerCase()
+            .trim();
+          return searchValue.includes(normalizedQuery);
+        })
+    : [];
+
+  const findDirectConversation = (targetId) =>
+    conversations.find((conversation) => {
+      const members = safeArray(conversation.members);
+      return (
+        !conversation.linkedWoundId &&
+        members.length === 2 &&
+        members.includes(currentUserId) &&
+        members.includes(targetId)
+      );
+    });
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadDirectory = async () => {
+      if (!currentUserId) return;
+      try {
+        setDirectoryLoading(true);
+        setDirectoryError("");
+        const records = await loadDirectoryContacts();
+        if (mounted) {
+          setDirectoryContacts(records);
+        }
+      } catch (error) {
+        if (mounted) {
+          setDirectoryError(error?.message || "Unable to load directory");
+          setDirectoryContacts([]);
+        }
+      } finally {
+        if (mounted) {
+          setDirectoryLoading(false);
+        }
+      }
+    };
+
+    loadDirectory();
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentUserId]);
 
   const loadSelectedMessages = async (conversationId) => {
     if (!conversationId) return;
@@ -1958,6 +2037,24 @@ const PatientChatScreen = () => {
     setMessage("");
     await sendConversationMessage(selectedContact.id, text);
     await loadSelectedMessages(selectedContact.id);
+  };
+
+  const handleStartChat = async (contact) => {
+    if (!contact?.id || startingChatId) return;
+    setStartingChatId(contact.id);
+    setDirectoryError("");
+    try {
+      const conversation = await ensureDirectConversation(contact);
+      if (conversation?.id) {
+        setSelectedContact(conversation);
+      } else {
+        setDirectoryError("Unable to start chat");
+      }
+    } catch (error) {
+      setDirectoryError(error?.message || "Unable to start chat");
+    } finally {
+      setStartingChatId(null);
+    }
   };
 
   const sendAttachment = () => {
@@ -2335,7 +2432,7 @@ const PatientChatScreen = () => {
             style={{ marginRight: RFValue(8) }}
           />
           <TextInput
-            placeholder="Search conversations..."
+            placeholder="Search doctors, pharmacies, or chats..."
             placeholderTextColor={theme.textTertiary}
             style={{
               flex: 1,
@@ -2350,6 +2447,175 @@ const PatientChatScreen = () => {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: RFValue(16) }}>
+        {showDirectoryResults ? (
+          <View style={{ marginBottom: RFValue(18) }}>
+            <Text
+              style={{
+                fontSize: RFValue(14),
+                fontWeight: "800",
+                color: theme.textPrimary,
+                marginBottom: RFValue(10),
+              }}
+            >
+              Doctors & Pharmacies
+            </Text>
+            {directoryLoading ? (
+              <View style={{ alignItems: "center", paddingVertical: RFValue(16) }}>
+                <Text
+                  style={{ fontSize: RFValue(12), color: theme.textTertiary }}
+                >
+                  Searching directory...
+                </Text>
+              </View>
+            ) : directoryMatches.length > 0 ? (
+              directoryMatches.map((contact) => {
+                const existingConversation = findDirectConversation(contact.id);
+                const isStarting = startingChatId === contact.id;
+                const buttonLabel = isStarting
+                  ? "Starting..."
+                  : existingConversation
+                    ? "Open chat"
+                    : "Start chat";
+                const accentColor =
+                  contact.role === "pharmacy" ? theme.success : theme.accent;
+                const accentBg =
+                  contact.role === "pharmacy"
+                    ? theme.successLight
+                    : theme.accentLight;
+                return (
+                  <TouchableOpacity
+                    key={contact.id}
+                    onPress={() => handleStartChat(contact)}
+                    disabled={isStarting}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      backgroundColor: theme.card,
+                      padding: RFValue(14),
+                      borderRadius: RFValue(18),
+                      marginBottom: RFValue(10),
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: RFValue(48),
+                        height: RFValue(48),
+                        borderRadius: RFValue(16),
+                        backgroundColor: accentBg,
+                        justifyContent: "center",
+                        alignItems: "center",
+                        marginRight: RFValue(14),
+                      }}
+                    >
+                      <Ionicons
+                        name={contact.icon}
+                        size={RFValue(22)}
+                        color={accentColor}
+                      />
+                    </View>
+                    <View style={{ flex: 1, marginRight: RFValue(10) }}>
+                      <Text
+                        style={{
+                          fontSize: RFValue(14),
+                          fontWeight: "800",
+                          color: theme.textPrimary,
+                          marginBottom: 2,
+                        }}
+                        numberOfLines={1}
+                      >
+                        {contact.displayName}
+                      </Text>
+                      <Text
+                        style={{
+                          fontSize: RFValue(12),
+                          color: theme.textSecondary,
+                          fontWeight: "700",
+                        }}
+                        numberOfLines={1}
+                      >
+                        {contact.roleLabel}
+                      </Text>
+                      {contact.email ? (
+                        <Text
+                          style={{
+                            fontSize: RFValue(11),
+                            color: theme.textTertiary,
+                            marginTop: 2,
+                          }}
+                          numberOfLines={1}
+                        >
+                          {contact.email}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View
+                      style={{
+                        paddingHorizontal: RFValue(12),
+                        paddingVertical: RFValue(6),
+                        borderRadius: RFValue(12),
+                        backgroundColor: theme.bg,
+                        borderWidth: 1,
+                        borderColor: accentColor,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: RFValue(11),
+                          fontWeight: "700",
+                          color: accentColor,
+                        }}
+                      >
+                        {buttonLabel}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            ) : (
+              <View style={{ alignItems: "center", paddingVertical: RFValue(16) }}>
+                <Ionicons
+                  name="search"
+                  size={RFValue(32)}
+                  color={theme.cardBorder}
+                  style={{ marginBottom: RFValue(10) }}
+                />
+                <Text
+                  style={{ fontSize: RFValue(12), color: theme.textTertiary }}
+                >
+                  No doctors or pharmacies match your search.
+                </Text>
+              </View>
+            )}
+            {directoryError ? (
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  color: theme.danger,
+                  marginTop: RFValue(8),
+                  textAlign: "center",
+                }}
+              >
+                {directoryError}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+
+        {showDirectoryResults ? (
+          <Text
+            style={{
+              fontSize: RFValue(14),
+              fontWeight: "800",
+              color: theme.textPrimary,
+              marginBottom: RFValue(12),
+            }}
+          >
+            Conversations
+          </Text>
+        ) : null}
+
         {dataLoading ? (
           <View style={{ alignItems: "center", paddingVertical: RFValue(60) }}>
             <Text style={{ fontSize: RFValue(14), color: theme.textTertiary }}>
@@ -11111,6 +11377,19 @@ export default function App() {
     }
   };
 
+  const loadDirectoryContacts = async () => {
+    const [doctors, pharmacies] = await Promise.all([
+      fetchUsersByRole("doctor"),
+      fetchUsersByRole("pharmacy"),
+    ]);
+    const seen = new Set();
+    return [...doctors, ...pharmacies].filter((user) => {
+      if (!user?.id || seen.has(user.id)) return false;
+      seen.add(user.id);
+      return true;
+    });
+  };
+
   const loadMessagePreviewMap = async (conversationIds) => {
     if (!conversationIds.length) return {};
     try {
@@ -11289,6 +11568,45 @@ export default function App() {
       requestKey: null,
       expand: "members,linkedWound",
     });
+  };
+
+  const ensureDirectConversation = async (targetUser) => {
+    const targetId = targetUser?.id || targetUser;
+    if (!currentUser?.id || !targetId) {
+      throw new Error("Chat participant not found");
+    }
+    if (targetId === currentUser.id) {
+      throw new Error("Cannot start a chat with yourself");
+    }
+
+    const existingConversation = conversations.find((conversation) => {
+      const members = safeArray(conversation.members);
+      return (
+        !conversation.linkedWoundId &&
+        members.length === 2 &&
+        members.includes(currentUser.id) &&
+        members.includes(targetId)
+      );
+    });
+
+    if (existingConversation) {
+      return existingConversation;
+    }
+
+    const createdConversation = await pb.collection("conversations").create({
+      members: uniqueIds([currentUser.id, targetId]),
+      lastMessageAt: new Date().toISOString(),
+    });
+
+    const hydratedConversation = await pb
+      .collection("conversations")
+      .getOne(createdConversation.id, {
+        requestKey: null,
+        expand: "members,linkedWound",
+      });
+
+    await refreshAllData();
+    return mapConversationRecord(hydratedConversation, currentUser.id, {});
   };
 
   const loadConversationMessages = async (conversationId) => {
@@ -11540,6 +11858,8 @@ export default function App() {
     dataError,
     refreshAllData,
     ensureConversationForWound,
+    ensureDirectConversation,
+    loadDirectoryContacts,
     loadConversationMessages,
     sendConversationMessage,
     createWoundReport,
