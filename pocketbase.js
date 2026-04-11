@@ -36,8 +36,22 @@ function normalizeRole(role) {
   return role;
 }
 
+export async function restoreAuth() {
+  try {
+    if (pb.authStore.isValid) {
+      await pb.collection("UsersAuth").authRefresh();
+    }
+  } catch (error) {
+    pb.authStore.clear();
+  }
+}
+
+function getAuthUser() {
+  return pb.authStore.record || pb.authStore.model || null;
+}
+
 function getSessionPayload(profile) {
-  const user = pb.authStore.record;
+  const user = getAuthUser();
 
   if (!user) {
     throw new Error("No authenticated user");
@@ -51,18 +65,8 @@ function getSessionPayload(profile) {
   };
 }
 
-export async function restoreAuth() {
-  try {
-    if (pb.authStore.isValid) {
-      await pb.collection("UsersAuth").authRefresh();
-    }
-  } catch (error) {
-    pb.authStore.clear();
-  }
-}
-
 export async function ensureRoleProfile(roleOverride = null) {
-  const user = pb.authStore.record;
+  const user = getAuthUser();
 
   if (!user) {
     throw new Error("No authenticated user");
@@ -76,9 +80,10 @@ export async function ensureRoleProfile(roleOverride = null) {
       .collection(collection)
       .getFirstListItem(`user="${user.id}"`, { requestKey: null });
   } catch (error) {
-    return await pb.collection(collection).create({
-      user: user.id,
-    });
+    if (error?.status === 404) {
+      return await pb.collection(collection).create({ user: user.id });
+    }
+    throw error;
   }
 }
 
@@ -93,14 +98,27 @@ export async function signUpWithEmail({ name, email, password, role }) {
     role,
   });
 
-  await pb.collection("UsersAuth").authWithPassword(email.trim(), password);
+  const authData = await pb
+    .collection("UsersAuth")
+    .authWithPassword(email.trim(), password);
+
+  // defensive fallback for older SDK behavior
+  if (!getAuthUser() && authData?.token && authData?.record) {
+    pb.authStore.save(authData.token, authData.record);
+  }
 
   const profile = await ensureRoleProfile(role);
   return getSessionPayload(profile);
 }
 
 export async function loginWithEmail({ email, password }) {
-  await pb.collection("UsersAuth").authWithPassword(email.trim(), password);
+  const authData = await pb
+    .collection("UsersAuth")
+    .authWithPassword(email.trim(), password);
+
+  if (!getAuthUser() && authData?.token && authData?.record) {
+    pb.authStore.save(authData.token, authData.record);
+  }
 
   const profile = await ensureRoleProfile();
   return getSessionPayload(profile);
