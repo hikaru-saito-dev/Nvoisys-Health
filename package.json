@@ -50,6 +50,7 @@
     "ws": "^8.16.0"
   },
   "devDependencies": {
+    "@react-native/gradle-plugin": "^0.81.5",
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",

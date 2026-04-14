@@ -334,11 +334,22 @@ const sumMedicationAmount = (items) =>
     0,
   );
 
+const resolveMessageText = (record) => {
+  const value =
+    record?.text ||
+    record?.message ||
+    record?.content ||
+    record?.body ||
+    "";
+  if (typeof value === "string") return value;
+  return value ? String(value) : "";
+};
+
 const mapMessageRecord = (record) => {
   const senderRecord = record?.expand?.sender;
   return {
     id: record.id,
-    text: record.text || "",
+    text: resolveMessageText(record),
     kind: record.kind || "text",
     senderId: record.sender || null,
     senderRole: senderRecord?.role || (record.sender ? "user" : "system"),
@@ -872,6 +883,7 @@ const PatientHomeScreen = () => {
   const { theme } = useTheme();
   const [selectedEmoji, setSelectedEmoji] = useState(null);
   const [showVideoCall, setShowVideoCall] = useState(false);
+  const [showAudioCall, setShowAudioCall] = useState(false);
   const [showAppointment, setShowAppointment] = useState(false);
   const [showPrescription, setShowPrescription] = useState(false);
   const [showMeds, setShowMeds] = useState(false);
@@ -882,6 +894,10 @@ const PatientHomeScreen = () => {
     const handleBack = () => {
       if (showVideoCall) {
         setShowVideoCall(false);
+        return true;
+      }
+      if (showAudioCall) {
+        setShowAudioCall(false);
         return true;
       }
       if (showAppointment) {
@@ -913,6 +929,7 @@ const PatientHomeScreen = () => {
     return () => subscription.remove();
   }, [
     showVideoCall,
+    showAudioCall,
     showAppointment,
     showPrescription,
     showMeds,
@@ -922,6 +939,8 @@ const PatientHomeScreen = () => {
 
   if (showVideoCall)
     return <VideoCallScreen onBack={() => setShowVideoCall(false)} />;
+  if (showAudioCall)
+    return <AudioCallScreen onBack={() => setShowAudioCall(false)} />;
   if (showAppointment)
     return (
       <AppointmentBookingScreen onBack={() => setShowAppointment(false)} />
@@ -1246,65 +1265,119 @@ const PatientHomeScreen = () => {
               </Text>
             </View>
 
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: RFValue(16),
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => setShowVideoCall(true)}
+            <View style={{ marginBottom: RFValue(16) }}>
+              <View
                 style={{
-                  flex: 1,
-                  backgroundColor: theme.card,
-                  borderRadius: RFValue(16),
-                  padding: RFValue(16),
-                  marginRight: RFValue(8),
-                  shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.06,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                  elevation: 3,
-                  alignItems: "center",
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  marginBottom: RFValue(12),
                 }}
               >
-                <View
+                <TouchableOpacity
+                  onPress={() => setShowVideoCall(true)}
                   style={{
-                    paddingHorizontal: RFValue(10),
-                    height: RFValue(36),
-                    borderRadius: RFValue(14),
-                    backgroundColor: theme.bg,
-                    justifyContent: "center",
+                    flex: 1,
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(16),
+                    padding: RFValue(16),
+                    marginRight: RFValue(8),
+                    shadowColor: theme.shadowColor,
+                    shadowOpacity: 0.06,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowRadius: 12,
+                    elevation: 3,
                     alignItems: "center",
-                    marginBottom: RFValue(8),
                   }}
                 >
-                  <Ionicons
-                    name="videocam"
-                    size={RFValue(22)}
-                    color={theme.accent}
-                  />
-                </View>
-                <Text
+                  <View
+                    style={{
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
+                      borderRadius: RFValue(14),
+                      backgroundColor: theme.bg,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginBottom: RFValue(8),
+                    }}
+                  >
+                    <Ionicons
+                      name="videocam"
+                      size={RFValue(22)}
+                      color={theme.accent}
+                    />
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    Video Call
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(2),
+                    }}
+                  >
+                    Consult a doctor
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setShowAudioCall(true)}
                   style={{
-                    fontSize: RFValue(12),
-                    fontWeight: "700",
-                    color: theme.textPrimary,
+                    flex: 1,
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(16),
+                    padding: RFValue(16),
+                    marginLeft: RFValue(8),
+                    shadowColor: theme.shadowColor,
+                    shadowOpacity: 0.06,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowRadius: 12,
+                    elevation: 3,
+                    alignItems: "center",
                   }}
                 >
-                  Video Call
-                </Text>
-                <Text
-                  style={{
-                    fontSize: RFValue(10),
-                    color: theme.textSecondary,
-                    marginTop: RFValue(2),
-                  }}
-                >
-                  Consult a doctor
-                </Text>
-              </TouchableOpacity>
+                  <View
+                    style={{
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
+                      borderRadius: RFValue(14),
+                      backgroundColor: theme.warningLight,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginBottom: RFValue(8),
+                    }}
+                  >
+                    <Ionicons
+                      name="call"
+                      size={RFValue(22)}
+                      color={theme.warning}
+                    />
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    Audio Call
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(2),
+                    }}
+                  >
+                    Talk to a doctor
+                  </Text>
+                </TouchableOpacity>
+              </View>
               <TouchableOpacity
                 onPress={() => setShowAppointment(true)}
                 style={{
@@ -1312,7 +1385,6 @@ const PatientHomeScreen = () => {
                   backgroundColor: theme.card,
                   borderRadius: RFValue(16),
                   padding: RFValue(16),
-                  marginLeft: RFValue(8),
                   shadowColor: theme.shadowColor,
                   shadowOpacity: 0.06,
                   shadowOffset: { width: 0, height: 4 },
@@ -7913,12 +7985,12 @@ const DoctorProfileScreen = ({ onLogout }) => {
 // TELEMEDICINE SCREENS
 // ========================================
 
-const VideoCallScreen = ({ onBack }) => {
+const AudioCallScreen = ({ onBack }) => {
   const { theme } = useTheme();
   const [callDuration, setCallDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const [isFrontCamera, setIsFrontCamera] = useState(true);
+  const [status, setStatus] = useState("Connecting...");
+  const localStreamRef = useRef(null);
 
   useEffect(() => {
     const interval = setInterval(
@@ -7928,10 +8000,258 @@ const VideoCallScreen = ({ onBack }) => {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const startAudio = async () => {
+      try {
+        const stream = await mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        if (!mounted) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        localStreamRef.current = stream;
+        setStatus("Connected");
+      } catch (error) {
+        if (mounted) {
+          setStatus("Microphone unavailable");
+        }
+      }
+    };
+
+    startAudio();
+
+    return () => {
+      mounted = false;
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+    };
+  }, []);
+
   const formatTime = (s) => {
     const mins = Math.floor(s / 60);
     const secs = s % 60;
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const toggleMute = () => {
+    if (!localStreamRef.current) return;
+    const audioTracks = localStreamRef.current.getAudioTracks();
+    if (audioTracks.length === 0) return;
+    const nextEnabled = !audioTracks[0].enabled;
+    audioTracks.forEach((track) => {
+      track.enabled = nextEnabled;
+    });
+    setIsMuted(!nextEnabled);
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#0B1120" }}>
+      <StatusBar barStyle="light-content" backgroundColor="#0B1120" />
+
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          padding: RFValue(24),
+        }}
+      >
+        <View
+          style={{
+            width: RFValue(120),
+            height: RFValue(120),
+            borderRadius: RFValue(60),
+            backgroundColor: theme.accent,
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: RFValue(16),
+          }}
+        >
+          <Ionicons name="call" size={RFValue(48)} color="#FFF" />
+        </View>
+        <Text
+          style={{
+            color: "#FFF",
+            fontSize: RFValue(20),
+            fontWeight: "800",
+          }}
+        >
+          Doctor
+        </Text>
+        <Text
+          style={{
+            color: "rgba(255,255,255,0.7)",
+            fontSize: RFValue(14),
+            marginTop: RFValue(6),
+          }}
+        >
+          {formatTime(callDuration)}
+        </Text>
+        <Text
+          style={{
+            color: "rgba(255,255,255,0.6)",
+            fontSize: RFValue(12),
+            marginTop: RFValue(4),
+          }}
+        >
+          {status}
+        </Text>
+      </View>
+
+      <View
+        style={{
+          padding: RFValue(24),
+          paddingBottom: Platform.OS === "ios" ? 40 : 24,
+          flexDirection: "row",
+          justifyContent: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={toggleMute}
+          style={{
+            width: RFValue(52),
+            height: RFValue(52),
+            borderRadius: RFValue(26),
+            backgroundColor: isMuted ? "#EF4444" : "rgba(255,255,255,0.15)",
+            justifyContent: "center",
+            alignItems: "center",
+            marginHorizontal: RFValue(12),
+          }}
+        >
+          <Ionicons
+            name={isMuted ? "mic-off" : "mic"}
+            size={RFValue(24)}
+            color="#FFF"
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(64),
+            height: RFValue(64),
+            borderRadius: RFValue(32),
+            backgroundColor: "#EF4444",
+            justifyContent: "center",
+            alignItems: "center",
+            shadowColor: "#EF4444",
+            shadowOpacity: 0.4,
+            shadowOffset: { width: 0, height: 4 },
+            shadowRadius: 12,
+            elevation: 6,
+            marginHorizontal: RFValue(12),
+          }}
+        >
+          <Ionicons
+            name="call"
+            size={RFValue(28)}
+            color="#FFF"
+            style={{ transform: [{ rotate: "135deg" }] }}
+          />
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+};
+
+const VideoCallScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  const [callDuration, setCallDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [isFrontCamera, setIsFrontCamera] = useState(true);
+  const [localStream, setLocalStream] = useState(null);
+  const localStreamRef = useRef(null);
+
+  useEffect(() => {
+    const interval = setInterval(
+      () => setCallDuration((prev) => prev + 1),
+      1000,
+    );
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const startStream = async () => {
+      try {
+        const stream = await mediaDevices.getUserMedia({
+          audio: true,
+          video: { facingMode: "user" },
+        });
+        if (!mounted) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+        const videoTracks = stream.getVideoTracks();
+        setIsVideoOff(videoTracks.length === 0);
+      } catch (error) {
+        if (mounted) {
+          setIsVideoOff(true);
+        }
+      }
+    };
+
+    startStream();
+
+    return () => {
+      mounted = false;
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+    };
+  }, []);
+
+  const formatTime = (s) => {
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const toggleMute = () => {
+    if (!localStreamRef.current) return;
+    const audioTracks = localStreamRef.current.getAudioTracks();
+    if (audioTracks.length === 0) return;
+    const nextEnabled = !audioTracks[0].enabled;
+    audioTracks.forEach((track) => {
+      track.enabled = nextEnabled;
+    });
+    setIsMuted(!nextEnabled);
+  };
+
+  const toggleVideo = () => {
+    if (!localStreamRef.current) return;
+    const videoTracks = localStreamRef.current.getVideoTracks();
+    if (videoTracks.length === 0) return;
+    const nextEnabled = !videoTracks[0].enabled;
+    videoTracks.forEach((track) => {
+      track.enabled = nextEnabled;
+    });
+    setIsVideoOff(!nextEnabled);
+  };
+
+  const handleSwitchCamera = () => {
+    if (!localStreamRef.current) return;
+    const videoTrack = localStreamRef.current.getVideoTracks()[0];
+    if (videoTrack?.switchCamera) {
+      videoTrack.switchCamera();
+    } else if (videoTrack?._switchCamera) {
+      videoTrack._switchCamera();
+    } else if (videoTrack?.applyConstraints) {
+      videoTrack.applyConstraints({
+        facingMode: isFrontCamera ? "environment" : "user",
+      });
+    }
+    setIsFrontCamera((prev) => !prev);
   };
 
   return (
@@ -7996,23 +8316,44 @@ const VideoCallScreen = ({ onBack }) => {
           shadowOffset: { width: 0, height: 4 },
           shadowRadius: 12,
           elevation: 8,
+          overflow: "hidden",
         }}
       >
-        {isVideoOff ? (
-          <Ionicons name="videocam-off" size={RFValue(28)} color="#9CA3AF" />
+        {localStream && !isVideoOff ? (
+          <RTCView
+            streamURL={localStream.toURL()}
+            style={{ width: "100%", height: "100%" }}
+            objectFit="cover"
+            mirror={isFrontCamera}
+          />
         ) : (
-          <Ionicons name="person" size={RFValue(36)} color="#E5E7EB" />
+          <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+            <Ionicons
+              name={isVideoOff ? "videocam-off" : "person"}
+              size={RFValue(32)}
+              color="#E5E7EB"
+            />
+          </View>
         )}
-        <Text
+        <View
           style={{
-            color: "#FFF",
-            fontSize: RFValue(10),
-            marginTop: RFValue(4),
-            fontWeight: "600",
+            position: "absolute",
+            bottom: RFValue(6),
+            left: 0,
+            right: 0,
+            alignItems: "center",
           }}
         >
-          You
-        </Text>
+          <Text
+            style={{
+              color: "#FFF",
+              fontSize: RFValue(10),
+              fontWeight: "600",
+            }}
+          >
+            You
+          </Text>
+        </View>
       </View>
 
       {/* Call Controls */}
@@ -8031,7 +8372,7 @@ const VideoCallScreen = ({ onBack }) => {
           }}
         >
           <TouchableOpacity
-            onPress={() => setIsMuted(!isMuted)}
+            onPress={toggleMute}
             style={{
               width: RFValue(52),
               height: RFValue(52),
@@ -8049,7 +8390,7 @@ const VideoCallScreen = ({ onBack }) => {
             />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setIsVideoOff(!isVideoOff)}
+            onPress={toggleVideo}
             style={{
               width: RFValue(52),
               height: RFValue(52),
@@ -8069,7 +8410,7 @@ const VideoCallScreen = ({ onBack }) => {
             />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setIsFrontCamera(!isFrontCamera)}
+            onPress={handleSwitchCamera}
             style={{
               width: RFValue(52),
               height: RFValue(52),
@@ -12050,17 +12391,34 @@ export default function App() {
   };
 
   const sendConversationMessage = async (conversationId, text) => {
-    if (!currentUser?.id || !text?.trim()) return;
-    await pb.collection("messages").create({
-      conversation: conversationId,
-      sender: currentUser.id,
-      kind: "text",
-      text: text.trim(),
-    });
+    if (!currentUser?.id || !text?.trim()) return null;
+    const trimmed = text.trim();
+    let createdMessage = null;
+    try {
+      createdMessage = await pb.collection("messages").create({
+        conversation: conversationId,
+        sender: currentUser.id,
+        kind: "text",
+        text: trimmed,
+      });
+    } catch (error) {
+      try {
+        createdMessage = await pb.collection("messages").create({
+          conversation: conversationId,
+          sender: currentUser.id,
+          kind: "text",
+          message: trimmed,
+        });
+      } catch (fallbackError) {
+        console.log("sendConversationMessage error:", fallbackError);
+        return null;
+      }
+    }
     await pb.collection("conversations").update(conversationId, {
       lastMessageAt: new Date().toISOString(),
     });
     await refreshAllData();
+    return createdMessage ? mapMessageRecord(createdMessage) : null;
   };
 
   const createWoundReport = async ({ description, image }) => {
