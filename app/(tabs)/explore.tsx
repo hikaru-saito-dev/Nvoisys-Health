@@ -1,112 +1,145 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
+import { Link } from 'expo-router';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Collapsible } from '@/components/ui/collapsible';
-import { ExternalLink } from '@/components/external-link';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Fonts } from '@/constants/theme';
+import { PatientTheme as T } from '@/constants/patient-theme';
 
-export default function TabTwoScreen() {
+export default function MoreScreen() {
+  const version =
+    Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? Constants.nativeBuildVersion ?? '—';
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText
-          type="title"
-          style={{
-            fontFamily: Fonts.rounded,
-          }}>
-          Explore
-        </ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image
-          source={require('@/assets/images/react-logo.png')}
-          style={{ width: 100, height: 100, alignSelf: 'center' }}
-        />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful{' '}
-          <ThemedText type="defaultSemiBold" style={{ fontFamily: Fonts.mono }}>
-            react-native-reanimated
-          </ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        <Text style={styles.title}>More</Text>
+        <Text style={styles.sub}>Shortcuts and information for your care in Nvoisys Health.</Text>
+
+        <Text style={styles.section}>Care</Text>
+        <Link href="/(tabs)/doctors" asChild>
+          <Pressable style={styles.row}>
+            <View style={styles.rowIcon}>
+              <Ionicons name="search" size={22} color={T.brand} />
+            </View>
+            <View style={styles.rowBody}>
+              <Text style={styles.rowTitle}>Find doctors</Text>
+              <Text style={styles.rowHint}>Search profiles and book a visit</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={T.textMuted} />
+          </Pressable>
+        </Link>
+        <Link href="/(tabs)/wound-check" asChild>
+          <Pressable style={styles.row}>
+            <View style={styles.rowIcon}>
+              <Ionicons name="camera-outline" size={22} color={T.brand} />
+            </View>
+            <View style={styles.rowBody}>
+              <Text style={styles.rowTitle}>Wound check</Text>
+              <Text style={styles.rowHint}>Add photos and notes for your care team</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={T.textMuted} />
+          </Pressable>
+        </Link>
+
+        <Text style={styles.section}>Using the app</Text>
+        <View style={styles.bulletCard}>
+          <Text style={styles.bulletLine}>
+            <Text style={styles.bulletMark}>• </Text>
+            Sign in on Home to see appointments and wound reports pulled from your organisation.
+          </Text>
+          <Text style={styles.bulletLine}>
+            <Text style={styles.bulletMark}>• </Text>
+            Book from a doctor&apos;s profile; your upcoming visits appear on Home.
+          </Text>
+          <Text style={styles.bulletLine}>
+            <Text style={styles.bulletMark}>• </Text>
+            Use Wound check when your clinician has asked for follow-up images or descriptions.
+          </Text>
+        </View>
+
+        <Text style={styles.section}>About</Text>
+        <View style={styles.aboutCard}>
+          <View style={styles.brandMark}>
+            <Ionicons name="heart" size={22} color={T.brand} />
+          </View>
+          <View style={styles.aboutBody}>
+            <Text style={styles.aboutTitle}>Nvoisys Health</Text>
+            <Text style={styles.aboutMeta}>Patient app · Version {version}</Text>
+          </View>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  safe: { flex: 1, backgroundColor: T.bg },
+  scroll: { padding: 20, paddingBottom: 32 },
+  title: { fontSize: 26, fontWeight: '800', color: T.text, letterSpacing: -0.5 },
+  sub: { fontSize: 14, color: T.textSecondary, marginTop: 8, marginBottom: 8, lineHeight: 20, maxWidth: 320 },
+  section: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: T.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: 20,
+    marginBottom: 12,
   },
-  titleContainer: {
+  row: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    backgroundColor: T.bgElevated,
+    borderRadius: T.radiusMd,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: T.border,
+    ...T.shadowSoft,
   },
+  rowIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: T.brandMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  rowBody: { flex: 1, minWidth: 0 },
+  rowTitle: { fontSize: 16, fontWeight: '800', color: T.text },
+  rowHint: { fontSize: 13, color: T.textSecondary, marginTop: 4, lineHeight: 18 },
+  bulletCard: {
+    backgroundColor: T.bgElevated,
+    borderRadius: T.radiusMd,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: T.border,
+    ...T.shadowSoft,
+  },
+  bulletLine: { fontSize: 14, color: T.textSecondary, lineHeight: 22, marginBottom: 10 },
+  bulletMark: { color: T.brand, fontWeight: '800' },
+  aboutCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: T.bgElevated,
+    borderRadius: T.radiusLg,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: T.border,
+    ...T.shadowCard,
+  },
+  brandMark: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: T.brandMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  aboutBody: { flex: 1 },
+  aboutTitle: { fontSize: 17, fontWeight: '800', color: T.text },
+  aboutMeta: { fontSize: 13, color: T.textMuted, marginTop: 4 },
 });
