@@ -347,13 +347,14 @@ const resolveMessageText = (record) => {
 
 const mapMessageRecord = (record) => {
   const senderRecord = record?.expand?.sender;
+  const isSystem = record?.kind === "system";
   return {
     id: record.id,
     text: resolveMessageText(record),
     kind: record.kind || "text",
     senderId: record.sender || null,
-    senderRole: senderRecord?.role || (record.sender ? "user" : "system"),
-    senderName: senderRecord?.name || (record.sender ? "User" : "System"),
+    senderRole: senderRecord?.role || (isSystem ? "system" : "user"),
+    senderName: senderRecord?.name || (isSystem ? "System" : "User"),
     time: formatTimeValue(record.created),
     created: record.created,
     raw: record,
@@ -2494,10 +2495,17 @@ const PatientChatScreen = () => {
 
   const sendMessage = async () => {
     if (!message.trim() || !selectedContact?.id) return;
-    const text = message;
-    setMessage("");
-    await sendConversationMessage(selectedContact.id, text);
-    await loadSelectedMessages(selectedContact.id);
+    const text = message.trim();
+    const created = await sendConversationMessage(selectedContact.id, text);
+    if (created) {
+      setMessage("");
+      setContactMessages((prev) => {
+        if (prev.some((item) => item.id === created.id)) return prev;
+        return [...prev, created];
+      });
+    } else {
+      setMessage(text);
+    }
   };
 
   const handleStartChat = async (contact) => {
@@ -2663,8 +2671,7 @@ const PatientChatScreen = () => {
             contactMessages.map((msg) => {
               const isCurrentUser =
                 msg.senderId && msg.senderId === currentUserId;
-              const isSystem =
-                msg.kind === "system" || msg.senderRole === "system";
+              const isSystem = msg.kind === "system";
               return (
                 <View
                   key={msg.id}
@@ -11097,10 +11104,17 @@ const WoundDetailScreen = ({
     const conversation = await ensureConversationForWound(localWound, {
       includeCurrentUser: userRole !== "patient",
     });
-    await sendConversationMessage(conversation.id, message);
-    setMessage("");
-    const messages = await loadConversationMessages(conversation.id);
-    setChat(messages);
+    const text = message.trim();
+    const created = await sendConversationMessage(conversation.id, text);
+    if (created) {
+      setMessage("");
+      setChat((prev) => {
+        if (prev.some((item) => item.id === created.id)) return prev;
+        return [...prev, created];
+      });
+    } else {
+      setMessage(text);
+    }
   };
 
   const woundOrder = (medOrders || []).find(
@@ -11269,8 +11283,7 @@ const WoundDetailScreen = ({
             ) : chat.length > 0 ? (
               chat.map((c) => {
                 const isMine = c.senderId && c.senderId === currentUserId;
-                const isSystem =
-                  c.kind === "system" || c.senderRole === "system";
+                const isSystem = c.kind === "system";
                 return (
                   <View
                     key={c.id}
@@ -12417,8 +12430,22 @@ export default function App() {
     await pb.collection("conversations").update(conversationId, {
       lastMessageAt: new Date().toISOString(),
     });
-    await refreshAllData();
-    return createdMessage ? mapMessageRecord(createdMessage) : null;
+    const mappedMessage = createdMessage ? mapMessageRecord(createdMessage) : null;
+    if (mappedMessage) {
+      setConversations((prev) => {
+        const index = prev.findIndex((item) => item.id === conversationId);
+        if (index === -1) return prev;
+        const updated = {
+          ...prev[index],
+          lastMsg: mappedMessage.text || prev[index].lastMsg,
+          time: formatTimeValue(mappedMessage.created || new Date().toISOString()),
+        };
+        const next = [...prev];
+        next.splice(index, 1);
+        return [updated, ...next];
+      });
+    }
+    return mappedMessage;
   };
 
   const createWoundReport = async ({ description, image }) => {
