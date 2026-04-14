@@ -11,7 +11,7 @@ if (!global.EventSource) {
   global.EventSource = EventSource;
 }
 
-const PB_URL = "http://100.88.125.1:8090/";
+const PB_URL = "https://vpn.jpoop.in";
 
 const authStore = new AsyncAuthStore({
   save: async (serialized) => {

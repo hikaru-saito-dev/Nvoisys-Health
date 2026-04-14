@@ -23,6 +23,14 @@ import {
   BackHandler,
 } from "react-native";
 import {
+  RTCPeerConnection,
+  RTCIceCandidate,
+  RTCSessionDescription,
+  RTCView,
+  mediaDevices,
+} from "@livekit/react-native-webrtc";
+import Constants from "expo-constants";
+import {
   Ionicons,
   MaterialCommunityIcons,
   FontAwesome5,
@@ -246,6 +254,21 @@ const MEDICINE_PRICE_MAP = {
 
 const DEFAULT_WOUND_SYSTEM_MESSAGE =
   "Wound report submitted. Doctor will review shortly.";
+
+const SIGNALING_SERVER_URL = (() => {
+  if (process.env.EXPO_PUBLIC_SIGNALING_URL) {
+    return process.env.EXPO_PUBLIC_SIGNALING_URL;
+  }
+  const hostUri =
+    Constants.expoConfig?.hostUri ||
+    Constants.manifest2?.extra?.expoClient?.hostUri;
+  if (hostUri) {
+    const host = hostUri.split(":")[0];
+    return `ws://${host}:8080`;
+  }
+  return "ws://localhost:8080";
+})();
+const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 
@@ -1892,6 +1915,371 @@ const PatientEmergencyScreen = ({ navigation }) => {
   );
 };
 
+const CallScreen = ({ conversationId, callType = "video", onClose, contact }) => {
+  const { theme } = useTheme();
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [status, setStatus] = useState("Connecting...");
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(callType === "video");
+  const pcRef = useRef(null);
+  const wsRef = useRef(null);
+  const roleRef = useRef("receiver");
+
+  const cleanupStreams = () => {
+    if (localStream) {
+      localStream.getTracks().forEach((track) => track.stop());
+    }
+    setLocalStream(null);
+    setRemoteStream(null);
+  };
+
+  const closeConnection = () => {
+    if (wsRef.current) {
+      try {
+        wsRef.current.send(JSON.stringify({ type: "leave" }));
+      } catch (error) {
+        // ignore send errors on teardown
+      }
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+    cleanupStreams();
+  };
+
+  const handleClose = () => {
+    closeConnection();
+    onClose();
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const setupCall = async () => {
+      try {
+        const stream = await mediaDevices.getUserMedia({
+          audio: true,
+          video: isVideoEnabled,
+        });
+        if (!mounted) return;
+        setLocalStream(stream);
+
+        const peerConnection = new RTCPeerConnection({
+          iceServers: ICE_SERVERS,
+        });
+        pcRef.current = peerConnection;
+
+        stream.getTracks().forEach((track) => {
+          peerConnection.addTrack(track, stream);
+        });
+
+        peerConnection.ontrack = (event) => {
+          if (!mounted) return;
+          const [remote] = event.streams;
+          if (remote) {
+            setRemoteStream(remote);
+            setStatus("Connected");
+          }
+        };
+
+        peerConnection.onicecandidate = (event) => {
+          if (event.candidate && wsRef.current) {
+            wsRef.current.send(
+              JSON.stringify({ type: "ice", candidate: event.candidate }),
+            );
+          }
+        };
+
+        const ws = new WebSocket(SIGNALING_SERVER_URL);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          ws.send(
+            JSON.stringify({
+              type: "join",
+              roomId: conversationId,
+              userId: contact?.id || null,
+            }),
+          );
+        };
+
+        ws.onmessage = async (event) => {
+          let payload;
+          try {
+            payload = JSON.parse(event.data);
+          } catch (error) {
+            return;
+          }
+
+          if (!payload?.type) return;
+
+          if (payload.type === "joined") {
+            roleRef.current = payload.role || "receiver";
+            if (payload.role === "initiator") {
+              setStatus("Waiting for participant...");
+            }
+            return;
+          }
+
+          if (payload.type === "ready" && roleRef.current === "initiator") {
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            ws.send(JSON.stringify({ type: "offer", sdp: offer }));
+            setStatus("Calling...");
+            return;
+          }
+
+          if (payload.type === "offer") {
+            await peerConnection.setRemoteDescription(
+              new RTCSessionDescription(payload.sdp),
+            );
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            ws.send(JSON.stringify({ type: "answer", sdp: answer }));
+            setStatus("Connecting...");
+            return;
+          }
+
+          if (payload.type === "answer") {
+            await peerConnection.setRemoteDescription(
+              new RTCSessionDescription(payload.sdp),
+            );
+            return;
+          }
+
+          if (payload.type === "ice" && payload.candidate) {
+            await peerConnection.addIceCandidate(
+              new RTCIceCandidate(payload.candidate),
+            );
+            return;
+          }
+
+          if (payload.type === "peer-left") {
+            setStatus("Participant left");
+            setTimeout(() => {
+              if (mounted) handleClose();
+            }, 500);
+          }
+        };
+
+        ws.onerror = () => {
+          if (mounted) setStatus("Signaling error");
+        };
+      } catch (error) {
+        if (mounted) {
+          setStatus("Unable to start call");
+        }
+      }
+    };
+
+    setupCall();
+
+    return () => {
+      mounted = false;
+      closeConnection();
+    };
+  }, [conversationId]);
+
+  const toggleMute = () => {
+    if (!localStream) return;
+    const audioTracks = localStream.getAudioTracks();
+    audioTracks.forEach((track) => {
+      track.enabled = !track.enabled;
+    });
+    setIsMuted(audioTracks.length > 0 ? !audioTracks[0].enabled : false);
+  };
+
+  const toggleVideo = () => {
+    if (!localStream) return;
+    const videoTracks = localStream.getVideoTracks();
+    if (videoTracks.length === 0) return;
+    videoTracks.forEach((track) => {
+      track.enabled = !track.enabled;
+    });
+    setIsVideoEnabled(videoTracks.length > 0 ? videoTracks[0].enabled : false);
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#0B1120" }}>
+      <StatusBar barStyle="light-content" backgroundColor="#0B1120" />
+      <View
+        style={{
+          padding: RFValue(16),
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <TouchableOpacity
+          onPress={handleClose}
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: "rgba(255,255,255,0.1)",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Ionicons name="close" size={RFValue(20)} color="#FFF" />
+        </TouchableOpacity>
+        <View style={{ flex: 1, marginLeft: RFValue(12) }}>
+          <Text
+            style={{
+              fontSize: RFValue(16),
+              fontWeight: "800",
+              color: "#FFF",
+            }}
+            numberOfLines={1}
+          >
+            {contact?.displayName || "Call"}
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: "rgba(255,255,255,0.7)",
+              marginTop: 2,
+            }}
+          >
+            {status}
+          </Text>
+        </View>
+      </View>
+
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        {remoteStream ? (
+          <RTCView
+            streamURL={remoteStream.toURL()}
+            style={{ width: "100%", height: "100%" }}
+            objectFit="cover"
+          />
+        ) : (
+          <View
+            style={{
+              width: RFValue(140),
+              height: RFValue(140),
+              borderRadius: RFValue(70),
+              backgroundColor: "rgba(255,255,255,0.08)",
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+            <Ionicons name="person" size={RFValue(50)} color="#FFF" />
+          </View>
+        )}
+        {localStream ? (
+          <View
+            style={{
+              position: "absolute",
+              bottom: RFValue(20),
+              right: RFValue(16),
+              width: RFValue(110),
+              height: RFValue(160),
+              borderRadius: RFValue(16),
+              overflow: "hidden",
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.2)",
+            }}
+          >
+            {isVideoEnabled ? (
+              <RTCView
+                streamURL={localStream.toURL()}
+                style={{ width: "100%", height: "100%" }}
+                objectFit="cover"
+                mirror
+              />
+            ) : (
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  backgroundColor: "rgba(255,255,255,0.08)",
+                }}
+              >
+                <Ionicons name="videocam-off" size={RFValue(22)} color="#FFF" />
+              </View>
+            )}
+          </View>
+        ) : null}
+      </View>
+
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "center",
+          padding: RFValue(16),
+          paddingBottom: RFValue(24),
+        }}
+      >
+        <TouchableOpacity
+          onPress={toggleMute}
+          style={{
+            width: RFValue(52),
+            height: RFValue(52),
+            borderRadius: RFValue(26),
+            backgroundColor: isMuted
+              ? "rgba(239,68,68,0.9)"
+              : "rgba(255,255,255,0.15)",
+            justifyContent: "center",
+            alignItems: "center",
+            marginHorizontal: RFValue(7),
+          }}
+        >
+          <Ionicons
+            name={isMuted ? "mic-off" : "mic"}
+            size={RFValue(22)}
+            color="#FFF"
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleClose}
+          style={{
+            width: RFValue(62),
+            height: RFValue(62),
+            borderRadius: RFValue(31),
+            backgroundColor: "#EF4444",
+            justifyContent: "center",
+            alignItems: "center",
+            marginHorizontal: RFValue(7),
+          }}
+        >
+          <Ionicons name="call" size={RFValue(26)} color="#FFF" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={toggleVideo}
+          disabled={callType !== "video"}
+          style={{
+            width: RFValue(52),
+            height: RFValue(52),
+            borderRadius: RFValue(26),
+            backgroundColor:
+              callType !== "video"
+                ? "rgba(255,255,255,0.08)"
+                : isVideoEnabled
+                  ? "rgba(255,255,255,0.15)"
+                  : "rgba(59,130,246,0.9)",
+            justifyContent: "center",
+            alignItems: "center",
+            opacity: callType !== "video" ? 0.4 : 1,
+            marginHorizontal: RFValue(7),
+          }}
+        >
+          <Ionicons
+            name={isVideoEnabled ? "videocam" : "videocam-off"}
+            size={RFValue(22)}
+            color="#FFF"
+          />
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+};
+
 const PatientChatScreen = () => {
   const { theme } = useTheme();
   const {
@@ -1913,6 +2301,7 @@ const PatientChatScreen = () => {
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
   const [startingChatId, setStartingChatId] = useState(null);
+  const [activeCall, setActiveCall] = useState(null);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredContacts = conversations.filter((c) => {
@@ -2061,6 +2450,17 @@ const PatientChatScreen = () => {
     return;
   };
 
+  if (activeCall) {
+    return (
+      <CallScreen
+        conversationId={activeCall.conversationId}
+        callType={activeCall.callType}
+        contact={activeCall.contact}
+        onClose={() => setActiveCall(null)}
+      />
+    );
+  }
+
   if (selectedContact) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -2143,10 +2543,28 @@ const PatientChatScreen = () => {
             </View>
           </View>
           <View style={{ flexDirection: "row", opacity: 0.45 }}>
-            <TouchableOpacity style={{ padding: 8 }}>
+            <TouchableOpacity
+              style={{ padding: 8 }}
+              onPress={() =>
+                setActiveCall({
+                  conversationId: selectedContact.id,
+                  callType: "audio",
+                  contact: selectedContact,
+                })
+              }
+            >
               <Ionicons name="call" size={RFValue(20)} color={theme.accent} />
             </TouchableOpacity>
-            <TouchableOpacity style={{ padding: 8, marginLeft: 8 }}>
+            <TouchableOpacity
+              style={{ padding: 8, marginLeft: 8 }}
+              onPress={() =>
+                setActiveCall({
+                  conversationId: selectedContact.id,
+                  callType: "video",
+                  contact: selectedContact,
+                })
+              }
+            >
               <Ionicons
                 name="videocam"
                 size={RFValue(20)}
