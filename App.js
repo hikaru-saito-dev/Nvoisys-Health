@@ -264,9 +264,9 @@ const SIGNALING_SERVER_URL = (() => {
     Constants.manifest2?.extra?.expoClient?.hostUri;
   if (hostUri) {
     const host = hostUri.split(":")[0];
-    return `ws://${host}:8080`;
+    return `wss://signaling-server-host.onrender.com`;
   }
-  return "ws://localhost:8080";
+  return "wss://signaling-server-host.onrender.com";
 })();
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
@@ -321,6 +321,65 @@ const formatTimeValue = (value) => {
 
 const uniqueIds = (values) => [...new Set(safeArray(values).filter(Boolean))];
 
+const normalizeUserRole = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return "patient";
+  if (
+    ["patient", "doctor", "pharmacy", "staff", "admin"].includes(normalized)
+  ) {
+    return normalized;
+  }
+  return normalized;
+};
+
+const roleLabelFor = (role) => {
+  const normalized = normalizeUserRole(role);
+  if (normalized === "doctor") return "Doctor";
+  if (normalized === "pharmacy") return "Pharmacy";
+  if (normalized === "staff") return "Staff";
+  if (normalized === "admin") return "Admin";
+  return "Patient";
+};
+
+const roleIconFor = (role) => {
+  const normalized = normalizeUserRole(role);
+  if (normalized === "doctor") return "medical";
+  if (normalized === "pharmacy") return "leaf";
+  if (normalized === "staff") return "briefcase";
+  if (normalized === "admin") return "shield-checkmark";
+  return "person";
+};
+
+const roleThemeTokensFor = (theme, role) => {
+  const normalized = normalizeUserRole(role);
+  if (normalized === "pharmacy") {
+    return {
+      color: theme.success,
+      bg: theme.successLight,
+    };
+  }
+  if (normalized === "patient") {
+    return {
+      color: theme.warning,
+      bg: theme.warningLight,
+    };
+  }
+  return {
+    color: theme.accent,
+    bg: theme.accentLight,
+  };
+};
+
+const buildDirectCallRoomId = (userA, userB) => {
+  const a = String(userA || "").trim();
+  const b = String(userB || "").trim();
+  if (!a || !b) return "";
+  const [first, second] = [a, b].sort();
+  return `direct_${first}_${second}`;
+};
+
 const buildConversationTitle = (woundRecord) => {
   const description = woundRecord?.description || "Wound Case";
   return description.length > 40
@@ -336,11 +395,7 @@ const sumMedicationAmount = (items) =>
 
 const resolveMessageText = (record) => {
   const value =
-    record?.text ||
-    record?.message ||
-    record?.content ||
-    record?.body ||
-    "";
+    record?.text || record?.message || record?.content || record?.body || "";
   if (typeof value === "string") return value;
   return value ? String(value) : "";
 };
@@ -406,7 +461,9 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
     (otherMembers.length > 0
       ? otherMembers.map((member) => member.name || member.role).join(", ")
       : "Conversation");
-  const fallbackTitle = linkedWound ? buildConversationTitle(linkedWound) : null;
+  const fallbackTitle = linkedWound
+    ? buildConversationTitle(linkedWound)
+    : null;
   const linkedWoundDescription =
     linkedWound?.description || record.title || displayName;
   return {
@@ -883,8 +940,7 @@ const PatientPlaceholderScreen = () => (
 const PatientHomeScreen = () => {
   const { theme } = useTheme();
   const [selectedEmoji, setSelectedEmoji] = useState(null);
-  const [showVideoCall, setShowVideoCall] = useState(false);
-  const [showAudioCall, setShowAudioCall] = useState(false);
+  const [startCallType, setStartCallType] = useState(null);
   const [showAppointment, setShowAppointment] = useState(false);
   const [showPrescription, setShowPrescription] = useState(false);
   const [showMeds, setShowMeds] = useState(false);
@@ -893,12 +949,8 @@ const PatientHomeScreen = () => {
 
   useEffect(() => {
     const handleBack = () => {
-      if (showVideoCall) {
-        setShowVideoCall(false);
-        return true;
-      }
-      if (showAudioCall) {
-        setShowAudioCall(false);
+      if (startCallType) {
+        setStartCallType(null);
         return true;
       }
       if (showAppointment) {
@@ -929,8 +981,7 @@ const PatientHomeScreen = () => {
     );
     return () => subscription.remove();
   }, [
-    showVideoCall,
-    showAudioCall,
+    startCallType,
     showAppointment,
     showPrescription,
     showMeds,
@@ -938,10 +989,13 @@ const PatientHomeScreen = () => {
     showSOS,
   ]);
 
-  if (showVideoCall)
-    return <VideoCallScreen onBack={() => setShowVideoCall(false)} />;
-  if (showAudioCall)
-    return <AudioCallScreen onBack={() => setShowAudioCall(false)} />;
+  if (startCallType)
+    return (
+      <StartCallScreen
+        callType={startCallType}
+        onBack={() => setStartCallType(null)}
+      />
+    );
   if (showAppointment)
     return (
       <AppointmentBookingScreen onBack={() => setShowAppointment(false)} />
@@ -1275,7 +1329,7 @@ const PatientHomeScreen = () => {
                 }}
               >
                 <TouchableOpacity
-                  onPress={() => setShowVideoCall(true)}
+                  onPress={() => setStartCallType("video")}
                   style={{
                     flex: 1,
                     backgroundColor: theme.card,
@@ -1327,7 +1381,7 @@ const PatientHomeScreen = () => {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  onPress={() => setShowAudioCall(true)}
+                  onPress={() => setStartCallType("audio")}
                   style={{
                     flex: 1,
                     backgroundColor: theme.card,
@@ -1988,8 +2042,14 @@ const PatientEmergencyScreen = ({ navigation }) => {
   );
 };
 
-const CallScreen = ({ conversationId, callType = "video", onClose, contact }) => {
+const CallScreen = ({
+  conversationId,
+  callType = "video",
+  onClose,
+  contact,
+}) => {
   const { theme } = useTheme();
+  const { currentUserId } = useAppData();
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [status, setStatus] = useState("Connecting...");
@@ -2075,7 +2135,7 @@ const CallScreen = ({ conversationId, callType = "video", onClose, contact }) =>
             JSON.stringify({
               type: "join",
               roomId: conversationId,
-              userId: contact?.id || null,
+              userId: currentUserId || null,
             }),
           );
         };
@@ -2353,6 +2413,385 @@ const CallScreen = ({ conversationId, callType = "video", onClose, contact }) =>
   );
 };
 
+const StartCallScreen = ({ callType = "video", onBack }) => {
+  const { theme } = useTheme();
+  const {
+    userRole,
+    currentUserId,
+    loadDirectoryContacts,
+    ensureDirectConversation,
+  } = useAppData();
+
+  const [directoryContacts, setDirectoryContacts] = useState([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState(() => {
+    if (userRole === "doctor") return "patient";
+    if (userRole === "patient") return "doctor";
+    return "all";
+  });
+  const [activeCall, setActiveCall] = useState(null);
+  const [startingCallId, setStartingCallId] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadDirectory = async () => {
+      if (!currentUserId) return;
+      try {
+        setDirectoryLoading(true);
+        setDirectoryError("");
+        const records = await loadDirectoryContacts();
+        if (mounted) {
+          setDirectoryContacts(records);
+        }
+      } catch (error) {
+        if (mounted) {
+          setDirectoryError(error?.message || "Unable to load directory");
+          setDirectoryContacts([]);
+        }
+      } finally {
+        if (mounted) {
+          setDirectoryLoading(false);
+        }
+      }
+    };
+
+    loadDirectory();
+    return () => {
+      mounted = false;
+    };
+  }, [currentUserId, loadDirectoryContacts]);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const formattedContacts = directoryContacts
+    .filter((user) => user?.id && user.id !== currentUserId)
+    .map((user) => {
+      const role = normalizeUserRole(user?.role);
+      const displayName = user?.name || user?.email || "User";
+      return {
+        id: user.id,
+        displayName,
+        role,
+        roleLabel: roleLabelFor(role),
+        icon: roleIconFor(role),
+        email: user?.email || "",
+      };
+    })
+    .filter((contact) => {
+      if (roleFilter && roleFilter !== "all" && contact.role !== roleFilter) {
+        return false;
+      }
+      if (!normalizedQuery) return true;
+      const haystack =
+        `${contact.displayName} ${contact.roleLabel} ${contact.email}`
+          .toLowerCase()
+          .trim();
+      return haystack.includes(normalizedQuery);
+    })
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  const handleStartCall = async (contact) => {
+    if (!contact?.id || !currentUserId || startingCallId) return;
+    setStartingCallId(contact.id);
+
+    const roomId = buildDirectCallRoomId(currentUserId, contact.id);
+    const contactForCall = {
+      id: contact.id,
+      displayName: contact.displayName,
+    };
+
+    setActiveCall({ roomId, callType, contact: contactForCall });
+
+    try {
+      await ensureDirectConversation(contact.id);
+    } catch (error) {
+      // Calls don't depend on chats existing; ignore errors.
+    } finally {
+      setStartingCallId(null);
+    }
+  };
+
+  if (activeCall) {
+    return (
+      <CallScreen
+        conversationId={activeCall.roomId}
+        callType={activeCall.callType}
+        contact={activeCall.contact}
+        onClose={() => {
+          setActiveCall(null);
+          if (onBack) onBack();
+        }}
+      />
+    );
+  }
+
+  const filterChip = (value, label) => {
+    const isActive = roleFilter === value;
+    return (
+      <TouchableOpacity
+        key={value}
+        onPress={() => setRoleFilter(value)}
+        style={{
+          paddingHorizontal: RFValue(12),
+          paddingVertical: RFValue(8),
+          borderRadius: RFValue(999),
+          backgroundColor: isActive ? theme.accent : theme.bg,
+          borderWidth: 1,
+          borderColor: isActive ? theme.accent : theme.cardBorder,
+          marginRight: RFValue(8),
+        }}
+      >
+        <Text
+          style={{
+            fontSize: RFValue(12),
+            fontWeight: "800",
+            color: isActive ? "#FFF" : theme.textSecondary,
+          }}
+        >
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
+
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(16),
+          paddingTop: Platform.OS === "android" ? 40 : 16,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <TouchableOpacity
+            onPress={onBack}
+            style={{
+              width: RFValue(40),
+              height: RFValue(40),
+              borderRadius: RFValue(12),
+              backgroundColor: theme.bg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(12),
+            }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text
+              style={{
+                fontSize: RFValue(18),
+                fontWeight: "900",
+                color: theme.textPrimary,
+              }}
+              numberOfLines={1}
+            >
+              {callType === "video" ? "Start Video Call" : "Start Audio Call"}
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                color: theme.textSecondary,
+                marginTop: 2,
+              }}
+              numberOfLines={1}
+            >
+              Pick who to call. They must join the same call.
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ marginTop: RFValue(14) }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: theme.bg,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(14),
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Ionicons
+              name="search"
+              size={RFValue(18)}
+              color={theme.textTertiary}
+              style={{ marginRight: RFValue(8) }}
+            />
+            <TextInput
+              placeholder="Search people..."
+              placeholderTextColor={theme.textTertiary}
+              style={{
+                flex: 1,
+                paddingVertical: RFValue(10),
+                fontSize: RFValue(14),
+                color: theme.textPrimary,
+              }}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingTop: RFValue(10) }}
+          >
+            {[
+              filterChip("all", "All"),
+              filterChip("doctor", "Doctors"),
+              filterChip("patient", "Patients"),
+              filterChip("pharmacy", "Pharmacies"),
+            ]}
+          </ScrollView>
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: RFValue(16) }}>
+        {directoryLoading ? (
+          <View style={{ alignItems: "center", paddingVertical: RFValue(24) }}>
+            <Text style={{ fontSize: RFValue(12), color: theme.textTertiary }}>
+              Loading directory...
+            </Text>
+          </View>
+        ) : formattedContacts.length > 0 ? (
+          formattedContacts.map((contact) => {
+            const { color, bg } = roleThemeTokensFor(theme, contact.role);
+            return (
+              <TouchableOpacity
+                key={contact.id}
+                onPress={() => handleStartCall(contact)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  backgroundColor: theme.card,
+                  padding: RFValue(14),
+                  borderRadius: RFValue(18),
+                  marginBottom: RFValue(10),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <View
+                  style={{
+                    width: RFValue(48),
+                    height: RFValue(48),
+                    borderRadius: RFValue(16),
+                    backgroundColor: bg,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginRight: RFValue(14),
+                  }}
+                >
+                  <Ionicons
+                    name={contact.icon}
+                    size={RFValue(22)}
+                    color={color}
+                  />
+                </View>
+                <View style={{ flex: 1, marginRight: RFValue(10) }}>
+                  <Text
+                    style={{
+                      fontSize: RFValue(14),
+                      fontWeight: "900",
+                      color: theme.textPrimary,
+                      marginBottom: 2,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {contact.displayName}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      fontWeight: "700",
+                    }}
+                    numberOfLines={1}
+                  >
+                    {contact.roleLabel}
+                  </Text>
+                  {contact.email ? (
+                    <Text
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textTertiary,
+                        marginTop: 2,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {contact.email}
+                    </Text>
+                  ) : null}
+                </View>
+                <View
+                  style={{
+                    width: RFValue(44),
+                    height: RFValue(44),
+                    borderRadius: RFValue(14),
+                    backgroundColor: theme.bg,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    borderWidth: 1,
+                    borderColor: color,
+                    opacity: startingCallId === contact.id ? 0.55 : 1,
+                  }}
+                >
+                  <Ionicons
+                    name={callType === "video" ? "videocam" : "call"}
+                    size={RFValue(18)}
+                    color={color}
+                  />
+                </View>
+              </TouchableOpacity>
+            );
+          })
+        ) : (
+          <View style={{ alignItems: "center", paddingVertical: RFValue(24) }}>
+            <Ionicons
+              name="search"
+              size={RFValue(32)}
+              color={theme.cardBorder}
+              style={{ marginBottom: RFValue(10) }}
+            />
+            <Text style={{ fontSize: RFValue(12), color: theme.textTertiary }}>
+              No contacts match your search.
+            </Text>
+          </View>
+        )}
+
+        {directoryError ? (
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: theme.danger,
+              marginTop: RFValue(8),
+              textAlign: "center",
+            }}
+          >
+            {directoryError}
+          </Text>
+        ) : null}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
 const PatientChatScreen = () => {
   const { theme } = useTheme();
   const {
@@ -2387,16 +2826,26 @@ const PatientChatScreen = () => {
   });
 
   const formatDirectoryContact = (user) => {
-    const role = user?.role === "pharmacy" ? "pharmacy" : "doctor";
-    const displayName = user?.name || user?.email || "Clinician";
+    const role = normalizeUserRole(user?.role);
+    const displayName = user?.name || user?.email || roleLabelFor(role);
     return {
       id: user?.id,
       displayName,
       role,
-      roleLabel: role === "pharmacy" ? "Pharmacy" : "Doctor",
-      icon: role === "pharmacy" ? "leaf" : "medical",
+      roleLabel: roleLabelFor(role),
+      icon: roleIconFor(role),
       email: user?.email || "",
     };
+  };
+
+  const resolveCallRoomId = (conversation) => {
+    const memberIds = safeArray(conversation?.members);
+    if (memberIds.length === 2 && currentUserId) {
+      const otherId = memberIds.find((id) => id !== currentUserId);
+      const roomId = buildDirectCallRoomId(currentUserId, otherId);
+      if (roomId) return roomId;
+    }
+    return conversation?.id || "";
   };
 
   const showDirectoryResults = normalizedQuery.length > 0;
@@ -2405,9 +2854,10 @@ const PatientChatScreen = () => {
         .filter((user) => user?.id && user.id !== currentUserId)
         .map(formatDirectoryContact)
         .filter((contact) => {
-          const searchValue = `${contact.displayName} ${contact.roleLabel} ${contact.email}`
-            .toLowerCase()
-            .trim();
+          const searchValue =
+            `${contact.displayName} ${contact.roleLabel} ${contact.email}`
+              .toLowerCase()
+              .trim();
           return searchValue.includes(normalizedQuery);
         })
     : [];
@@ -2627,7 +3077,7 @@ const PatientChatScreen = () => {
               style={{ padding: 8 }}
               onPress={() =>
                 setActiveCall({
-                  conversationId: selectedContact.id,
+                  conversationId: resolveCallRoomId(selectedContact),
                   callType: "audio",
                   contact: selectedContact,
                 })
@@ -2639,7 +3089,7 @@ const PatientChatScreen = () => {
               style={{ padding: 8, marginLeft: 8 }}
               onPress={() =>
                 setActiveCall({
-                  conversationId: selectedContact.id,
+                  conversationId: resolveCallRoomId(selectedContact),
                   callType: "video",
                   contact: selectedContact,
                 })
@@ -2929,7 +3379,7 @@ const PatientChatScreen = () => {
             style={{ marginRight: RFValue(8) }}
           />
           <TextInput
-            placeholder="Search doctors, pharmacies, or chats..."
+            placeholder="Search people or chats..."
             placeholderTextColor={theme.textTertiary}
             style={{
               flex: 1,
@@ -2954,10 +3404,12 @@ const PatientChatScreen = () => {
                 marginBottom: RFValue(10),
               }}
             >
-              Doctors & Pharmacies
+              Directory
             </Text>
             {directoryLoading ? (
-              <View style={{ alignItems: "center", paddingVertical: RFValue(16) }}>
+              <View
+                style={{ alignItems: "center", paddingVertical: RFValue(16) }}
+              >
                 <Text
                   style={{ fontSize: RFValue(12), color: theme.textTertiary }}
                 >
@@ -2973,12 +3425,10 @@ const PatientChatScreen = () => {
                   : existingConversation
                     ? "Open chat"
                     : "Start chat";
-                const accentColor =
-                  contact.role === "pharmacy" ? theme.success : theme.accent;
-                const accentBg =
-                  contact.role === "pharmacy"
-                    ? theme.successLight
-                    : theme.accentLight;
+                const { color: accentColor, bg: accentBg } = roleThemeTokensFor(
+                  theme,
+                  contact.role,
+                );
                 return (
                   <TouchableOpacity
                     key={contact.id}
@@ -3071,7 +3521,9 @@ const PatientChatScreen = () => {
                 );
               })
             ) : (
-              <View style={{ alignItems: "center", paddingVertical: RFValue(16) }}>
+              <View
+                style={{ alignItems: "center", paddingVertical: RFValue(16) }}
+              >
                 <Ionicons
                   name="search"
                   size={RFValue(32)}
@@ -3081,7 +3533,7 @@ const PatientChatScreen = () => {
                 <Text
                   style={{ fontSize: RFValue(12), color: theme.textTertiary }}
                 >
-                  No doctors or pharmacies match your search.
+                  No contacts match your search.
                 </Text>
               </View>
             )}
@@ -8334,7 +8786,9 @@ const VideoCallScreen = ({ onBack }) => {
             mirror={isFrontCamera}
           />
         ) : (
-          <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+          <View
+            style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+          >
             <Ionicons
               name={isVideoOff ? "videocam-off" : "person"}
               size={RFValue(32)}
@@ -12149,13 +12603,19 @@ export default function App() {
     }
   };
 
-  const loadDirectoryContacts = async () => {
-    const [doctors, pharmacies] = await Promise.all([
-      fetchUsersByRole("doctor"),
-      fetchUsersByRole("pharmacy"),
-    ]);
+  const loadDirectoryContacts = async (options = {}) => {
+    const requestedRoles = safeArray(options?.roles)
+      .map(normalizeUserRole)
+      .filter(Boolean);
+    const roles = requestedRoles.length
+      ? uniqueIds(requestedRoles)
+      : ["doctor", "pharmacy", "patient"];
+
+    const recordsByRole = await Promise.all(
+      roles.map((role) => fetchUsersByRole(role)),
+    );
     const seen = new Set();
-    return [...doctors, ...pharmacies].filter((user) => {
+    return recordsByRole.flat().filter((user) => {
       if (!user?.id || seen.has(user.id)) return false;
       seen.add(user.id);
       return true;
@@ -12430,7 +12890,9 @@ export default function App() {
     await pb.collection("conversations").update(conversationId, {
       lastMessageAt: new Date().toISOString(),
     });
-    const mappedMessage = createdMessage ? mapMessageRecord(createdMessage) : null;
+    const mappedMessage = createdMessage
+      ? mapMessageRecord(createdMessage)
+      : null;
     if (mappedMessage) {
       setConversations((prev) => {
         const index = prev.findIndex((item) => item.id === conversationId);
@@ -12438,7 +12900,9 @@ export default function App() {
         const updated = {
           ...prev[index],
           lastMsg: mappedMessage.text || prev[index].lastMsg,
-          time: formatTimeValue(mappedMessage.created || new Date().toISOString()),
+          time: formatTimeValue(
+            mappedMessage.created || new Date().toISOString(),
+          ),
         };
         const next = [...prev];
         next.splice(index, 1);
