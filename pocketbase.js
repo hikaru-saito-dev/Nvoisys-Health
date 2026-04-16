@@ -12,7 +12,7 @@ if (!global.EventSource) {
   global.EventSource = EventSource;
 }
 
-const PB_URL = "https://vpn.jpoop.in";
+const PB_URL = "https://pb.jpoop.in";
 
 // Mobile OAuth2 note:
 // PocketBase's "all-in-one" authWithOAuth2 flow depends on a realtime (SSE)
@@ -24,7 +24,7 @@ const PB_URL = "https://vpn.jpoop.in";
 // helper page hosted on the PocketBase domain:
 // - https://vpn.jpoop.in/oauth2.html (served from PocketBase pb_public)
 // That page bounces back into the app via deep link: myapp://oauth2
-const OAUTH2_REDIRECT_URL = `${PB_URL}/oauth2.html`;
+const OAUTH2_REDIRECT_URL = `https://vpn.jpoop.in/oauth2.html`;
 const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
 
 const authStore = new AsyncAuthStore({
@@ -210,15 +210,17 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
         );
       }
 
-      authData = await pb.collection("UsersAuth").authWithOAuth2Code(
-        provider.name,
-        code,
-        provider.codeVerifier,
-        OAUTH2_REDIRECT_URL,
-        {
-          role: selectedRole,
-        },
-      );
+      authData = await pb
+        .collection("UsersAuth")
+        .authWithOAuth2Code(
+          provider.name,
+          code,
+          provider.codeVerifier,
+          OAUTH2_REDIRECT_URL,
+          {
+            role: selectedRole,
+          },
+        );
     } else {
       // PocketBase-native OAuth flow (realtime-based).
       authData = await pb.collection("UsersAuth").authWithOAuth2({
@@ -231,10 +233,7 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
 
           const result = await WebBrowser.openAuthSessionAsync(url);
 
-          console.log(
-            "OAuth browser result:",
-            JSON.stringify(result, null, 2),
-          );
+          console.log("OAuth browser result:", JSON.stringify(result, null, 2));
 
           return result;
         },

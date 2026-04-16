@@ -16,6 +16,7 @@ import {
   SafeAreaView,
   StatusBar,
   Image,
+  Alert,
   Animated,
   TextInput,
   Platform,
@@ -30,6 +31,7 @@ import {
   mediaDevices,
 } from "@livekit/react-native-webrtc";
 import Constants from "expo-constants";
+import * as ImagePicker from "expo-image-picker";
 import {
   Ionicons,
   MaterialCommunityIcons,
@@ -400,13 +402,50 @@ const resolveMessageText = (record) => {
   return value ? String(value) : "";
 };
 
+const resolveMessageImageFiles = (record) => {
+  if (!record) return [];
+
+  // PocketBase file fields can be either:
+  // - string (single file)
+  // - array of strings (multiple files)
+  // Different collections/projects also use different field names.
+  const candidates = [
+    record.file,
+    record.image,
+    record.photo,
+    record.attachment,
+    record.files,
+    record.images,
+    record.photos,
+    record.attachments,
+  ];
+
+  for (const value of candidates) {
+    if (!value) continue;
+    if (typeof value === "string") return [value];
+    if (Array.isArray(value) && value.length) return value.filter(Boolean);
+  }
+
+  return [];
+};
+
 const mapMessageRecord = (record) => {
   const senderRecord = record?.expand?.sender;
   const isSystem = record?.kind === "system";
+  const imageFiles = resolveMessageImageFiles(record);
+  const imageUrls = imageFiles
+    .filter(Boolean)
+    .map((fileName) => {
+      const token = pb?.authStore?.token;
+      const options = token ? { token } : undefined;
+      return pb.files.getUrl(record, fileName, options);
+    });
   return {
     id: record.id,
     text: resolveMessageText(record),
     kind: record.kind || "text",
+    imageUrls,
+    imageUrl: imageUrls[0] || null,
     senderId: record.sender || null,
     senderRole: senderRecord?.role || (isSystem ? "system" : "user"),
     senderName: senderRecord?.name || (isSystem ? "System" : "User"),
@@ -414,6 +453,14 @@ const mapMessageRecord = (record) => {
     created: record.created,
     raw: record,
   };
+};
+
+const messagePreviewText = (mappedMessage) => {
+  if (!mappedMessage) return "";
+  if (mappedMessage.imageUrl) return "Photo";
+  if (mappedMessage.kind === "image") return "Photo";
+  if (mappedMessage.kind === "system") return mappedMessage.text || "";
+  return mappedMessage.text || "";
 };
 
 const mapWoundRecord = (record) => ({
@@ -489,7 +536,9 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
           ? "medical"
           : "chatbubble-ellipses",
     lastMsg:
-      preview?.text || linkedWound?.description || "Tap to open conversation",
+      messagePreviewText(preview) ||
+      linkedWound?.description ||
+      "Tap to open conversation",
     time: formatTimeValue(
       record.lastMessageAt || record.updated || record.created,
     ),
@@ -2801,6 +2850,7 @@ const PatientChatScreen = () => {
     conversations,
     loadConversationMessages,
     sendConversationMessage,
+    sendConversationImage,
     ensureDirectConversation,
     loadDirectoryContacts,
     dataLoading,
@@ -2816,6 +2866,7 @@ const PatientChatScreen = () => {
   const [directoryError, setDirectoryError] = useState("");
   const [startingChatId, setStartingChatId] = useState(null);
   const [activeCall, setActiveCall] = useState(null);
+  const [sendingAttachment, setSendingAttachment] = useState(false);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredContacts = conversations.filter((c) => {
@@ -2978,8 +3029,59 @@ const PatientChatScreen = () => {
     }
   };
 
-  const sendAttachment = () => {
-    return;
+  const sendAttachment = async (source) => {
+    if (!selectedContact?.id || sendingAttachment) return;
+
+    try {
+      setSendingAttachment(true);
+
+      if (source === "camera") {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow camera access to take a photo.",
+          );
+          return;
+        }
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow photo library access to pick a photo.",
+          );
+          return;
+        }
+      }
+
+      const pickerOptions = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      };
+
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+
+      if (!result || result.canceled) return;
+      const asset = result.assets?.[0];
+      if (!asset?.uri) return;
+
+      const created = await sendConversationImage(selectedContact.id, asset);
+      if (created) {
+        setContactMessages((prev) => {
+          if (prev.some((item) => item.id === created.id)) return prev;
+          return [...prev, created];
+        });
+      }
+    } catch (error) {
+      console.log("sendAttachment error:", error);
+      Alert.alert("Upload failed", error?.message || "Unable to send photo.");
+    } finally {
+      setSendingAttachment(false);
+    }
   };
 
   if (activeCall) {
@@ -3124,6 +3226,23 @@ const PatientChatScreen = () => {
               const isCurrentUser =
                 msg.senderId && msg.senderId === currentUserId;
               const isSystem = msg.kind === "system";
+              const hasImage = !!msg.imageUrl;
+              const bubbleBg = isSystem
+                ? theme.bg
+                : hasImage
+                  ? isCurrentUser
+                    ? theme.accentLight
+                    : theme.card
+                  : isCurrentUser
+                    ? theme.accent
+                    : theme.card;
+              const bodyTextColor = isSystem
+                ? theme.textSecondary
+                : hasImage
+                  ? theme.textPrimary
+                  : isCurrentUser
+                    ? "#FFF"
+                    : theme.textPrimary;
               return (
                 <View
                   key={msg.id}
@@ -3140,17 +3259,13 @@ const PatientChatScreen = () => {
                   <View
                     style={{
                       maxWidth: isSystem ? "88%" : "75%",
-                      backgroundColor: isSystem
-                        ? theme.bg
-                        : isCurrentUser
-                          ? theme.accent
-                          : theme.card,
+                      backgroundColor: bubbleBg,
                       borderRadius: RFValue(16),
                       borderBottomRightRadius:
                         isSystem || isCurrentUser ? RFValue(4) : RFValue(16),
                       borderBottomLeftRadius:
                         isSystem || isCurrentUser ? RFValue(16) : RFValue(4),
-                      padding: RFValue(14),
+                      padding: hasImage ? RFValue(6) : RFValue(14),
                       shadowColor: theme.shadowColor,
                       shadowOpacity: 0.05,
                       elevation: 1,
@@ -3170,29 +3285,45 @@ const PatientChatScreen = () => {
                         {msg.senderName}
                       </Text>
                     ) : null}
-                    <Text
-                      style={{
-                        fontSize: RFValue(14),
-                        color: isSystem
-                          ? theme.textSecondary
-                          : isCurrentUser
-                            ? "#FFF"
-                            : theme.textPrimary,
-                        lineHeight: RFValue(20),
-                        textAlign: isSystem ? "center" : "left",
-                      }}
-                    >
-                      {msg.text}
-                    </Text>
+
+                    {hasImage ? (
+                      <Image
+                        source={{ uri: msg.imageUrl }}
+                        style={{
+                          width: RFValue(220),
+                          maxWidth: "100%",
+                          height: RFValue(160),
+                          borderRadius: RFValue(12),
+                          backgroundColor: theme.bg,
+                        }}
+                        resizeMode="cover"
+                      />
+                    ) : null}
+
+                    {msg.text ? (
+                      <Text
+                        style={{
+                          fontSize: RFValue(14),
+                          color: bodyTextColor,
+                          lineHeight: RFValue(20),
+                          textAlign: isSystem ? "center" : "left",
+                          marginTop: hasImage ? RFValue(10) : 0,
+                        }}
+                      >
+                        {msg.text}
+                      </Text>
+                    ) : null}
                     <Text
                       style={{
                         fontSize: RFValue(9),
                         color: isSystem
                           ? theme.textTertiary
-                          : isCurrentUser
-                            ? "rgba(255,255,255,0.7)"
-                            : theme.textTertiary,
-                        marginTop: 4,
+                          : hasImage
+                            ? theme.textTertiary
+                            : isCurrentUser
+                              ? "rgba(255,255,255,0.7)"
+                              : theme.textTertiary,
+                        marginTop: hasImage || msg.text ? 4 : 0,
                         textAlign: isSystem ? "center" : "right",
                       }}
                     >
@@ -3253,6 +3384,7 @@ const PatientChatScreen = () => {
           >
             <TouchableOpacity
               onPress={() => sendAttachment("camera")}
+              disabled={sendingAttachment}
               style={{
                 width: RFValue(36),
                 height: RFValue(36),
@@ -3261,7 +3393,7 @@ const PatientChatScreen = () => {
                 justifyContent: "center",
                 alignItems: "center",
                 marginRight: RFValue(8),
-                opacity: 0.45,
+                opacity: sendingAttachment ? 0.5 : 1,
               }}
             >
               <Ionicons
@@ -3272,6 +3404,7 @@ const PatientChatScreen = () => {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => sendAttachment("image")}
+              disabled={sendingAttachment}
               style={{
                 width: RFValue(36),
                 height: RFValue(36),
@@ -3280,7 +3413,7 @@ const PatientChatScreen = () => {
                 justifyContent: "center",
                 alignItems: "center",
                 marginRight: RFValue(8),
-                opacity: 0.45,
+                opacity: sendingAttachment ? 0.5 : 1,
               }}
             >
               <Ionicons
@@ -6877,6 +7010,10 @@ const AuthScreen = ({ onLogin }) => {
           throw new Error("Please enter your name");
         }
 
+        if (password.trim().length < 8) {
+          throw new Error("Password must be at least 8 characters.");
+        }
+
         result = await signUpWithEmail({
           name: name.trim(),
           email: email.trim(),
@@ -6896,7 +7033,17 @@ const AuthScreen = ({ onLogin }) => {
       });
     } catch (error) {
       console.log("Auth error:", error);
-      setAuthError(error?.message || "Authentication failed");
+      const pbFieldErrors =
+        error?.data?.data || error?.response?.data?.data || null;
+      const passwordError = pbFieldErrors?.password?.message;
+
+      if (authMode === "signup" && password.trim().length < 8) {
+        setAuthError("Password must be at least 8 characters.");
+      } else if (passwordError) {
+        setAuthError(passwordError);
+      } else {
+        setAuthError(error?.message || "Authentication failed");
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -11740,6 +11887,7 @@ const WoundDetailScreen = ({
               chat.map((c) => {
                 const isMine = c.senderId && c.senderId === currentUserId;
                 const isSystem = c.kind === "system";
+                const hasImage = !!c.imageUrl;
                 return (
                   <View
                     key={c.id}
@@ -11751,10 +11899,14 @@ const WoundDetailScreen = ({
                           : "flex-start",
                       backgroundColor: isSystem
                         ? "#F3F4F6"
-                        : isMine
-                          ? "#4338CA"
-                          : "#FFF",
-                      padding: RFValue(12),
+                        : hasImage
+                          ? isMine
+                            ? "#EEF2FF"
+                            : "#FFF"
+                          : isMine
+                            ? "#4338CA"
+                            : "#FFF",
+                      padding: hasImage ? RFValue(6) : RFValue(12),
                       borderRadius: RFValue(12),
                       marginBottom: RFValue(8),
                       maxWidth: isSystem ? "92%" : "80%",
@@ -11775,18 +11927,47 @@ const WoundDetailScreen = ({
                         {c.senderName}
                       </Text>
                     ) : null}
+                    {hasImage ? (
+                      <Image
+                        source={{ uri: c.imageUrl }}
+                        style={{
+                          width: RFValue(240),
+                          maxWidth: "100%",
+                          height: RFValue(170),
+                          borderRadius: RFValue(10),
+                          backgroundColor: "#E5E7EB",
+                        }}
+                        resizeMode="cover"
+                      />
+                    ) : null}
+
+                    {c.text ? (
+                      <Text
+                        style={{
+                          color: isSystem
+                            ? "#6B7280"
+                            : hasImage
+                              ? "#1E1B4B"
+                              : isMine
+                                ? "#FFF"
+                                : "#1E1B4B",
+                          fontSize: RFValue(13),
+                          textAlign: isSystem ? "center" : "left",
+                          marginTop: hasImage ? RFValue(10) : 0,
+                        }}
+                      >
+                        {c.text}
+                      </Text>
+                    ) : null}
                     <Text
                       style={{
-                        color: isMine ? "#FFF" : "#1E1B4B",
-                        fontSize: RFValue(13),
-                        textAlign: isSystem ? "center" : "left",
-                      }}
-                    >
-                      {c.text}
-                    </Text>
-                    <Text
-                      style={{
-                        color: isMine ? "rgba(255,255,255,0.7)" : "#9CA3AF",
+                        color: isSystem
+                          ? "#9CA3AF"
+                          : hasImage
+                            ? "#9CA3AF"
+                            : isMine
+                              ? "rgba(255,255,255,0.7)"
+                              : "#9CA3AF",
                         fontSize: RFValue(9),
                         marginTop: RFValue(4),
                         textAlign: isSystem ? "center" : "right",
@@ -12865,6 +13046,22 @@ export default function App() {
     }
   };
 
+  const updateConversationPreview = (conversationId, mappedMessage) => {
+    if (!mappedMessage) return;
+    setConversations((prev) => {
+      const index = prev.findIndex((item) => item.id === conversationId);
+      if (index === -1) return prev;
+      const updated = {
+        ...prev[index],
+        lastMsg: messagePreviewText(mappedMessage) || prev[index].lastMsg,
+        time: formatTimeValue(mappedMessage.created || new Date().toISOString()),
+      };
+      const next = [...prev];
+      next.splice(index, 1);
+      return [updated, ...next];
+    });
+  };
+
   const sendConversationMessage = async (conversationId, text) => {
     if (!currentUser?.id || !text?.trim()) return null;
     const trimmed = text.trim();
@@ -12895,22 +13092,92 @@ export default function App() {
     const mappedMessage = createdMessage
       ? mapMessageRecord(createdMessage)
       : null;
-    if (mappedMessage) {
-      setConversations((prev) => {
-        const index = prev.findIndex((item) => item.id === conversationId);
-        if (index === -1) return prev;
-        const updated = {
-          ...prev[index],
-          lastMsg: mappedMessage.text || prev[index].lastMsg,
-          time: formatTimeValue(
-            mappedMessage.created || new Date().toISOString(),
-          ),
-        };
-        const next = [...prev];
-        next.splice(index, 1);
-        return [updated, ...next];
-      });
+    updateConversationPreview(conversationId, mappedMessage);
+    return mappedMessage;
+  };
+
+  const sendConversationImage = async (conversationId, asset, caption = "") => {
+    if (!currentUser?.id || !conversationId || !asset?.uri) return null;
+
+    const uri = asset.uri;
+    const mimeType = (() => {
+      if (asset?.mimeType && typeof asset.mimeType === "string") {
+        return asset.mimeType;
+      }
+
+      // expo-image-picker often provides `type: "image"` instead of a real MIME.
+      if (typeof asset?.type === "string" && asset.type.includes("/")) {
+        return asset.type;
+      }
+
+      const ext = String(uri).split("?")[0].split("#")[0].split(".").pop();
+      const normalizedExt = String(ext || "").toLowerCase();
+      if (normalizedExt === "png") return "image/png";
+      if (normalizedExt === "webp") return "image/webp";
+      if (normalizedExt === "heic" || normalizedExt === "heif") {
+        return "image/heic";
+      }
+      return "image/jpeg";
+    })();
+    const extFromMime = mimeType.split("/")[1] || "jpg";
+    const normalizedExtFromMime = String(extFromMime).toLowerCase();
+    const safeExt =
+      normalizedExtFromMime === "png" ||
+      normalizedExtFromMime === "webp" ||
+      normalizedExtFromMime === "heic" ||
+      normalizedExtFromMime === "heif"
+        ? normalizedExtFromMime
+        : "jpg";
+    const name = asset.fileName || `photo_${Date.now()}.${safeExt}`;
+
+    let createdMessage = null;
+    try {
+      const formData = new FormData();
+      formData.append("conversation", conversationId);
+      formData.append("sender", currentUser.id);
+      formData.append("kind", "image");
+      formData.append("text", caption || "");
+      // PocketBase schema uses a multiple file field named `file`.
+      // (Older schemas may use `image`, so we fallback below.)
+      formData.append("file", { uri, name, type: mimeType });
+      createdMessage = await pb.collection("messages").create(formData);
+    } catch (error) {
+      // Fallback if the PocketBase `kind` field is a Select that does not include "image".
+      try {
+        const formData = new FormData();
+        formData.append("conversation", conversationId);
+        formData.append("sender", currentUser.id);
+        formData.append("kind", "text");
+        formData.append("text", caption || "");
+        formData.append("file", { uri, name, type: mimeType });
+        createdMessage = await pb.collection("messages").create(formData);
+      } catch (fallbackError) {
+        // Backwards-compatibility fallback for older PocketBase schemas.
+        try {
+          const formData = new FormData();
+          formData.append("conversation", conversationId);
+          formData.append("sender", currentUser.id);
+          formData.append("kind", "text");
+          formData.append("text", caption || "");
+          formData.append("image", { uri, name, type: mimeType });
+          createdMessage = await pb.collection("messages").create(formData);
+        } catch (legacyError) {
+          console.log("sendConversationImage error:", error);
+          console.log("sendConversationImage fallback error:", fallbackError);
+          console.log("sendConversationImage legacy error:", legacyError);
+          return null;
+        }
+      }
     }
+
+    await pb.collection("conversations").update(conversationId, {
+      lastMessageAt: new Date().toISOString(),
+    });
+
+    const mappedMessage = createdMessage
+      ? mapMessageRecord(createdMessage)
+      : null;
+    updateConversationPreview(conversationId, mappedMessage);
     return mappedMessage;
   };
 
@@ -13131,6 +13398,7 @@ export default function App() {
     loadDirectoryContacts,
     loadConversationMessages,
     sendConversationMessage,
+    sendConversationImage,
     createWoundReport,
     prescribeForWound,
     updateOrderStatus,
