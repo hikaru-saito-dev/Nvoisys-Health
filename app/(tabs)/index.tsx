@@ -1,25 +1,28 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Link } from 'expo-router';
+import { Image } from 'expo-image';
+import { Link, type Href } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
-  Text,
   TextInput,
-  View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { PatientTheme as T } from '@/constants/patient-theme';
+import { HelloWave } from '@/components/hello-wave';
+import ParallaxScrollView from '@/components/parallax-scroll-view';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { usePatientUi } from '@/constants/patient-theme';
 import { usePatientAuth } from '@/contexts/PatientAuthContext';
 import { deletePatientWound, fetchPatientAppointments, fetchPatientWounds } from '@/lib/patient/api';
 import type { AppointmentRecord, WoundSummary } from '@/lib/patient/types';
 
 type AuthMode = 'signin' | 'register';
+
+const HOME_HEADER = { light: '#A1CEDC', dark: '#1D3D47' } as const;
 
 function woundStatusLabel(raw: string) {
   const map: Record<string, string> = {
@@ -34,6 +37,7 @@ function woundStatusLabel(raw: string) {
 }
 
 export default function PatientDashboardScreen() {
+  const T = usePatientUi();
   const { ready, user, isPatient, signIn, signUpPatient, signOut } = usePatientAuth();
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
   const [name, setName] = useState('');
@@ -125,335 +129,375 @@ export default function PatientDashboardScreen() {
 
   if (!ready) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" />
-      </SafeAreaView>
+      <ThemedView style={styles.centered}>
+        <ActivityIndicator size="large" color={T.brand} />
+      </ThemedView>
     );
   }
 
   if (!user) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.authScroll} keyboardShouldPersistTaps="handled">
-          <View style={styles.brandRow}>
-            <View style={styles.brandMark}>
-              <Ionicons name="heart" size={22} color={T.brand} />
-            </View>
-            <View>
-              <Text style={styles.title}>Nvoisys Health</Text>
-              <Text style={styles.sub}>Your care, appointments, and reports in one place.</Text>
-            </View>
-          </View>
+      <ParallaxScrollView
+        headerBackgroundColor={HOME_HEADER}
+        headerImage={
+          <Image source={require('@/assets/images/partial-react-logo.png')} style={styles.reactLogo} />
+        }>
+        <ThemedView style={styles.titleContainer}>
+          <ThemedText type="title">Nvoisys Health</ThemedText>
+          <HelloWave />
+        </ThemedView>
+        <ThemedView style={styles.stepContainer}>
+          <ThemedText type="subtitle">Patient sign in</ThemedText>
+          <ThemedText>Your care, appointments, and reports in one place.</ThemedText>
+        </ThemedView>
 
-          <View style={styles.segment}>
-            <Pressable
-              style={[styles.segmentBtn, authMode === 'signin' && styles.segmentBtnActive]}
-              onPress={() => {
-                setAuthMode('signin');
-                setAuthError('');
-              }}>
-              <Text style={[styles.segmentText, authMode === 'signin' && styles.segmentTextActive]}>Sign in</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.segmentBtn, authMode === 'register' && styles.segmentBtnActive]}
-              onPress={() => {
-                setAuthMode('register');
-                setAuthError('');
-              }}>
-              <Text style={[styles.segmentText, authMode === 'register' && styles.segmentTextActive]}>Register</Text>
-            </Pressable>
-          </View>
+        <ThemedView style={[styles.segment, { backgroundColor: T.border }]}>
+          <Pressable
+            style={[
+              styles.segmentBtn,
+              authMode === 'signin' && { backgroundColor: T.bgElevated, ...T.shadowSoft },
+            ]}
+            onPress={() => {
+              setAuthMode('signin');
+              setAuthError('');
+            }}>
+            <ThemedText type="defaultSemiBold" style={{ color: authMode === 'signin' ? T.brand : T.textSecondary }}>
+              Sign in
+            </ThemedText>
+          </Pressable>
+          <Pressable
+            style={[
+              styles.segmentBtn,
+              authMode === 'register' && { backgroundColor: T.bgElevated, ...T.shadowSoft },
+            ]}
+            onPress={() => {
+              setAuthMode('register');
+              setAuthError('');
+            }}>
+            <ThemedText type="defaultSemiBold" style={{ color: authMode === 'register' ? T.brand : T.textSecondary }}>
+              Register
+            </ThemedText>
+          </Pressable>
+        </ThemedView>
 
-          {authMode === 'register' ? (
-            <>
-              <Text style={styles.label}>Full name</Text>
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="Your name"
-                autoComplete="name"
-              />
-            </>
-          ) : null}
+        {authMode === 'register' ? (
+          <>
+            <ThemedText type="defaultSemiBold" style={styles.label}>
+              Full name
+            </ThemedText>
+            <TextInput
+              style={[styles.input, { borderColor: T.border, color: T.text, backgroundColor: T.bgElevated }, T.shadowSoft]}
+              value={name}
+              onChangeText={setName}
+              placeholder="Your name"
+              placeholderTextColor={T.textMuted}
+              autoComplete="name"
+            />
+          </>
+        ) : null}
 
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            placeholder="you@example.com"
-            autoComplete="email"
-          />
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            placeholder={authMode === 'register' ? 'At least 8 characters' : '••••••••'}
-            autoComplete={authMode === 'register' ? 'password-new' : 'password'}
-          />
-          {authMode === 'register' ? (
-            <>
-              <Text style={styles.label}>Confirm password</Text>
-              <TextInput
-                style={styles.input}
-                secureTextEntry
-                value={passwordConfirm}
-                onChangeText={setPasswordConfirm}
-                placeholder="Repeat password"
-                autoComplete="password-new"
-              />
-              <Text style={styles.hint}>
-                Creating a patient account. Your organisation must allow sign-up on the server.
-              </Text>
-            </>
-          ) : null}
+        <ThemedText type="defaultSemiBold" style={styles.label}>
+          Email
+        </ThemedText>
+        <TextInput
+          style={[styles.input, { borderColor: T.border, color: T.text, backgroundColor: T.bgElevated }, T.shadowSoft]}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+          placeholder="you@example.com"
+          placeholderTextColor={T.textMuted}
+          autoComplete="email"
+        />
+        <ThemedText type="defaultSemiBold" style={styles.label}>
+          Password
+        </ThemedText>
+        <TextInput
+          style={[styles.input, { borderColor: T.border, color: T.text, backgroundColor: T.bgElevated }, T.shadowSoft]}
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+          placeholder={authMode === 'register' ? 'At least 8 characters' : '••••••••'}
+          placeholderTextColor={T.textMuted}
+          autoComplete={authMode === 'register' ? 'password-new' : 'password'}
+        />
+        {authMode === 'register' ? (
+          <>
+            <ThemedText type="defaultSemiBold" style={styles.label}>
+              Confirm password
+            </ThemedText>
+            <TextInput
+              style={[styles.input, { borderColor: T.border, color: T.text, backgroundColor: T.bgElevated }, T.shadowSoft]}
+              secureTextEntry
+              value={passwordConfirm}
+              onChangeText={setPasswordConfirm}
+              placeholder="Repeat password"
+              placeholderTextColor={T.textMuted}
+              autoComplete="password-new"
+            />
+            <ThemedText style={{ color: T.textMuted, fontSize: 12, marginBottom: 12, lineHeight: 18 }}>
+              Creating a patient account. Your organisation must allow sign-up on the server.
+            </ThemedText>
+          </>
+        ) : null}
 
-          {authError ? <Text style={styles.error}>{authError}</Text> : null}
+        {authError ? (
+          <ThemedText style={{ color: T.danger, marginBottom: 12, fontSize: 14 }}>{authError}</ThemedText>
+        ) : null}
 
-          {authMode === 'signin' ? (
-            <Pressable style={[styles.primaryBtn, busy && styles.disabled]} onPress={onSignIn} disabled={busy}>
-              {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Sign in</Text>}
-            </Pressable>
-          ) : (
-            <Pressable style={[styles.primaryBtn, busy && styles.disabled]} onPress={onRegister} disabled={busy}>
-              {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Create patient account</Text>}
-            </Pressable>
-          )}
-        </ScrollView>
-      </SafeAreaView>
+        {authMode === 'signin' ? (
+          <Pressable
+            style={[styles.primaryBtn, { backgroundColor: T.brand }, T.shadowCard, busy && styles.disabled]}
+            onPress={onSignIn}
+            disabled={busy}>
+            {busy ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.primaryBtnText}>Sign in</ThemedText>}
+          </Pressable>
+        ) : (
+          <Pressable
+            style={[styles.primaryBtn, { backgroundColor: T.brand }, T.shadowCard, busy && styles.disabled]}
+            onPress={onRegister}
+            disabled={busy}>
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <ThemedText style={styles.primaryBtnText}>Create patient account</ThemedText>
+            )}
+          </Pressable>
+        )}
+      </ParallaxScrollView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.title}>Hello{user.name ? `, ${user.name}` : ''}</Text>
-            <Text style={styles.sub}>{isPatient ? 'Patient account' : `Role: ${String(user.role)}`}</Text>
-          </View>
-          <Pressable onPress={signOut} style={styles.outlineBtn}>
-            <Text style={styles.outlineBtnText}>Sign out</Text>
+    <ParallaxScrollView
+      headerBackgroundColor={HOME_HEADER}
+      headerImage={
+        <Image source={require('@/assets/images/partial-react-logo.png')} style={styles.reactLogo} />
+      }
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={T.brand} />}>
+      <ThemedView style={styles.headerRow}>
+        <ThemedView style={styles.titleContainer}>
+          <ThemedText type="title">Hello{user.name ? `, ${user.name}` : ''}</ThemedText>
+          <HelloWave />
+        </ThemedView>
+        <Pressable
+          onPress={signOut}
+          style={[styles.outlineBtn, { borderColor: T.border, backgroundColor: T.bgElevated }]}>
+          <ThemedText type="defaultSemiBold" style={{ color: T.textSecondary, fontSize: 13 }}>
+            Sign out
+          </ThemedText>
+        </Pressable>
+      </ThemedView>
+
+      <ThemedText style={{ color: T.textSecondary, marginBottom: 18 }}>
+        {isPatient ? 'Patient account' : `Role: ${String(user.role)}`}
+      </ThemedText>
+
+      {!isPatient ? (
+        <ThemedView
+          style={{
+            backgroundColor: '#fffbeb',
+            borderRadius: T.radiusMd,
+            padding: 14,
+            marginBottom: 18,
+            borderWidth: 1,
+            borderColor: '#fde68a',
+          }}>
+          <ThemedText style={{ color: '#92400e', fontSize: 13, lineHeight: 19 }}>
+            You are signed in as {String(user.role)}. Use a patient account for wound reports and appointments.
+          </ThemedText>
+        </ThemedView>
+      ) : null}
+
+      <ThemedText type="defaultSemiBold" style={[styles.section, { color: T.textSecondary }]}>
+        Quick actions
+      </ThemedText>
+      <ThemedView style={styles.row}>
+        <Link href={'/(tabs)/doctors' as Href} asChild>
+          <Pressable
+            style={[
+              styles.actionCard,
+              { backgroundColor: T.bgElevated, borderColor: T.border, marginRight: 10 },
+              T.shadowCard,
+            ]}>
+            <ThemedView style={[styles.actionIcon, { backgroundColor: T.brandMuted }]}>
+              <Ionicons name="search" size={22} color={T.brand} />
+            </ThemedView>
+            <ThemedText type="defaultSemiBold">Find doctors</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: T.textSecondary, marginTop: 4, lineHeight: 17 }}>
+              Search and book visits
+            </ThemedText>
           </Pressable>
-        </View>
+        </Link>
+        <Link href={'/(tabs)/wound-check' as Href} asChild>
+          <Pressable
+            style={[styles.actionCard, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowCard]}>
+            <ThemedView style={[styles.actionIcon, { backgroundColor: T.brandMuted }]}>
+              <Ionicons name="camera" size={22} color={T.brand} />
+            </ThemedView>
+            <ThemedText type="defaultSemiBold">Wound check</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: T.textSecondary, marginTop: 4, lineHeight: 17 }}>
+              Photo and clinical notes
+            </ThemedText>
+          </Pressable>
+        </Link>
+      </ThemedView>
 
-        {!isPatient ? (
-          <View style={styles.banner}>
-            <Text style={styles.bannerText}>
-              You are signed in as {String(user.role)}. Use a patient account for wound reports and appointments.
-            </Text>
-          </View>
-        ) : null}
+      <ThemedText type="defaultSemiBold" style={[styles.section, { color: T.textSecondary }]}>
+        Upcoming appointments
+      </ThemedText>
+      {appointments.length === 0 ? (
+        <ThemedText style={{ color: T.textMuted, fontSize: 14, marginBottom: 12 }}>
+          No appointments yet. Book from a doctor profile.
+        </ThemedText>
+      ) : (
+        appointments.slice(0, 5).map((a) => (
+          <ThemedView
+            key={a.id}
+            style={[styles.listItem, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowSoft]}>
+            <ThemedText type="defaultSemiBold">{a.doctorName || 'Doctor'}</ThemedText>
+            <ThemedText style={{ fontSize: 13, color: T.textSecondary, marginTop: 6, lineHeight: 18 }}>
+              {a.scheduledAt || '—'} · {a.slotLabel || '—'} · {a.status}
+            </ThemedText>
+          </ThemedView>
+        ))
+      )}
 
-        <Text style={styles.section}>Quick actions</Text>
-        <View style={styles.row}>
-          <Link href="/(tabs)/doctors" asChild>
-            <Pressable style={styles.actionCard}>
-              <View style={styles.actionIcon}>
-                <Ionicons name="search" size={22} color={T.brand} />
-              </View>
-              <Text style={styles.cardTitle}>Find doctors</Text>
-              <Text style={styles.cardHint}>Search and book visits</Text>
+      <ThemedText type="defaultSemiBold" style={[styles.section, { color: T.textSecondary }]}>
+        Your wound reports
+      </ThemedText>
+      {wounds.length === 0 ? (
+        <ThemedText style={{ color: T.textMuted, fontSize: 14, marginBottom: 12 }}>
+          No wound reports yet.
+        </ThemedText>
+      ) : (
+        wounds.slice(0, 5).map((w) => (
+          <ThemedView
+            key={w.id}
+            style={[
+              styles.woundRow,
+              { backgroundColor: T.bgElevated, borderColor: T.border },
+              T.shadowSoft,
+            ]}>
+            <ThemedView style={styles.woundRowBody}>
+              <ThemedText type="defaultSemiBold" numberOfLines={1}>
+                {w.description || 'Wound case'}
+              </ThemedText>
+              <ThemedText style={{ fontSize: 13, color: T.textSecondary, marginTop: 6, lineHeight: 18 }}>
+                {woundStatusLabel(w.status)} · {w.created?.slice(0, 10) || ''}
+              </ThemedText>
+            </ThemedView>
+            <Pressable
+              onPress={() => confirmDeleteWound(w)}
+              style={({ pressed }) => [styles.woundDelete, pressed && { opacity: 0.65, backgroundColor: T.dangerMuted }]}
+              hitSlop={10}
+              accessibilityLabel="Delete wound report">
+              <Ionicons name="trash-outline" size={22} color={T.danger} />
             </Pressable>
-          </Link>
-          <Link href="/(tabs)/wound-check" asChild>
-            <Pressable style={[styles.actionCard, styles.actionCardLast]}>
-              <View style={styles.actionIcon}>
-                <Ionicons name="camera" size={22} color={T.brand} />
-              </View>
-              <Text style={styles.cardTitle}>Wound check</Text>
-              <Text style={styles.cardHint}>Photo and clinical notes</Text>
-            </Pressable>
-          </Link>
-        </View>
-
-        <Text style={styles.section}>Upcoming appointments</Text>
-        {appointments.length === 0 ? (
-          <Text style={styles.empty}>No appointments yet. Book from a doctor profile.</Text>
-        ) : (
-          appointments.slice(0, 5).map((a) => (
-            <View key={a.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{a.doctorName || 'Doctor'}</Text>
-              <Text style={styles.listMeta}>
-                {a.scheduledAt || '—'} · {a.slotLabel || '—'} · {a.status}
-              </Text>
-            </View>
-          ))
-        )}
-
-        <Text style={styles.section}>Your wound reports</Text>
-        {wounds.length === 0 ? (
-          <Text style={styles.empty}>No wound reports yet.</Text>
-        ) : (
-          wounds.slice(0, 5).map((w) => (
-            <View key={w.id} style={styles.woundRow}>
-              <View style={styles.woundRowBody}>
-                <Text style={styles.listTitle} numberOfLines={1}>
-                  {w.description || 'Wound case'}
-                </Text>
-                <Text style={styles.listMeta}>
-                  {woundStatusLabel(w.status)} · {w.created?.slice(0, 10) || ''}
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => confirmDeleteWound(w)}
-                style={({ pressed }) => [styles.woundDelete, pressed && styles.woundDeletePressed]}
-                hitSlop={10}
-                accessibilityLabel="Delete wound report">
-                <Ionicons name="trash-outline" size={22} color={T.danger} />
-              </Pressable>
-            </View>
-          ))
-        )}
-      </ScrollView>
-    </SafeAreaView>
+          </ThemedView>
+        ))
+      )}
+    </ParallaxScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.bg },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  authScroll: { padding: 24, paddingTop: 40 },
-  scroll: { padding: 20, paddingBottom: 32 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 22 },
-  brandMark: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: T.brandMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
+  reactLogo: {
+    height: 178,
+    width: 290,
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
   },
-  title: { fontSize: 26, fontWeight: '800', color: T.text, letterSpacing: -0.5 },
-  sub: { fontSize: 14, color: T.textSecondary, marginTop: 4, maxWidth: 260, lineHeight: 20 },
+  titleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  stepContainer: {
+    gap: 8,
+    marginBottom: 8,
+  },
   segment: {
     flexDirection: 'row',
-    backgroundColor: T.border,
-    borderRadius: T.radiusMd,
+    borderRadius: 14,
     padding: 4,
     marginBottom: 22,
   },
   segmentBtn: { flex: 1, paddingVertical: 11, alignItems: 'center', borderRadius: 10 },
-  segmentBtnActive: { backgroundColor: T.bgElevated, ...T.shadowSoft },
-  segmentText: { fontSize: 15, fontWeight: '600', color: T.textSecondary },
-  segmentTextActive: { color: T.brand },
-  label: { fontSize: 12, fontWeight: '700', color: T.textSecondary, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 },
-  hint: { fontSize: 12, color: T.textMuted, marginBottom: 12, lineHeight: 18 },
+  label: { fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8, marginTop: 4 },
   input: {
     borderWidth: 1,
-    borderColor: T.border,
-    borderRadius: T.radiusMd,
+    borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
-    color: T.text,
-    backgroundColor: T.bgElevated,
     marginBottom: 14,
-    ...T.shadowSoft,
   },
-  error: { color: T.danger, marginBottom: 12, fontSize: 14 },
   primaryBtn: {
-    backgroundColor: T.brand,
-    borderRadius: T.radiusMd,
+    borderRadius: 14,
     paddingVertical: 15,
     alignItems: 'center',
     marginTop: 8,
-    ...T.shadowCard,
   },
   primaryBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
   disabled: { opacity: 0.6 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 12 },
   outlineBtn: {
     borderWidth: 1,
-    borderColor: T.border,
-    borderRadius: T.radiusSm,
+    borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 9,
-    backgroundColor: T.bgElevated,
   },
-  outlineBtnText: { color: T.textSecondary, fontWeight: '700', fontSize: 13 },
-  banner: {
-    backgroundColor: '#fffbeb',
-    borderRadius: T.radiusMd,
-    padding: 14,
-    marginBottom: 18,
-    borderWidth: 1,
-    borderColor: '#fde68a',
-  },
-  bannerText: { color: '#92400e', fontSize: 13, lineHeight: 19 },
   section: {
     fontSize: 12,
-    fontWeight: '800',
-    color: T.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginTop: 12,
     marginBottom: 12,
+    fontWeight: '800',
   },
   row: { flexDirection: 'row', marginBottom: 8 },
   actionCard: {
     flex: 1,
-    backgroundColor: T.bgElevated,
-    borderRadius: T.radiusLg,
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: T.border,
-    marginRight: 10,
     minHeight: 112,
-    ...T.shadowCard,
   },
-  actionCardLast: { marginRight: 0 },
   actionIcon: {
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: T.brandMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
   },
-  cardTitle: { fontSize: 16, fontWeight: '800', color: T.text },
-  cardHint: { fontSize: 12, color: T.textSecondary, marginTop: 4, lineHeight: 17 },
-  empty: { color: T.textMuted, fontSize: 14, marginBottom: 12 },
   listItem: {
-    backgroundColor: T.bgElevated,
-    borderRadius: T.radiusMd,
+    borderRadius: 14,
     padding: 16,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: T.border,
-    ...T.shadowSoft,
   },
   woundRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: T.bgElevated,
-    borderRadius: T.radiusMd,
+    borderRadius: 14,
     paddingVertical: 12,
     paddingLeft: 16,
     paddingRight: 8,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: T.border,
-    ...T.shadowSoft,
   },
   woundRowBody: { flex: 1, minWidth: 0, paddingRight: 8 },
   woundDelete: {
     width: 44,
     height: 44,
-    borderRadius: T.radiusSm,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  woundDeletePressed: { opacity: 0.65, backgroundColor: T.dangerMuted },
-  listTitle: { fontSize: 16, fontWeight: '700', color: T.text },
-  listMeta: { fontSize: 13, color: T.textSecondary, marginTop: 6, lineHeight: 18 },
 });

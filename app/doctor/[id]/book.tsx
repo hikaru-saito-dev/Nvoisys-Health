@@ -6,13 +6,14 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { PatientTheme as T } from '@/constants/patient-theme';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { usePatientUi } from '@/constants/patient-theme';
 import { usePatientAuth } from '@/contexts/PatientAuthContext';
 import { createAppointment, formatAppointmentBookingError, getDoctorDetail } from '@/lib/patient/api';
 import type { DoctorListItem } from '@/lib/patient/types';
@@ -27,6 +28,7 @@ function addDays(base: Date, days: number) {
 }
 
 export default function BookAppointmentScreen() {
+  const T = usePatientUi();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user, isPatient } = usePatientAuth();
@@ -83,108 +85,131 @@ export default function BookAppointmentScreen() {
   return (
     <>
       <Stack.Screen options={{ title: 'Book', headerShadowVisible: false, headerStyle: { backgroundColor: T.bg } }} />
-      <SafeAreaView style={styles.safe} edges={['bottom']}>
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <View style={styles.docCard}>
-            <View style={styles.docAvatar}>
-              <Text style={styles.docAvatarText}>{(doctor?.name || 'DR').slice(0, 2).toUpperCase()}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.docName}>{doctor?.name || 'Doctor'}</Text>
-              <Text style={styles.sub}>{doctor?.specialty || ''}</Text>
-            </View>
-          </View>
+      <ThemedView style={{ flex: 1 }}>
+        <SafeAreaView style={{ flex: 1 }} edges={['bottom']}>
+          <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+            <ThemedView style={[styles.docCard, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowSoft]}>
+              <View style={[styles.docAvatar, { backgroundColor: T.brandMuted }]}>
+                <ThemedText type="defaultSemiBold" style={{ fontSize: 18, color: T.brand }}>
+                  {(doctor?.name || 'DR').slice(0, 2).toUpperCase()}
+                </ThemedText>
+              </View>
+              <View style={{ flex: 1 }}>
+                <ThemedText type="title" style={{ fontSize: 20, lineHeight: 24 }}>
+                  {doctor?.name || 'Doctor'}
+                </ThemedText>
+                <ThemedText style={{ fontSize: 14, color: T.textSecondary, marginTop: 4 }}>
+                  {doctor?.specialty || ''}
+                </ThemedText>
+              </View>
+            </ThemedView>
 
-          <Text style={styles.label}>Date</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
-            {days.map((d, i) => {
-              const active = dayIndex === i;
-              return (
-                <Pressable
-                  key={d.toISOString()}
-                  style={[styles.dayChip, active && styles.dayChipOn]}
-                  onPress={() => setDayIndex(i)}>
-                  <Text style={[styles.dayDow, active && styles.dayChipOnMuted]}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</Text>
-                  <Text style={[styles.dayNum, active && styles.dayChipOnText]}>{d.getDate()}</Text>
-                </Pressable>
-              );
-            })}
+            <ThemedText type="defaultSemiBold" style={[styles.label, { color: T.textSecondary }]}>
+              Date
+            </ThemedText>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
+              {days.map((d, i) => {
+                const active = dayIndex === i;
+                return (
+                  <Pressable
+                    key={d.toISOString()}
+                    style={[styles.dayChip, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowSoft, active && { backgroundColor: T.brand, borderColor: T.brand }]}
+                    onPress={() => setDayIndex(i)}>
+                    <ThemedText
+                      style={{ fontSize: 11, fontWeight: '700', color: active ? 'rgba(255,255,255,0.85)' : T.textMuted, textTransform: 'uppercase' }}>
+                      {d.toLocaleDateString(undefined, { weekday: 'short' })}
+                    </ThemedText>
+                    <ThemedText
+                      type="defaultSemiBold"
+                      style={{ fontSize: 20, marginTop: 4, color: active ? '#fff' : T.text }}>
+                      {d.getDate()}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <ThemedText type="defaultSemiBold" style={[styles.label, { color: T.textSecondary }]}>
+              Time
+            </ThemedText>
+            <View style={styles.slotGrid}>
+              {TIME_SLOTS.map((t) => {
+                const active = slot === t;
+                return (
+                  <Pressable
+                    key={t}
+                    style={[styles.slot, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowSoft, active && { borderColor: T.brand, backgroundColor: T.brandMuted }]}
+                    onPress={() => setSlot(t)}>
+                    <ThemedText type="defaultSemiBold" style={{ fontSize: 13, color: active ? T.brandDark : T.textSecondary }}>
+                      {t}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <ThemedText type="defaultSemiBold" style={[styles.label, { color: T.textSecondary }]}>
+              Consult type
+            </ThemedText>
+            <View style={styles.slotGrid}>
+              {CONSULT_TYPES.map((c) => {
+                const active = consultType === c;
+                return (
+                  <Pressable
+                    key={c}
+                    style={[styles.slot, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowSoft, active && { borderColor: T.brand, backgroundColor: T.brandMuted }]}
+                    onPress={() => setConsultType(c)}>
+                    <ThemedText type="defaultSemiBold" style={{ fontSize: 13, color: active ? T.brandDark : T.textSecondary }}>
+                      {c}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <ThemedText type="defaultSemiBold" style={[styles.label, { color: T.textSecondary }]}>
+              Notes (optional)
+            </ThemedText>
+            <TextInput
+              style={[styles.notes, { backgroundColor: T.bgElevated, borderColor: T.border, color: T.text }, T.shadowSoft]}
+              multiline
+              placeholder="Symptoms, goals for this visit…"
+              placeholderTextColor={T.textMuted}
+              value={notes}
+              onChangeText={setNotes}
+            />
+
+            <Pressable style={[styles.primary, { backgroundColor: T.brand }, T.shadowCard, busy && styles.disabled]} onPress={confirm} disabled={busy}>
+              <Ionicons name="checkmark-circle" size={22} color="#fff" style={styles.primaryIcon} />
+              <ThemedText style={styles.primaryText}>{busy ? 'Saving…' : 'Confirm booking'}</ThemedText>
+            </Pressable>
           </ScrollView>
-
-          <Text style={styles.label}>Time</Text>
-          <View style={styles.slotGrid}>
-            {TIME_SLOTS.map((t) => {
-              const active = slot === t;
-              return (
-                <Pressable key={t} style={[styles.slot, active && styles.slotOn]} onPress={() => setSlot(t)}>
-                  <Text style={[styles.slotText, active && styles.slotTextOn]}>{t}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <Text style={styles.label}>Consult type</Text>
-          <View style={styles.slotGrid}>
-            {CONSULT_TYPES.map((c) => {
-              const active = consultType === c;
-              return (
-                <Pressable key={c} style={[styles.slot, active && styles.slotOn]} onPress={() => setConsultType(c)}>
-                  <Text style={[styles.slotText, active && styles.slotTextOn]}>{c}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <Text style={styles.label}>Notes (optional)</Text>
-          <TextInput
-            style={styles.notes}
-            multiline
-            placeholder="Symptoms, goals for this visit…"
-            placeholderTextColor={T.textMuted}
-            value={notes}
-            onChangeText={setNotes}
-          />
-
-          <Pressable style={[styles.primary, busy && styles.disabled]} onPress={confirm} disabled={busy}>
-            <Ionicons name="checkmark-circle" size={22} color="#fff" style={styles.primaryIcon} />
-            <Text style={styles.primaryText}>{busy ? 'Saving…' : 'Confirm booking'}</Text>
-          </Pressable>
-        </ScrollView>
-      </SafeAreaView>
+        </SafeAreaView>
+      </ThemedView>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.bg },
   scroll: { padding: 20, paddingBottom: 40 },
   docCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: T.bgElevated,
-    borderRadius: T.radiusLg,
+    borderRadius: 20,
     padding: 16,
     marginBottom: 22,
     borderWidth: 1,
-    borderColor: T.border,
-    ...T.shadowSoft,
   },
   docAvatar: {
     width: 52,
     height: 52,
     borderRadius: 16,
-    backgroundColor: T.brandMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
   },
-  docAvatarText: { fontSize: 18, fontWeight: '800', color: T.brand },
-  docName: { fontSize: 20, fontWeight: '800', color: T.text },
-  sub: { fontSize: 14, color: T.textSecondary, marginTop: 4 },
   label: {
     fontSize: 12,
-    fontWeight: '800',
-    color: T.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginTop: 8,
@@ -194,56 +219,36 @@ const styles = StyleSheet.create({
   dayChip: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderRadius: T.radiusMd,
-    backgroundColor: T.bgElevated,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: T.border,
     marginRight: 10,
     alignItems: 'center',
     minWidth: 68,
-    ...T.shadowSoft,
   },
-  dayChipOn: { backgroundColor: T.brand, borderColor: T.brand },
-  dayDow: { fontSize: 11, fontWeight: '700', color: T.textMuted, textTransform: 'uppercase' },
-  dayChipOnMuted: { color: 'rgba(255,255,255,0.85)' },
-  dayNum: { fontSize: 20, fontWeight: '800', color: T.text, marginTop: 4 },
-  dayChipOnText: { color: '#fff' },
   slotGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 },
   slot: {
     paddingHorizontal: 14,
     paddingVertical: 11,
-    borderRadius: T.radiusMd,
-    backgroundColor: T.bgElevated,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: T.border,
     marginRight: 8,
     marginBottom: 8,
-    ...T.shadowSoft,
   },
-  slotOn: { borderColor: T.brand, backgroundColor: T.brandMuted },
-  slotText: { fontSize: 13, fontWeight: '700', color: T.textSecondary },
-  slotTextOn: { color: T.brandDark },
   notes: {
     minHeight: 88,
-    backgroundColor: T.bgElevated,
-    borderRadius: T.radiusMd,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: T.border,
     padding: 14,
     fontSize: 16,
-    color: T.text,
     textAlignVertical: 'top',
     marginBottom: 22,
-    ...T.shadowSoft,
   },
   primary: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: T.brand,
-    borderRadius: T.radiusMd,
+    borderRadius: 14,
     paddingVertical: 16,
-    ...T.shadowCard,
   },
   primaryIcon: { marginRight: 8 },
   primaryText: { color: '#fff', fontWeight: '800', fontSize: 17 },

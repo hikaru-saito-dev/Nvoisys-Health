@@ -1,145 +1,168 @@
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
-import { Link } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
+import { Link, type Href } from 'expo-router';
+import { Pressable, StyleSheet, View } from 'react-native';
 
-import { PatientTheme as T } from '@/constants/patient-theme';
+import { Collapsible } from '@/components/ui/collapsible';
+import ParallaxScrollView from '@/components/parallax-scroll-view';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { usePatientUi } from '@/constants/patient-theme';
+import { Fonts } from '@/constants/theme';
+
+const EXPLORE_HEADER = { light: '#D0D0D0', dark: '#353636' } as const;
 
 export default function MoreScreen() {
+  const T = usePatientUi();
   const version =
     Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? Constants.nativeBuildVersion ?? '—';
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.title}>More</Text>
-        <Text style={styles.sub}>Shortcuts and information for your care in Nvoisys Health.</Text>
+    <ParallaxScrollView
+      headerBackgroundColor={EXPLORE_HEADER}
+      headerImage={
+        <IconSymbol
+          size={310}
+          color="#808080"
+          name="chevron.left.forwardslash.chevron.right"
+          style={styles.headerImage}
+        />
+      }>
+      <ThemedView style={styles.titleContainer}>
+        <ThemedText
+          type="title"
+          style={{
+            fontFamily: Fonts.rounded,
+          }}>
+          Explore
+        </ThemedText>
+      </ThemedView>
+      <ThemedText>Shortcuts and information for your care in Nvoisys Health.</ThemedText>
 
-        <Text style={styles.section}>Care</Text>
-        <Link href="/(tabs)/doctors" asChild>
-          <Pressable style={styles.row}>
-            <View style={styles.rowIcon}>
+      <Collapsible title="Care">
+        <Link href={'/(tabs)/doctors' as Href} asChild>
+          <Pressable
+            style={[styles.row, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowSoft]}>
+            <View style={[styles.rowIcon, { backgroundColor: T.brandMuted }]}>
               <Ionicons name="search" size={22} color={T.brand} />
             </View>
             <View style={styles.rowBody}>
-              <Text style={styles.rowTitle}>Find doctors</Text>
-              <Text style={styles.rowHint}>Search profiles and book a visit</Text>
+              <ThemedText type="defaultSemiBold">Find doctors</ThemedText>
+              <ThemedText style={{ fontSize: 13, marginTop: 4, lineHeight: 18, color: T.textSecondary }}>
+                Search profiles and book a visit
+              </ThemedText>
             </View>
             <Ionicons name="chevron-forward" size={20} color={T.textMuted} />
           </Pressable>
         </Link>
-        <Link href="/(tabs)/wound-check" asChild>
-          <Pressable style={styles.row}>
-            <View style={styles.rowIcon}>
+        <Link href={'/(tabs)/wound-check' as Href} asChild>
+          <Pressable
+            style={[styles.row, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowSoft]}>
+            <View style={[styles.rowIcon, { backgroundColor: T.brandMuted }]}>
               <Ionicons name="camera-outline" size={22} color={T.brand} />
             </View>
             <View style={styles.rowBody}>
-              <Text style={styles.rowTitle}>Wound check</Text>
-              <Text style={styles.rowHint}>Add photos and notes for your care team</Text>
+              <ThemedText type="defaultSemiBold">Wound check</ThemedText>
+              <ThemedText style={{ fontSize: 13, marginTop: 4, lineHeight: 18, color: T.textSecondary }}>
+                Add photos and notes for your care team
+              </ThemedText>
             </View>
             <Ionicons name="chevron-forward" size={20} color={T.textMuted} />
           </Pressable>
         </Link>
+      </Collapsible>
 
-        <Text style={styles.section}>Using the app</Text>
-        <View style={styles.bulletCard}>
-          <Text style={styles.bulletLine}>
-            <Text style={styles.bulletMark}>• </Text>
-            Sign in on Home to see appointments and wound reports pulled from your organisation.
-          </Text>
-          <Text style={styles.bulletLine}>
-            <Text style={styles.bulletMark}>• </Text>
-            Book from a doctor&apos;s profile; your upcoming visits appear on Home.
-          </Text>
-          <Text style={styles.bulletLine}>
-            <Text style={styles.bulletMark}>• </Text>
-            Use Wound check when your clinician has asked for follow-up images or descriptions.
-          </Text>
-        </View>
+      <Collapsible title="Using the app">
+        <ThemedText style={{ marginBottom: 10 }}>
+          Sign in on Home to see appointments and wound reports pulled from your organisation.
+        </ThemedText>
+        <ThemedText style={{ marginBottom: 10 }}>
+          Book from a doctor&apos;s profile; your upcoming visits appear on Home.
+        </ThemedText>
+        <ThemedText>
+          Use Wound check when your clinician has asked for follow-up images or descriptions.
+        </ThemedText>
+      </Collapsible>
 
-        <Text style={styles.section}>About</Text>
-        <View style={styles.aboutCard}>
-          <View style={styles.brandMark}>
-            <Ionicons name="heart" size={22} color={T.brand} />
-          </View>
-          <View style={styles.aboutBody}>
-            <Text style={styles.aboutTitle}>Nvoisys Health</Text>
-            <Text style={styles.aboutMeta}>Patient app · Version {version}</Text>
-          </View>
+      <Collapsible title="Images">
+        <ThemedText>
+          Static images in this template use <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
+          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes for different densities.
+        </ThemedText>
+        <Image
+          source={require('@/assets/images/react-logo.png')}
+          style={{ width: 100, height: 100, alignSelf: 'center', marginTop: 8 }}
+        />
+      </Collapsible>
+
+      <ThemedText type="defaultSemiBold" style={[styles.section, { color: T.textSecondary }]}>
+        About
+      </ThemedText>
+      <ThemedView style={[styles.aboutCard, { backgroundColor: T.bgElevated, borderColor: T.border }, T.shadowCard]}>
+        <View style={[styles.brandMark, { backgroundColor: T.brandMuted }]}>
+          <Ionicons name="heart" size={22} color={T.brand} />
         </View>
-      </ScrollView>
-    </SafeAreaView>
+        <View style={styles.aboutBody}>
+          <ThemedText type="defaultSemiBold">Nvoisys Health</ThemedText>
+          <ThemedText style={{ fontSize: 13, color: T.textMuted, marginTop: 4 }}>Patient app · Version {version}</ThemedText>
+        </View>
+      </ThemedView>
+    </ParallaxScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.bg },
-  scroll: { padding: 20, paddingBottom: 32 },
-  title: { fontSize: 26, fontWeight: '800', color: T.text, letterSpacing: -0.5 },
-  sub: { fontSize: 14, color: T.textSecondary, marginTop: 8, marginBottom: 8, lineHeight: 20, maxWidth: 320 },
+  headerImage: {
+    color: '#808080',
+    bottom: -90,
+    left: -35,
+    position: 'absolute',
+  },
+  titleContainer: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   section: {
     fontSize: 12,
-    fontWeight: '800',
-    color: T.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginTop: 20,
     marginBottom: 12,
+    fontWeight: '800',
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: T.bgElevated,
-    borderRadius: T.radiusMd,
+    borderRadius: 14,
     padding: 16,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: T.border,
-    ...T.shadowSoft,
   },
   rowIcon: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: T.brandMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
   },
   rowBody: { flex: 1, minWidth: 0 },
-  rowTitle: { fontSize: 16, fontWeight: '800', color: T.text },
-  rowHint: { fontSize: 13, color: T.textSecondary, marginTop: 4, lineHeight: 18 },
-  bulletCard: {
-    backgroundColor: T.bgElevated,
-    borderRadius: T.radiusMd,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: T.border,
-    ...T.shadowSoft,
-  },
-  bulletLine: { fontSize: 14, color: T.textSecondary, lineHeight: 22, marginBottom: 10 },
-  bulletMark: { color: T.brand, fontWeight: '800' },
   aboutCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: T.bgElevated,
-    borderRadius: T.radiusLg,
+    borderRadius: 20,
     padding: 18,
     borderWidth: 1,
-    borderColor: T.border,
-    ...T.shadowCard,
   },
   brandMark: {
     width: 48,
     height: 48,
     borderRadius: 14,
-    backgroundColor: T.brandMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
   },
   aboutBody: { flex: 1 },
-  aboutTitle: { fontSize: 17, fontWeight: '800', color: T.text },
-  aboutMeta: { fontSize: 13, color: T.textMuted, marginTop: 4 },
 });
