@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import PocketBase, { AsyncAuthStore } from "pocketbase";
+import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import EventSource from "react-native-sse";
 
@@ -12,6 +13,19 @@ if (!global.EventSource) {
 }
 
 const PB_URL = "https://vpn.jpoop.in";
+
+// Mobile OAuth2 note:
+// PocketBase's "all-in-one" authWithOAuth2 flow depends on a realtime (SSE)
+// connection staying alive while the user is in the browser. On Android this
+// is often not reliable because the app is backgrounded while Chrome Custom
+// Tabs is open.
+//
+// For Google we use a "manual code exchange" flow with a small HTTPS redirect
+// helper page hosted on the PocketBase domain:
+// - https://vpn.jpoop.in/oauth2.html (served from PocketBase pb_public)
+// That page bounces back into the app via deep link: myapp://oauth2
+const OAUTH2_REDIRECT_URL = `${PB_URL}/oauth2.html`;
+const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
 
 const authStore = new AsyncAuthStore({
   save: async (serialized) => {
@@ -127,21 +141,17 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
   normalizeRole(selectedRole);
 
   try {
-    // Optional sanity check to keep your earlier logging behavior.
-    const res = await fetch(`${PB_URL}/api/collections/UsersAuth/auth-methods`);
-    const authMethods = await res.json();
+    const authMethods = await pb
+      .collection("UsersAuth")
+      .listAuthMethods({ requestKey: null });
 
     console.log("RAW authMethods:", JSON.stringify(authMethods, null, 2));
 
-    const providers =
-      authMethods?.oauth2?.providers ||
-      authMethods?.authProviders ||
-      authMethods?.oauth2?.authProviders ||
-      [];
+    const provider = authMethods?.authProviders?.find(
+      (item) => item.name === providerName,
+    );
 
-    const providerExists = providers.some((item) => item.name === providerName);
-
-    if (!providerExists) {
+    if (!provider) {
       throw new Error(
         `${providerName} missing. authMethods=${JSON.stringify(authMethods)}`,
       );
@@ -150,28 +160,86 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
     // Clear any stale auth before starting a fresh OAuth attempt.
     pb.authStore.clear();
 
-    // PocketBase-native OAuth flow:
-    // - PocketBase handles the provider callback at /api/oauth2-redirect
-    // - auth result comes back through a one-off realtime subscription
-    const authData = await pb.collection("UsersAuth").authWithOAuth2({
-      provider: providerName,
-      createData: {
-        role: selectedRole,
-      },
-      urlCallback: async (url) => {
-        console.log("OAuth vendor URL:", url);
+    let authData;
 
-        // Use auth browser flow. No custom app redirect is needed here
-        // because PocketBase handles the callback on its own endpoint.
-        const result = await WebBrowser.openAuthSessionAsync(url);
+    if (providerName === "google") {
+      // Manual code exchange (recommended on mobile):
+      // 1) Open Google's consent screen with redirect_uri pointing to an HTTPS page.
+      // 2) That page redirects back into the app via deep link (myapp://oauth2).
+      // 3) Exchange the received code via PocketBase authWithOAuth2Code.
 
-        console.log("OAuth browser result:", JSON.stringify(result, null, 2));
+      // IMPORTANT:
+      // - Add `https://vpn.jpoop.in/oauth2.html` to Google Console redirect URIs
+      // - Upload `pb_public/oauth2.html` next to your PocketBase executable.
 
-        // On some devices/platforms the session may stay open until the user closes it.
-        // PocketBase should still receive the auth callback and complete over realtime.
-        return result;
-      },
-    });
+      const authUrl = `${provider.authUrl}${OAUTH2_REDIRECT_URL}`;
+      console.log("OAuth vendor URL:", authUrl);
+
+      const result = await WebBrowser.openAuthSessionAsync(
+        authUrl,
+        APP_OAUTH2_RETURN_URL,
+      );
+
+      console.log("OAuth browser result:", JSON.stringify(result, null, 2));
+
+      if (result?.type !== "success" || !result.url) {
+        throw new Error("Google authentication cancelled");
+      }
+
+      const parsed = Linking.parse(result.url);
+      const code = parsed?.queryParams?.code;
+      const state = parsed?.queryParams?.state;
+      const error = parsed?.queryParams?.error;
+      const errorDescription = parsed?.queryParams?.error_description;
+
+      if (error) {
+        throw new Error(
+          `Google OAuth error: ${error}${errorDescription ? ` (${errorDescription})` : ""}`,
+        );
+      }
+
+      if (!code) {
+        throw new Error(
+          `Google OAuth missing code. url=${JSON.stringify(result.url)}`,
+        );
+      }
+
+      if (!state || state !== provider.state) {
+        throw new Error(
+          `Google OAuth state mismatch. expected=${provider.state} got=${state}`,
+        );
+      }
+
+      authData = await pb.collection("UsersAuth").authWithOAuth2Code(
+        provider.name,
+        code,
+        provider.codeVerifier,
+        OAUTH2_REDIRECT_URL,
+        {
+          role: selectedRole,
+        },
+      );
+    } else {
+      // PocketBase-native OAuth flow (realtime-based).
+      authData = await pb.collection("UsersAuth").authWithOAuth2({
+        provider: providerName,
+        createData: {
+          role: selectedRole,
+        },
+        urlCallback: async (url) => {
+          console.log("OAuth vendor URL:", url);
+
+          const result = await WebBrowser.openAuthSessionAsync(url);
+
+          console.log(
+            "OAuth browser result:",
+            JSON.stringify(result, null, 2),
+          );
+
+          return result;
+        },
+      });
+    }
 
     console.log("OAuth authData:", JSON.stringify(authData, null, 2));
 

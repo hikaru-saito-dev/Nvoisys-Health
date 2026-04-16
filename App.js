@@ -2289,6 +2289,7 @@ const CallScreen = ({
             streamURL={remoteStream.toURL()}
             style={{ width: "100%", height: "100%" }}
             objectFit="cover"
+            zOrder={0}
           />
         ) : (
           <View
@@ -2324,6 +2325,7 @@ const CallScreen = ({
                 style={{ width: "100%", height: "100%" }}
                 objectFit="cover"
                 mirror
+                zOrder={1}
               />
             ) : (
               <View
