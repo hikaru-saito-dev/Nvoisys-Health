@@ -37,6 +37,7 @@ import {
   MaterialCommunityIcons,
   FontAwesome5,
 } from "@expo/vector-icons";
+import { decryptChatText, encryptChatText } from "./chatCrypto";
 import {
   pb,
   restoreAuth,
@@ -443,7 +444,7 @@ const mapMessageRecord = (record) => {
     });
   return {
     id: record.id,
-    text: resolveMessageText(record),
+    text: decryptChatText(resolveMessageText(record)),
     kind: record.kind || "text",
     imageUrls,
     imageUrl: imageUrls[0] || null,
@@ -13423,19 +13424,21 @@ export default function App() {
     const trimmed = text.trim();
     let createdMessage = null;
     try {
+      const encrypted = await encryptChatText(trimmed);
       createdMessage = await pb.collection("messages").create({
         conversation: conversationId,
         sender: currentUser.id,
         kind: "text",
-        text: trimmed,
+        text: encrypted,
       });
     } catch (error) {
       try {
+        const encrypted = await encryptChatText(trimmed);
         createdMessage = await pb.collection("messages").create({
           conversation: conversationId,
           sender: currentUser.id,
           kind: "text",
-          message: trimmed,
+          message: encrypted,
         });
       } catch (fallbackError) {
         console.log("sendConversationMessage error:", fallbackError);
@@ -13487,12 +13490,13 @@ export default function App() {
     const name = asset.fileName || `photo_${Date.now()}.${safeExt}`;
 
     let createdMessage = null;
+    const encryptedCaption = caption ? await encryptChatText(caption) : "";
     try {
       const formData = new FormData();
       formData.append("conversation", conversationId);
       formData.append("sender", currentUser.id);
       formData.append("kind", "image");
-      formData.append("text", caption || "");
+      formData.append("text", encryptedCaption || "");
       // PocketBase schema uses a multiple file field named `file`.
       // (Older schemas may use `image`, so we fallback below.)
       formData.append("file", { uri, name, type: mimeType });
@@ -13504,7 +13508,7 @@ export default function App() {
         formData.append("conversation", conversationId);
         formData.append("sender", currentUser.id);
         formData.append("kind", "text");
-        formData.append("text", caption || "");
+        formData.append("text", encryptedCaption || "");
         formData.append("file", { uri, name, type: mimeType });
         createdMessage = await pb.collection("messages").create(formData);
       } catch (fallbackError) {
@@ -13514,7 +13518,7 @@ export default function App() {
           formData.append("conversation", conversationId);
           formData.append("sender", currentUser.id);
           formData.append("kind", "text");
-          formData.append("text", caption || "");
+          formData.append("text", encryptedCaption || "");
           formData.append("image", { uri, name, type: mimeType });
           createdMessage = await pb.collection("messages").create(formData);
         } catch (legacyError) {
