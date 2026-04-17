@@ -94,7 +94,16 @@ export async function ensureRoleProfile(roleOverride = null) {
       .getFirstListItem(`user="${user.id}"`, { requestKey: null });
   } catch (error) {
     if (error?.status === 404) {
-      return await pb.collection(collection).create({ user: user.id });
+      // For doctors, start in "pending" until manually approved in PocketBase.
+      const payload =
+        role === "doctor"
+          ? {
+              user: user.id,
+              status: "pending",
+            }
+          : { user: user.id };
+
+      return await pb.collection(collection).create(payload);
     }
     throw error;
   }

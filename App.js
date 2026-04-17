@@ -547,6 +547,161 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
   };
 };
 
+const normalizeDoctorApplicationStatus = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "pending";
+  if (normalized === "approved") return "approved";
+  if (normalized === "rejected" || normalized === "rejection") return "rejection";
+  if (normalized === "pending") return "pending";
+  return "pending";
+};
+
+const doctorStatusLabelFor = (value) => {
+  const status = normalizeDoctorApplicationStatus(value);
+  if (status === "approved") return "Approved";
+  if (status === "rejection") return "Rejected";
+  return "Pending";
+};
+
+const doctorStatusToneFor = (theme, value) => {
+  const status = normalizeDoctorApplicationStatus(value);
+  if (status === "approved") {
+    return { bg: theme.successLight, color: theme.success };
+  }
+  if (status === "rejection") {
+    return { bg: theme.dangerLight, color: theme.danger };
+  }
+  return { bg: theme.warningLight, color: theme.warning };
+};
+
+const DoctorApplicationStatusScreen = ({ status, onRefresh, onLogout }) => {
+  const { theme } = useTheme();
+  const label = doctorStatusLabelFor(status);
+  const tone = doctorStatusToneFor(theme, status);
+  const normalized = normalizeDoctorApplicationStatus(status);
+
+  const title =
+    normalized === "approved" ? "Account Verified" : "Account On Hold";
+  const description =
+    normalized === "approved"
+      ? "Your doctor account is approved. You now have full access."
+      : normalized === "rejection"
+        ? "Your application was rejected. Please contact support for next steps."
+        : "Your application is under review. You will get access after approval.";
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View style={{ flex: 1, justifyContent: "center", padding: RFValue(20) }}>
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(22),
+            padding: RFValue(20),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            shadowColor: theme.shadowColor,
+            shadowOpacity: 0.06,
+            shadowOffset: { width: 0, height: 6 },
+            shadowRadius: 16,
+            elevation: 3,
+          }}
+        >
+          <View style={{ alignItems: "center", marginBottom: RFValue(14) }}>
+            <View
+              style={{
+                width: RFValue(74),
+                height: RFValue(74),
+                borderRadius: RFValue(22),
+                backgroundColor: tone.bg,
+                justifyContent: "center",
+                alignItems: "center",
+                marginBottom: RFValue(12),
+              }}
+            >
+              <Ionicons
+                name={
+                  normalized === "approved"
+                    ? "checkmark-circle"
+                    : normalized === "rejection"
+                      ? "close-circle"
+                      : "time"
+                }
+                size={RFValue(34)}
+                color={tone.color}
+              />
+            </View>
+            <Text
+              style={{
+                fontSize: RFValue(20),
+                fontWeight: "900",
+                color: theme.textPrimary,
+                textAlign: "center",
+              }}
+            >
+              {title}
+            </Text>
+            <Text
+              style={{
+                marginTop: RFValue(8),
+                fontSize: RFValue(13),
+                fontWeight: "700",
+                color: theme.textSecondary,
+                textAlign: "center",
+              }}
+            >
+              Status: {label}
+            </Text>
+            <Text
+              style={{
+                marginTop: RFValue(10),
+                fontSize: RFValue(13),
+                color: theme.textSecondary,
+                textAlign: "center",
+                lineHeight: RFValue(20),
+              }}
+            >
+              {description}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            onPress={onRefresh}
+            style={{
+              backgroundColor: theme.accent,
+              borderRadius: RFValue(16),
+              paddingVertical: RFValue(14),
+              alignItems: "center",
+              marginTop: RFValue(10),
+            }}
+          >
+            <Text style={{ color: "#FFF", fontWeight: "800" }}>
+              Refresh Status
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={onLogout}
+            style={{
+              backgroundColor: theme.bg,
+              borderRadius: RFValue(16),
+              paddingVertical: RFValue(14),
+              alignItems: "center",
+              marginTop: RFValue(10),
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+            }}
+          >
+            <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+              Logout
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+};
+
 // --- RESPONSIVE SCALING ---
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const scale = SCREEN_WIDTH / 375;
@@ -13329,11 +13484,28 @@ export default function App() {
       setConversations([]);
       return;
     }
+
+    if (
+      userRole === "doctor" &&
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
+      setWounds([]);
+      setMedOrders([]);
+      setConversations([]);
+      return;
+    }
     refreshAllData(currentUser, userRole);
-  }, [currentUser?.id, userRole]);
+  }, [currentUser?.id, userRole, patientProfile?.status]);
 
   useEffect(() => {
     if (!currentUser?.id || !userRole) return;
+
+    if (
+      userRole === "doctor" &&
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
+      return;
+    }
 
     const subscribe = async () => {
       try {
@@ -13358,7 +13530,7 @@ export default function App() {
       pb.collection("orders").unsubscribe("*");
       pb.collection("conversations").unsubscribe("*");
     };
-  }, [currentUser?.id, userRole]);
+  }, [currentUser?.id, userRole, patientProfile?.status]);
 
   if (loadingAuth) {
     return (
@@ -13455,11 +13627,38 @@ const AppContent = ({
     setUserRole(null);
   };
 
+  const refreshDoctorStatus = async () => {
+    try {
+      // Refresh the auth model (in case role or record fields changed).
+      if (pb.authStore.isValid) {
+        await pb.collection("UsersAuth").authRefresh();
+      }
+      if (pb.authStore.record) {
+        setCurrentUser(pb.authStore.record);
+      }
+      if (currentUser?.role === "doctor" || userRole === "doctor") {
+        const profile = await ensureRoleProfile("doctor");
+        setPatientProfile(profile || null);
+      }
+    } catch (error) {
+      console.log("refreshDoctorStatus error:", error);
+    }
+  };
+
   if (!userRole) {
     return <AuthScreen onLogin={handleAuthSuccess} />;
   }
 
   if (userRole === "doctor") {
+    if (normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved") {
+      return (
+        <DoctorApplicationStatusScreen
+          status={patientProfile?.status}
+          onRefresh={refreshDoctorStatus}
+          onLogout={handleLogout}
+        />
+      );
+    }
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
         <StatusBar
