@@ -11,26 +11,26 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "Allow access to camera for video calls and wound photos.",
+        "NSCameraUsageDescription": "Allow access to camera for calls and sending photos.",
         "NSMicrophoneUsageDescription": "Allow access to microphone for calls.",
-        "NSPhotoLibraryUsageDescription": "Allow access to photos to attach wound images for your doctor."
+        "NSPhotoLibraryUsageDescription": "Allow access to your photo library to send photos in chat.",
+        "NSPhotoLibraryAddUsageDescription": "Allow saving chat photos to your library if needed."
       },
       "bitcode": false,
       "bundleIdentifier": "com.anonymous.myapp"
     },
     "android": {
-      "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.INTERNET",
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.WAKE_LOCK",
-        "android.permission.BLUETOOTH",
-        "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_EXTERNAL_STORAGE"
+        "android.permission.BLUETOOTH"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -61,18 +61,18 @@
         }
       ],
       "expo-web-browser",
-      "@livekit/react-native-expo-plugin",
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "Allow access to your photos to attach a wound image for review.",
-          "cameraPermission": "Allow the camera to capture a wound photo for your doctor."
-        }
-      ]
+      "@livekit/react-native-expo-plugin"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "65822fa5-8f65-4ac2-b4e6-4887102c7ee3"
+      }
+    },
+    "owner": "dartmouthospava"
   }
 }

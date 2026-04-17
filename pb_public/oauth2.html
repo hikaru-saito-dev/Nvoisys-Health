@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signing in...</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+          sans-serif;
+        background: #0b1120;
+        color: #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 24px;
+      }
+      .card {
+        width: 100%;
+        max-width: 520px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 16px;
+        padding: 18px 18px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        font-weight: 800;
+      }
+      p {
+        margin: 0;
+        color: rgba(229, 231, 235, 0.8);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      a {
+        color: #93c5fd;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Signing you in...</h1>
+      <p>
+        If you are not redirected automatically, tap
+        <a id="openLink" href="#">Return to app</a>.
+      </p>
+    </div>
+
+    <script>
+      (function () {
+        // IMPORTANT: keep this scheme in sync with your Expo config (app.json -> expo.scheme)
+        // and with the `APP_OAUTH2_RETURN_URL` in pocketbase.js.
+        var APP_RETURN_URL = "myapp://oauth2";
+
+        var params = new URLSearchParams(window.location.search || "");
+
+        var nextParams = new URLSearchParams();
+        [
+          "code",
+          "state",
+          "error",
+          "error_description",
+          "provider",
+          "scope",
+          "authuser",
+          "prompt",
+        ].forEach(function (key) {
+          var v = params.get(key);
+          if (v != null && v !== "") nextParams.set(key, v);
+        });
+
+        var nextUrl = APP_RETURN_URL;
+        var query = nextParams.toString();
+        if (query) nextUrl += "?" + query;
+
+        var linkEl = document.getElementById("openLink");
+        if (linkEl) linkEl.href = nextUrl;
+
+        // Try to redirect immediately.
+        window.location.replace(nextUrl);
+      })();
+    </script>
+  </body>
+</html>

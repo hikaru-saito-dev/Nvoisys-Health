@@ -16,6 +16,7 @@ import {
   SafeAreaView,
   StatusBar,
   Image,
+  Alert,
   Animated,
   TextInput,
   Platform,
@@ -30,6 +31,7 @@ import {
   mediaDevices,
 } from "@livekit/react-native-webrtc";
 import Constants from "expo-constants";
+import * as ImagePicker from "expo-image-picker";
 import {
   Ionicons,
   MaterialCommunityIcons,
@@ -264,9 +266,9 @@ const SIGNALING_SERVER_URL = (() => {
     Constants.manifest2?.extra?.expoClient?.hostUri;
   if (hostUri) {
     const host = hostUri.split(":")[0];
-    return `ws://${host}:8080`;
+    return `wss://signaling-server-host.onrender.com`;
   }
-  return "ws://localhost:8080";
+  return "wss://signaling-server-host.onrender.com";
 })();
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
@@ -321,6 +323,65 @@ const formatTimeValue = (value) => {
 
 const uniqueIds = (values) => [...new Set(safeArray(values).filter(Boolean))];
 
+const normalizeUserRole = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return "patient";
+  if (
+    ["patient", "doctor", "pharmacy", "staff", "admin"].includes(normalized)
+  ) {
+    return normalized;
+  }
+  return normalized;
+};
+
+const roleLabelFor = (role) => {
+  const normalized = normalizeUserRole(role);
+  if (normalized === "doctor") return "Doctor";
+  if (normalized === "pharmacy") return "Pharmacy";
+  if (normalized === "staff") return "Staff";
+  if (normalized === "admin") return "Admin";
+  return "Patient";
+};
+
+const roleIconFor = (role) => {
+  const normalized = normalizeUserRole(role);
+  if (normalized === "doctor") return "medical";
+  if (normalized === "pharmacy") return "leaf";
+  if (normalized === "staff") return "briefcase";
+  if (normalized === "admin") return "shield-checkmark";
+  return "person";
+};
+
+const roleThemeTokensFor = (theme, role) => {
+  const normalized = normalizeUserRole(role);
+  if (normalized === "pharmacy") {
+    return {
+      color: theme.success,
+      bg: theme.successLight,
+    };
+  }
+  if (normalized === "patient") {
+    return {
+      color: theme.warning,
+      bg: theme.warningLight,
+    };
+  }
+  return {
+    color: theme.accent,
+    bg: theme.accentLight,
+  };
+};
+
+const buildDirectCallRoomId = (userA, userB) => {
+  const a = String(userA || "").trim();
+  const b = String(userB || "").trim();
+  if (!a || !b) return "";
+  const [first, second] = [a, b].sort();
+  return `direct_${first}_${second}`;
+};
+
 const buildConversationTitle = (woundRecord) => {
   const description = woundRecord?.description || "Wound Case";
   return description.length > 40
@@ -334,19 +395,72 @@ const sumMedicationAmount = (items) =>
     0,
   );
 
+const resolveMessageText = (record) => {
+  const value =
+    record?.text || record?.message || record?.content || record?.body || "";
+  if (typeof value === "string") return value;
+  return value ? String(value) : "";
+};
+
+const resolveMessageImageFiles = (record) => {
+  if (!record) return [];
+
+  // PocketBase file fields can be either:
+  // - string (single file)
+  // - array of strings (multiple files)
+  // Different collections/projects also use different field names.
+  const candidates = [
+    record.file,
+    record.image,
+    record.photo,
+    record.attachment,
+    record.files,
+    record.images,
+    record.photos,
+    record.attachments,
+  ];
+
+  for (const value of candidates) {
+    if (!value) continue;
+    if (typeof value === "string") return [value];
+    if (Array.isArray(value) && value.length) return value.filter(Boolean);
+  }
+
+  return [];
+};
+
 const mapMessageRecord = (record) => {
   const senderRecord = record?.expand?.sender;
+  const isSystem = record?.kind === "system";
+  const imageFiles = resolveMessageImageFiles(record);
+  const imageUrls = imageFiles
+    .filter(Boolean)
+    .map((fileName) => {
+      const token = pb?.authStore?.token;
+      const options = token ? { token } : undefined;
+      return pb.files.getUrl(record, fileName, options);
+    });
   return {
     id: record.id,
-    text: record.text || "",
+    text: resolveMessageText(record),
     kind: record.kind || "text",
+    imageUrls,
+    imageUrl: imageUrls[0] || null,
     senderId: record.sender || null,
-    senderRole: senderRecord?.role || (record.sender ? "user" : "system"),
-    senderName: senderRecord?.name || (record.sender ? "User" : "System"),
+    senderRole: senderRecord?.role || (isSystem ? "system" : "user"),
+    senderName: senderRecord?.name || (isSystem ? "System" : "User"),
     time: formatTimeValue(record.created),
     created: record.created,
     raw: record,
   };
+};
+
+const messagePreviewText = (mappedMessage) => {
+  if (!mappedMessage) return "";
+  if (mappedMessage.imageUrl) return "Photo";
+  if (mappedMessage.kind === "image") return "Photo";
+  if (mappedMessage.kind === "system") return mappedMessage.text || "";
+  return mappedMessage.text || "";
 };
 
 const mapWoundRecord = (record) => ({
@@ -394,7 +508,9 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
     (otherMembers.length > 0
       ? otherMembers.map((member) => member.name || member.role).join(", ")
       : "Conversation");
-  const fallbackTitle = linkedWound ? buildConversationTitle(linkedWound) : null;
+  const fallbackTitle = linkedWound
+    ? buildConversationTitle(linkedWound)
+    : null;
   const linkedWoundDescription =
     linkedWound?.description || record.title || displayName;
   return {
@@ -420,13 +536,170 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
           ? "medical"
           : "chatbubble-ellipses",
     lastMsg:
-      preview?.text || linkedWound?.description || "Tap to open conversation",
+      messagePreviewText(preview) ||
+      linkedWound?.description ||
+      "Tap to open conversation",
     time: formatTimeValue(
       record.lastMessageAt || record.updated || record.created,
     ),
     unread: 0,
     raw: record,
   };
+};
+
+const normalizeDoctorApplicationStatus = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "pending";
+  if (normalized === "approved") return "approved";
+  if (normalized === "rejected" || normalized === "rejection") return "rejection";
+  if (normalized === "pending") return "pending";
+  return "pending";
+};
+
+const doctorStatusLabelFor = (value) => {
+  const status = normalizeDoctorApplicationStatus(value);
+  if (status === "approved") return "Approved";
+  if (status === "rejection") return "Rejected";
+  return "Pending";
+};
+
+const doctorStatusToneFor = (theme, value) => {
+  const status = normalizeDoctorApplicationStatus(value);
+  if (status === "approved") {
+    return { bg: theme.successLight, color: theme.success };
+  }
+  if (status === "rejection") {
+    return { bg: theme.dangerLight, color: theme.danger };
+  }
+  return { bg: theme.warningLight, color: theme.warning };
+};
+
+const DoctorApplicationStatusScreen = ({ status, onRefresh, onLogout }) => {
+  const { theme } = useTheme();
+  const label = doctorStatusLabelFor(status);
+  const tone = doctorStatusToneFor(theme, status);
+  const normalized = normalizeDoctorApplicationStatus(status);
+
+  const title =
+    normalized === "approved" ? "Account Verified" : "Account On Hold";
+  const description =
+    normalized === "approved"
+      ? "Your doctor account is approved. You now have full access."
+      : normalized === "rejection"
+        ? "Your application was rejected. Please contact support for next steps."
+        : "Your application is under review. You will get access after approval.";
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View style={{ flex: 1, justifyContent: "center", padding: RFValue(20) }}>
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(22),
+            padding: RFValue(20),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            shadowColor: theme.shadowColor,
+            shadowOpacity: 0.06,
+            shadowOffset: { width: 0, height: 6 },
+            shadowRadius: 16,
+            elevation: 3,
+          }}
+        >
+          <View style={{ alignItems: "center", marginBottom: RFValue(14) }}>
+            <View
+              style={{
+                width: RFValue(74),
+                height: RFValue(74),
+                borderRadius: RFValue(22),
+                backgroundColor: tone.bg,
+                justifyContent: "center",
+                alignItems: "center",
+                marginBottom: RFValue(12),
+              }}
+            >
+              <Ionicons
+                name={
+                  normalized === "approved"
+                    ? "checkmark-circle"
+                    : normalized === "rejection"
+                      ? "close-circle"
+                      : "time"
+                }
+                size={RFValue(34)}
+                color={tone.color}
+              />
+            </View>
+            <Text
+              style={{
+                fontSize: RFValue(20),
+                fontWeight: "900",
+                color: theme.textPrimary,
+                textAlign: "center",
+              }}
+            >
+              {title}
+            </Text>
+            <Text
+              style={{
+                marginTop: RFValue(8),
+                fontSize: RFValue(13),
+                fontWeight: "700",
+                color: theme.textSecondary,
+                textAlign: "center",
+              }}
+            >
+              Status: {label}
+            </Text>
+            <Text
+              style={{
+                marginTop: RFValue(10),
+                fontSize: RFValue(13),
+                color: theme.textSecondary,
+                textAlign: "center",
+                lineHeight: RFValue(20),
+              }}
+            >
+              {description}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            onPress={onRefresh}
+            style={{
+              backgroundColor: theme.accent,
+              borderRadius: RFValue(16),
+              paddingVertical: RFValue(14),
+              alignItems: "center",
+              marginTop: RFValue(10),
+            }}
+          >
+            <Text style={{ color: "#FFF", fontWeight: "800" }}>
+              Refresh Status
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={onLogout}
+            style={{
+              backgroundColor: theme.bg,
+              borderRadius: RFValue(16),
+              paddingVertical: RFValue(14),
+              alignItems: "center",
+              marginTop: RFValue(10),
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+            }}
+          >
+            <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+              Logout
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </SafeAreaView>
+  );
 };
 
 // --- RESPONSIVE SCALING ---
@@ -871,7 +1144,7 @@ const PatientPlaceholderScreen = () => (
 const PatientHomeScreen = () => {
   const { theme } = useTheme();
   const [selectedEmoji, setSelectedEmoji] = useState(null);
-  const [showVideoCall, setShowVideoCall] = useState(false);
+  const [startCallType, setStartCallType] = useState(null);
   const [showAppointment, setShowAppointment] = useState(false);
   const [showPrescription, setShowPrescription] = useState(false);
   const [showMeds, setShowMeds] = useState(false);
@@ -880,8 +1153,8 @@ const PatientHomeScreen = () => {
 
   useEffect(() => {
     const handleBack = () => {
-      if (showVideoCall) {
-        setShowVideoCall(false);
+      if (startCallType) {
+        setStartCallType(null);
         return true;
       }
       if (showAppointment) {
@@ -912,7 +1185,7 @@ const PatientHomeScreen = () => {
     );
     return () => subscription.remove();
   }, [
-    showVideoCall,
+    startCallType,
     showAppointment,
     showPrescription,
     showMeds,
@@ -920,8 +1193,13 @@ const PatientHomeScreen = () => {
     showSOS,
   ]);
 
-  if (showVideoCall)
-    return <VideoCallScreen onBack={() => setShowVideoCall(false)} />;
+  if (startCallType)
+    return (
+      <StartCallScreen
+        callType={startCallType}
+        onBack={() => setStartCallType(null)}
+      />
+    );
   if (showAppointment)
     return (
       <AppointmentBookingScreen onBack={() => setShowAppointment(false)} />
@@ -1246,65 +1524,119 @@ const PatientHomeScreen = () => {
               </Text>
             </View>
 
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: RFValue(16),
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => setShowVideoCall(true)}
+            <View style={{ marginBottom: RFValue(16) }}>
+              <View
                 style={{
-                  flex: 1,
-                  backgroundColor: theme.card,
-                  borderRadius: RFValue(16),
-                  padding: RFValue(16),
-                  marginRight: RFValue(8),
-                  shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.06,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                  elevation: 3,
-                  alignItems: "center",
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  marginBottom: RFValue(12),
                 }}
               >
-                <View
+                <TouchableOpacity
+                  onPress={() => setStartCallType("video")}
                   style={{
-                    paddingHorizontal: RFValue(10),
-                    height: RFValue(36),
-                    borderRadius: RFValue(14),
-                    backgroundColor: theme.bg,
-                    justifyContent: "center",
+                    flex: 1,
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(16),
+                    padding: RFValue(16),
+                    marginRight: RFValue(8),
+                    shadowColor: theme.shadowColor,
+                    shadowOpacity: 0.06,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowRadius: 12,
+                    elevation: 3,
                     alignItems: "center",
-                    marginBottom: RFValue(8),
                   }}
                 >
-                  <Ionicons
-                    name="videocam"
-                    size={RFValue(22)}
-                    color={theme.accent}
-                  />
-                </View>
-                <Text
+                  <View
+                    style={{
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
+                      borderRadius: RFValue(14),
+                      backgroundColor: theme.bg,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginBottom: RFValue(8),
+                    }}
+                  >
+                    <Ionicons
+                      name="videocam"
+                      size={RFValue(22)}
+                      color={theme.accent}
+                    />
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    Video Call
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(2),
+                    }}
+                  >
+                    Consult a doctor
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setStartCallType("audio")}
                   style={{
-                    fontSize: RFValue(12),
-                    fontWeight: "700",
-                    color: theme.textPrimary,
+                    flex: 1,
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(16),
+                    padding: RFValue(16),
+                    marginLeft: RFValue(8),
+                    shadowColor: theme.shadowColor,
+                    shadowOpacity: 0.06,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowRadius: 12,
+                    elevation: 3,
+                    alignItems: "center",
                   }}
                 >
-                  Video Call
-                </Text>
-                <Text
-                  style={{
-                    fontSize: RFValue(10),
-                    color: theme.textSecondary,
-                    marginTop: RFValue(2),
-                  }}
-                >
-                  Consult a doctor
-                </Text>
-              </TouchableOpacity>
+                  <View
+                    style={{
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
+                      borderRadius: RFValue(14),
+                      backgroundColor: theme.warningLight,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginBottom: RFValue(8),
+                    }}
+                  >
+                    <Ionicons
+                      name="call"
+                      size={RFValue(22)}
+                      color={theme.warning}
+                    />
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    Audio Call
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(2),
+                    }}
+                  >
+                    Talk to a doctor
+                  </Text>
+                </TouchableOpacity>
+              </View>
               <TouchableOpacity
                 onPress={() => setShowAppointment(true)}
                 style={{
@@ -1312,7 +1644,6 @@ const PatientHomeScreen = () => {
                   backgroundColor: theme.card,
                   borderRadius: RFValue(16),
                   padding: RFValue(16),
-                  marginLeft: RFValue(8),
                   shadowColor: theme.shadowColor,
                   shadowOpacity: 0.06,
                   shadowOffset: { width: 0, height: 4 },
@@ -1915,8 +2246,14 @@ const PatientEmergencyScreen = ({ navigation }) => {
   );
 };
 
-const CallScreen = ({ conversationId, callType = "video", onClose, contact }) => {
+const CallScreen = ({
+  conversationId,
+  callType = "video",
+  onClose,
+  contact,
+}) => {
   const { theme } = useTheme();
+  const { currentUserId } = useAppData();
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [status, setStatus] = useState("Connecting...");
@@ -2002,7 +2339,7 @@ const CallScreen = ({ conversationId, callType = "video", onClose, contact }) =>
             JSON.stringify({
               type: "join",
               roomId: conversationId,
-              userId: contact?.id || null,
+              userId: currentUserId || null,
             }),
           );
         };
@@ -2156,6 +2493,7 @@ const CallScreen = ({ conversationId, callType = "video", onClose, contact }) =>
             streamURL={remoteStream.toURL()}
             style={{ width: "100%", height: "100%" }}
             objectFit="cover"
+            zOrder={0}
           />
         ) : (
           <View
@@ -2191,6 +2529,7 @@ const CallScreen = ({ conversationId, callType = "video", onClose, contact }) =>
                 style={{ width: "100%", height: "100%" }}
                 objectFit="cover"
                 mirror
+                zOrder={1}
               />
             ) : (
               <View
@@ -2280,6 +2619,385 @@ const CallScreen = ({ conversationId, callType = "video", onClose, contact }) =>
   );
 };
 
+const StartCallScreen = ({ callType = "video", onBack }) => {
+  const { theme } = useTheme();
+  const {
+    userRole,
+    currentUserId,
+    loadDirectoryContacts,
+    ensureDirectConversation,
+  } = useAppData();
+
+  const [directoryContacts, setDirectoryContacts] = useState([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState(() => {
+    if (userRole === "doctor") return "patient";
+    if (userRole === "patient") return "doctor";
+    return "all";
+  });
+  const [activeCall, setActiveCall] = useState(null);
+  const [startingCallId, setStartingCallId] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadDirectory = async () => {
+      if (!currentUserId) return;
+      try {
+        setDirectoryLoading(true);
+        setDirectoryError("");
+        const records = await loadDirectoryContacts();
+        if (mounted) {
+          setDirectoryContacts(records);
+        }
+      } catch (error) {
+        if (mounted) {
+          setDirectoryError(error?.message || "Unable to load directory");
+          setDirectoryContacts([]);
+        }
+      } finally {
+        if (mounted) {
+          setDirectoryLoading(false);
+        }
+      }
+    };
+
+    loadDirectory();
+    return () => {
+      mounted = false;
+    };
+  }, [currentUserId, loadDirectoryContacts]);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const formattedContacts = directoryContacts
+    .filter((user) => user?.id && user.id !== currentUserId)
+    .map((user) => {
+      const role = normalizeUserRole(user?.role);
+      const displayName = user?.name || user?.email || "User";
+      return {
+        id: user.id,
+        displayName,
+        role,
+        roleLabel: roleLabelFor(role),
+        icon: roleIconFor(role),
+        email: user?.email || "",
+      };
+    })
+    .filter((contact) => {
+      if (roleFilter && roleFilter !== "all" && contact.role !== roleFilter) {
+        return false;
+      }
+      if (!normalizedQuery) return true;
+      const haystack =
+        `${contact.displayName} ${contact.roleLabel} ${contact.email}`
+          .toLowerCase()
+          .trim();
+      return haystack.includes(normalizedQuery);
+    })
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  const handleStartCall = async (contact) => {
+    if (!contact?.id || !currentUserId || startingCallId) return;
+    setStartingCallId(contact.id);
+
+    const roomId = buildDirectCallRoomId(currentUserId, contact.id);
+    const contactForCall = {
+      id: contact.id,
+      displayName: contact.displayName,
+    };
+
+    setActiveCall({ roomId, callType, contact: contactForCall });
+
+    try {
+      await ensureDirectConversation(contact.id);
+    } catch (error) {
+      // Calls don't depend on chats existing; ignore errors.
+    } finally {
+      setStartingCallId(null);
+    }
+  };
+
+  if (activeCall) {
+    return (
+      <CallScreen
+        conversationId={activeCall.roomId}
+        callType={activeCall.callType}
+        contact={activeCall.contact}
+        onClose={() => {
+          setActiveCall(null);
+          if (onBack) onBack();
+        }}
+      />
+    );
+  }
+
+  const filterChip = (value, label) => {
+    const isActive = roleFilter === value;
+    return (
+      <TouchableOpacity
+        key={value}
+        onPress={() => setRoleFilter(value)}
+        style={{
+          paddingHorizontal: RFValue(12),
+          paddingVertical: RFValue(8),
+          borderRadius: RFValue(999),
+          backgroundColor: isActive ? theme.accent : theme.bg,
+          borderWidth: 1,
+          borderColor: isActive ? theme.accent : theme.cardBorder,
+          marginRight: RFValue(8),
+        }}
+      >
+        <Text
+          style={{
+            fontSize: RFValue(12),
+            fontWeight: "800",
+            color: isActive ? "#FFF" : theme.textSecondary,
+          }}
+        >
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
+
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(16),
+          paddingTop: Platform.OS === "android" ? 40 : 16,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <TouchableOpacity
+            onPress={onBack}
+            style={{
+              width: RFValue(40),
+              height: RFValue(40),
+              borderRadius: RFValue(12),
+              backgroundColor: theme.bg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(12),
+            }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text
+              style={{
+                fontSize: RFValue(18),
+                fontWeight: "900",
+                color: theme.textPrimary,
+              }}
+              numberOfLines={1}
+            >
+              {callType === "video" ? "Start Video Call" : "Start Audio Call"}
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                color: theme.textSecondary,
+                marginTop: 2,
+              }}
+              numberOfLines={1}
+            >
+              Pick who to call. They must join the same call.
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ marginTop: RFValue(14) }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: theme.bg,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(14),
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Ionicons
+              name="search"
+              size={RFValue(18)}
+              color={theme.textTertiary}
+              style={{ marginRight: RFValue(8) }}
+            />
+            <TextInput
+              placeholder="Search people..."
+              placeholderTextColor={theme.textTertiary}
+              style={{
+                flex: 1,
+                paddingVertical: RFValue(10),
+                fontSize: RFValue(14),
+                color: theme.textPrimary,
+              }}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingTop: RFValue(10) }}
+          >
+            {[
+              filterChip("all", "All"),
+              filterChip("doctor", "Doctors"),
+              filterChip("patient", "Patients"),
+              filterChip("pharmacy", "Pharmacies"),
+            ]}
+          </ScrollView>
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: RFValue(16) }}>
+        {directoryLoading ? (
+          <View style={{ alignItems: "center", paddingVertical: RFValue(24) }}>
+            <Text style={{ fontSize: RFValue(12), color: theme.textTertiary }}>
+              Loading directory...
+            </Text>
+          </View>
+        ) : formattedContacts.length > 0 ? (
+          formattedContacts.map((contact) => {
+            const { color, bg } = roleThemeTokensFor(theme, contact.role);
+            return (
+              <TouchableOpacity
+                key={contact.id}
+                onPress={() => handleStartCall(contact)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  backgroundColor: theme.card,
+                  padding: RFValue(14),
+                  borderRadius: RFValue(18),
+                  marginBottom: RFValue(10),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <View
+                  style={{
+                    width: RFValue(48),
+                    height: RFValue(48),
+                    borderRadius: RFValue(16),
+                    backgroundColor: bg,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginRight: RFValue(14),
+                  }}
+                >
+                  <Ionicons
+                    name={contact.icon}
+                    size={RFValue(22)}
+                    color={color}
+                  />
+                </View>
+                <View style={{ flex: 1, marginRight: RFValue(10) }}>
+                  <Text
+                    style={{
+                      fontSize: RFValue(14),
+                      fontWeight: "900",
+                      color: theme.textPrimary,
+                      marginBottom: 2,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {contact.displayName}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      fontWeight: "700",
+                    }}
+                    numberOfLines={1}
+                  >
+                    {contact.roleLabel}
+                  </Text>
+                  {contact.email ? (
+                    <Text
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textTertiary,
+                        marginTop: 2,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {contact.email}
+                    </Text>
+                  ) : null}
+                </View>
+                <View
+                  style={{
+                    width: RFValue(44),
+                    height: RFValue(44),
+                    borderRadius: RFValue(14),
+                    backgroundColor: theme.bg,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    borderWidth: 1,
+                    borderColor: color,
+                    opacity: startingCallId === contact.id ? 0.55 : 1,
+                  }}
+                >
+                  <Ionicons
+                    name={callType === "video" ? "videocam" : "call"}
+                    size={RFValue(18)}
+                    color={color}
+                  />
+                </View>
+              </TouchableOpacity>
+            );
+          })
+        ) : (
+          <View style={{ alignItems: "center", paddingVertical: RFValue(24) }}>
+            <Ionicons
+              name="search"
+              size={RFValue(32)}
+              color={theme.cardBorder}
+              style={{ marginBottom: RFValue(10) }}
+            />
+            <Text style={{ fontSize: RFValue(12), color: theme.textTertiary }}>
+              No contacts match your search.
+            </Text>
+          </View>
+        )}
+
+        {directoryError ? (
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: theme.danger,
+              marginTop: RFValue(8),
+              textAlign: "center",
+            }}
+          >
+            {directoryError}
+          </Text>
+        ) : null}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
 const PatientChatScreen = () => {
   const { theme } = useTheme();
   const {
@@ -2287,6 +3005,7 @@ const PatientChatScreen = () => {
     conversations,
     loadConversationMessages,
     sendConversationMessage,
+    sendConversationImage,
     ensureDirectConversation,
     loadDirectoryContacts,
     dataLoading,
@@ -2302,6 +3021,7 @@ const PatientChatScreen = () => {
   const [directoryError, setDirectoryError] = useState("");
   const [startingChatId, setStartingChatId] = useState(null);
   const [activeCall, setActiveCall] = useState(null);
+  const [sendingAttachment, setSendingAttachment] = useState(false);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredContacts = conversations.filter((c) => {
@@ -2314,16 +3034,26 @@ const PatientChatScreen = () => {
   });
 
   const formatDirectoryContact = (user) => {
-    const role = user?.role === "pharmacy" ? "pharmacy" : "doctor";
-    const displayName = user?.name || user?.email || "Clinician";
+    const role = normalizeUserRole(user?.role);
+    const displayName = user?.name || user?.email || roleLabelFor(role);
     return {
       id: user?.id,
       displayName,
       role,
-      roleLabel: role === "pharmacy" ? "Pharmacy" : "Doctor",
-      icon: role === "pharmacy" ? "leaf" : "medical",
+      roleLabel: roleLabelFor(role),
+      icon: roleIconFor(role),
       email: user?.email || "",
     };
+  };
+
+  const resolveCallRoomId = (conversation) => {
+    const memberIds = safeArray(conversation?.members);
+    if (memberIds.length === 2 && currentUserId) {
+      const otherId = memberIds.find((id) => id !== currentUserId);
+      const roomId = buildDirectCallRoomId(currentUserId, otherId);
+      if (roomId) return roomId;
+    }
+    return conversation?.id || "";
   };
 
   const showDirectoryResults = normalizedQuery.length > 0;
@@ -2332,9 +3062,10 @@ const PatientChatScreen = () => {
         .filter((user) => user?.id && user.id !== currentUserId)
         .map(formatDirectoryContact)
         .filter((contact) => {
-          const searchValue = `${contact.displayName} ${contact.roleLabel} ${contact.email}`
-            .toLowerCase()
-            .trim();
+          const searchValue =
+            `${contact.displayName} ${contact.roleLabel} ${contact.email}`
+              .toLowerCase()
+              .trim();
           return searchValue.includes(normalizedQuery);
         })
     : [];
@@ -2422,10 +3153,17 @@ const PatientChatScreen = () => {
 
   const sendMessage = async () => {
     if (!message.trim() || !selectedContact?.id) return;
-    const text = message;
-    setMessage("");
-    await sendConversationMessage(selectedContact.id, text);
-    await loadSelectedMessages(selectedContact.id);
+    const text = message.trim();
+    const created = await sendConversationMessage(selectedContact.id, text);
+    if (created) {
+      setMessage("");
+      setContactMessages((prev) => {
+        if (prev.some((item) => item.id === created.id)) return prev;
+        return [...prev, created];
+      });
+    } else {
+      setMessage(text);
+    }
   };
 
   const handleStartChat = async (contact) => {
@@ -2446,8 +3184,59 @@ const PatientChatScreen = () => {
     }
   };
 
-  const sendAttachment = () => {
-    return;
+  const sendAttachment = async (source) => {
+    if (!selectedContact?.id || sendingAttachment) return;
+
+    try {
+      setSendingAttachment(true);
+
+      if (source === "camera") {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow camera access to take a photo.",
+          );
+          return;
+        }
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow photo library access to pick a photo.",
+          );
+          return;
+        }
+      }
+
+      const pickerOptions = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      };
+
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+
+      if (!result || result.canceled) return;
+      const asset = result.assets?.[0];
+      if (!asset?.uri) return;
+
+      const created = await sendConversationImage(selectedContact.id, asset);
+      if (created) {
+        setContactMessages((prev) => {
+          if (prev.some((item) => item.id === created.id)) return prev;
+          return [...prev, created];
+        });
+      }
+    } catch (error) {
+      console.log("sendAttachment error:", error);
+      Alert.alert("Upload failed", error?.message || "Unable to send photo.");
+    } finally {
+      setSendingAttachment(false);
+    }
   };
 
   if (activeCall) {
@@ -2547,7 +3336,7 @@ const PatientChatScreen = () => {
               style={{ padding: 8 }}
               onPress={() =>
                 setActiveCall({
-                  conversationId: selectedContact.id,
+                  conversationId: resolveCallRoomId(selectedContact),
                   callType: "audio",
                   contact: selectedContact,
                 })
@@ -2559,7 +3348,7 @@ const PatientChatScreen = () => {
               style={{ padding: 8, marginLeft: 8 }}
               onPress={() =>
                 setActiveCall({
-                  conversationId: selectedContact.id,
+                  conversationId: resolveCallRoomId(selectedContact),
                   callType: "video",
                   contact: selectedContact,
                 })
@@ -2591,8 +3380,24 @@ const PatientChatScreen = () => {
             contactMessages.map((msg) => {
               const isCurrentUser =
                 msg.senderId && msg.senderId === currentUserId;
-              const isSystem =
-                msg.kind === "system" || msg.senderRole === "system";
+              const isSystem = msg.kind === "system";
+              const hasImage = !!msg.imageUrl;
+              const bubbleBg = isSystem
+                ? theme.bg
+                : hasImage
+                  ? isCurrentUser
+                    ? theme.accentLight
+                    : theme.card
+                  : isCurrentUser
+                    ? theme.accent
+                    : theme.card;
+              const bodyTextColor = isSystem
+                ? theme.textSecondary
+                : hasImage
+                  ? theme.textPrimary
+                  : isCurrentUser
+                    ? "#FFF"
+                    : theme.textPrimary;
               return (
                 <View
                   key={msg.id}
@@ -2609,17 +3414,13 @@ const PatientChatScreen = () => {
                   <View
                     style={{
                       maxWidth: isSystem ? "88%" : "75%",
-                      backgroundColor: isSystem
-                        ? theme.bg
-                        : isCurrentUser
-                          ? theme.accent
-                          : theme.card,
+                      backgroundColor: bubbleBg,
                       borderRadius: RFValue(16),
                       borderBottomRightRadius:
                         isSystem || isCurrentUser ? RFValue(4) : RFValue(16),
                       borderBottomLeftRadius:
                         isSystem || isCurrentUser ? RFValue(16) : RFValue(4),
-                      padding: RFValue(14),
+                      padding: hasImage ? RFValue(6) : RFValue(14),
                       shadowColor: theme.shadowColor,
                       shadowOpacity: 0.05,
                       elevation: 1,
@@ -2639,29 +3440,45 @@ const PatientChatScreen = () => {
                         {msg.senderName}
                       </Text>
                     ) : null}
-                    <Text
-                      style={{
-                        fontSize: RFValue(14),
-                        color: isSystem
-                          ? theme.textSecondary
-                          : isCurrentUser
-                            ? "#FFF"
-                            : theme.textPrimary,
-                        lineHeight: RFValue(20),
-                        textAlign: isSystem ? "center" : "left",
-                      }}
-                    >
-                      {msg.text}
-                    </Text>
+
+                    {hasImage ? (
+                      <Image
+                        source={{ uri: msg.imageUrl }}
+                        style={{
+                          width: RFValue(220),
+                          maxWidth: "100%",
+                          height: RFValue(160),
+                          borderRadius: RFValue(12),
+                          backgroundColor: theme.bg,
+                        }}
+                        resizeMode="cover"
+                      />
+                    ) : null}
+
+                    {msg.text ? (
+                      <Text
+                        style={{
+                          fontSize: RFValue(14),
+                          color: bodyTextColor,
+                          lineHeight: RFValue(20),
+                          textAlign: isSystem ? "center" : "left",
+                          marginTop: hasImage ? RFValue(10) : 0,
+                        }}
+                      >
+                        {msg.text}
+                      </Text>
+                    ) : null}
                     <Text
                       style={{
                         fontSize: RFValue(9),
                         color: isSystem
                           ? theme.textTertiary
-                          : isCurrentUser
-                            ? "rgba(255,255,255,0.7)"
-                            : theme.textTertiary,
-                        marginTop: 4,
+                          : hasImage
+                            ? theme.textTertiary
+                            : isCurrentUser
+                              ? "rgba(255,255,255,0.7)"
+                              : theme.textTertiary,
+                        marginTop: hasImage || msg.text ? 4 : 0,
                         textAlign: isSystem ? "center" : "right",
                       }}
                     >
@@ -2722,6 +3539,7 @@ const PatientChatScreen = () => {
           >
             <TouchableOpacity
               onPress={() => sendAttachment("camera")}
+              disabled={sendingAttachment}
               style={{
                 width: RFValue(36),
                 height: RFValue(36),
@@ -2730,7 +3548,7 @@ const PatientChatScreen = () => {
                 justifyContent: "center",
                 alignItems: "center",
                 marginRight: RFValue(8),
-                opacity: 0.45,
+                opacity: sendingAttachment ? 0.5 : 1,
               }}
             >
               <Ionicons
@@ -2741,6 +3559,7 @@ const PatientChatScreen = () => {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => sendAttachment("image")}
+              disabled={sendingAttachment}
               style={{
                 width: RFValue(36),
                 height: RFValue(36),
@@ -2749,7 +3568,7 @@ const PatientChatScreen = () => {
                 justifyContent: "center",
                 alignItems: "center",
                 marginRight: RFValue(8),
-                opacity: 0.45,
+                opacity: sendingAttachment ? 0.5 : 1,
               }}
             >
               <Ionicons
@@ -2850,7 +3669,7 @@ const PatientChatScreen = () => {
             style={{ marginRight: RFValue(8) }}
           />
           <TextInput
-            placeholder="Search doctors, pharmacies, or chats..."
+            placeholder="Search people or chats..."
             placeholderTextColor={theme.textTertiary}
             style={{
               flex: 1,
@@ -2875,10 +3694,12 @@ const PatientChatScreen = () => {
                 marginBottom: RFValue(10),
               }}
             >
-              Doctors & Pharmacies
+              Directory
             </Text>
             {directoryLoading ? (
-              <View style={{ alignItems: "center", paddingVertical: RFValue(16) }}>
+              <View
+                style={{ alignItems: "center", paddingVertical: RFValue(16) }}
+              >
                 <Text
                   style={{ fontSize: RFValue(12), color: theme.textTertiary }}
                 >
@@ -2894,12 +3715,10 @@ const PatientChatScreen = () => {
                   : existingConversation
                     ? "Open chat"
                     : "Start chat";
-                const accentColor =
-                  contact.role === "pharmacy" ? theme.success : theme.accent;
-                const accentBg =
-                  contact.role === "pharmacy"
-                    ? theme.successLight
-                    : theme.accentLight;
+                const { color: accentColor, bg: accentBg } = roleThemeTokensFor(
+                  theme,
+                  contact.role,
+                );
                 return (
                   <TouchableOpacity
                     key={contact.id}
@@ -2992,7 +3811,9 @@ const PatientChatScreen = () => {
                 );
               })
             ) : (
-              <View style={{ alignItems: "center", paddingVertical: RFValue(16) }}>
+              <View
+                style={{ alignItems: "center", paddingVertical: RFValue(16) }}
+              >
                 <Ionicons
                   name="search"
                   size={RFValue(32)}
@@ -3002,7 +3823,7 @@ const PatientChatScreen = () => {
                 <Text
                   style={{ fontSize: RFValue(12), color: theme.textTertiary }}
                 >
-                  No doctors or pharmacies match your search.
+                  No contacts match your search.
                 </Text>
               </View>
             )}
@@ -6344,6 +7165,10 @@ const AuthScreen = ({ onLogin }) => {
           throw new Error("Please enter your name");
         }
 
+        if (password.trim().length < 8) {
+          throw new Error("Password must be at least 8 characters.");
+        }
+
         result = await signUpWithEmail({
           name: name.trim(),
           email: email.trim(),
@@ -6363,7 +7188,17 @@ const AuthScreen = ({ onLogin }) => {
       });
     } catch (error) {
       console.log("Auth error:", error);
-      setAuthError(error?.message || "Authentication failed");
+      const pbFieldErrors =
+        error?.data?.data || error?.response?.data?.data || null;
+      const passwordError = pbFieldErrors?.password?.message;
+
+      if (authMode === "signup" && password.trim().length < 8) {
+        setAuthError("Password must be at least 8 characters.");
+      } else if (passwordError) {
+        setAuthError(passwordError);
+      } else {
+        setAuthError(error?.message || "Authentication failed");
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -7913,12 +8748,12 @@ const DoctorProfileScreen = ({ onLogout }) => {
 // TELEMEDICINE SCREENS
 // ========================================
 
-const VideoCallScreen = ({ onBack }) => {
+const AudioCallScreen = ({ onBack }) => {
   const { theme } = useTheme();
   const [callDuration, setCallDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const [isFrontCamera, setIsFrontCamera] = useState(true);
+  const [status, setStatus] = useState("Connecting...");
+  const localStreamRef = useRef(null);
 
   useEffect(() => {
     const interval = setInterval(
@@ -7928,10 +8763,258 @@ const VideoCallScreen = ({ onBack }) => {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const startAudio = async () => {
+      try {
+        const stream = await mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        if (!mounted) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        localStreamRef.current = stream;
+        setStatus("Connected");
+      } catch (error) {
+        if (mounted) {
+          setStatus("Microphone unavailable");
+        }
+      }
+    };
+
+    startAudio();
+
+    return () => {
+      mounted = false;
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+    };
+  }, []);
+
   const formatTime = (s) => {
     const mins = Math.floor(s / 60);
     const secs = s % 60;
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const toggleMute = () => {
+    if (!localStreamRef.current) return;
+    const audioTracks = localStreamRef.current.getAudioTracks();
+    if (audioTracks.length === 0) return;
+    const nextEnabled = !audioTracks[0].enabled;
+    audioTracks.forEach((track) => {
+      track.enabled = nextEnabled;
+    });
+    setIsMuted(!nextEnabled);
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#0B1120" }}>
+      <StatusBar barStyle="light-content" backgroundColor="#0B1120" />
+
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          padding: RFValue(24),
+        }}
+      >
+        <View
+          style={{
+            width: RFValue(120),
+            height: RFValue(120),
+            borderRadius: RFValue(60),
+            backgroundColor: theme.accent,
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: RFValue(16),
+          }}
+        >
+          <Ionicons name="call" size={RFValue(48)} color="#FFF" />
+        </View>
+        <Text
+          style={{
+            color: "#FFF",
+            fontSize: RFValue(20),
+            fontWeight: "800",
+          }}
+        >
+          Doctor
+        </Text>
+        <Text
+          style={{
+            color: "rgba(255,255,255,0.7)",
+            fontSize: RFValue(14),
+            marginTop: RFValue(6),
+          }}
+        >
+          {formatTime(callDuration)}
+        </Text>
+        <Text
+          style={{
+            color: "rgba(255,255,255,0.6)",
+            fontSize: RFValue(12),
+            marginTop: RFValue(4),
+          }}
+        >
+          {status}
+        </Text>
+      </View>
+
+      <View
+        style={{
+          padding: RFValue(24),
+          paddingBottom: Platform.OS === "ios" ? 40 : 24,
+          flexDirection: "row",
+          justifyContent: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={toggleMute}
+          style={{
+            width: RFValue(52),
+            height: RFValue(52),
+            borderRadius: RFValue(26),
+            backgroundColor: isMuted ? "#EF4444" : "rgba(255,255,255,0.15)",
+            justifyContent: "center",
+            alignItems: "center",
+            marginHorizontal: RFValue(12),
+          }}
+        >
+          <Ionicons
+            name={isMuted ? "mic-off" : "mic"}
+            size={RFValue(24)}
+            color="#FFF"
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(64),
+            height: RFValue(64),
+            borderRadius: RFValue(32),
+            backgroundColor: "#EF4444",
+            justifyContent: "center",
+            alignItems: "center",
+            shadowColor: "#EF4444",
+            shadowOpacity: 0.4,
+            shadowOffset: { width: 0, height: 4 },
+            shadowRadius: 12,
+            elevation: 6,
+            marginHorizontal: RFValue(12),
+          }}
+        >
+          <Ionicons
+            name="call"
+            size={RFValue(28)}
+            color="#FFF"
+            style={{ transform: [{ rotate: "135deg" }] }}
+          />
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+};
+
+const VideoCallScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  const [callDuration, setCallDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [isFrontCamera, setIsFrontCamera] = useState(true);
+  const [localStream, setLocalStream] = useState(null);
+  const localStreamRef = useRef(null);
+
+  useEffect(() => {
+    const interval = setInterval(
+      () => setCallDuration((prev) => prev + 1),
+      1000,
+    );
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const startStream = async () => {
+      try {
+        const stream = await mediaDevices.getUserMedia({
+          audio: true,
+          video: { facingMode: "user" },
+        });
+        if (!mounted) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+        const videoTracks = stream.getVideoTracks();
+        setIsVideoOff(videoTracks.length === 0);
+      } catch (error) {
+        if (mounted) {
+          setIsVideoOff(true);
+        }
+      }
+    };
+
+    startStream();
+
+    return () => {
+      mounted = false;
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+    };
+  }, []);
+
+  const formatTime = (s) => {
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const toggleMute = () => {
+    if (!localStreamRef.current) return;
+    const audioTracks = localStreamRef.current.getAudioTracks();
+    if (audioTracks.length === 0) return;
+    const nextEnabled = !audioTracks[0].enabled;
+    audioTracks.forEach((track) => {
+      track.enabled = nextEnabled;
+    });
+    setIsMuted(!nextEnabled);
+  };
+
+  const toggleVideo = () => {
+    if (!localStreamRef.current) return;
+    const videoTracks = localStreamRef.current.getVideoTracks();
+    if (videoTracks.length === 0) return;
+    const nextEnabled = !videoTracks[0].enabled;
+    videoTracks.forEach((track) => {
+      track.enabled = nextEnabled;
+    });
+    setIsVideoOff(!nextEnabled);
+  };
+
+  const handleSwitchCamera = () => {
+    if (!localStreamRef.current) return;
+    const videoTrack = localStreamRef.current.getVideoTracks()[0];
+    if (videoTrack?.switchCamera) {
+      videoTrack.switchCamera();
+    } else if (videoTrack?._switchCamera) {
+      videoTrack._switchCamera();
+    } else if (videoTrack?.applyConstraints) {
+      videoTrack.applyConstraints({
+        facingMode: isFrontCamera ? "environment" : "user",
+      });
+    }
+    setIsFrontCamera((prev) => !prev);
   };
 
   return (
@@ -7996,23 +9079,46 @@ const VideoCallScreen = ({ onBack }) => {
           shadowOffset: { width: 0, height: 4 },
           shadowRadius: 12,
           elevation: 8,
+          overflow: "hidden",
         }}
       >
-        {isVideoOff ? (
-          <Ionicons name="videocam-off" size={RFValue(28)} color="#9CA3AF" />
+        {localStream && !isVideoOff ? (
+          <RTCView
+            streamURL={localStream.toURL()}
+            style={{ width: "100%", height: "100%" }}
+            objectFit="cover"
+            mirror={isFrontCamera}
+          />
         ) : (
-          <Ionicons name="person" size={RFValue(36)} color="#E5E7EB" />
+          <View
+            style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+          >
+            <Ionicons
+              name={isVideoOff ? "videocam-off" : "person"}
+              size={RFValue(32)}
+              color="#E5E7EB"
+            />
+          </View>
         )}
-        <Text
+        <View
           style={{
-            color: "#FFF",
-            fontSize: RFValue(10),
-            marginTop: RFValue(4),
-            fontWeight: "600",
+            position: "absolute",
+            bottom: RFValue(6),
+            left: 0,
+            right: 0,
+            alignItems: "center",
           }}
         >
-          You
-        </Text>
+          <Text
+            style={{
+              color: "#FFF",
+              fontSize: RFValue(10),
+              fontWeight: "600",
+            }}
+          >
+            You
+          </Text>
+        </View>
       </View>
 
       {/* Call Controls */}
@@ -8031,7 +9137,7 @@ const VideoCallScreen = ({ onBack }) => {
           }}
         >
           <TouchableOpacity
-            onPress={() => setIsMuted(!isMuted)}
+            onPress={toggleMute}
             style={{
               width: RFValue(52),
               height: RFValue(52),
@@ -8049,7 +9155,7 @@ const VideoCallScreen = ({ onBack }) => {
             />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setIsVideoOff(!isVideoOff)}
+            onPress={toggleVideo}
             style={{
               width: RFValue(52),
               height: RFValue(52),
@@ -8069,7 +9175,7 @@ const VideoCallScreen = ({ onBack }) => {
             />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setIsFrontCamera(!isFrontCamera)}
+            onPress={handleSwitchCamera}
             style={{
               width: RFValue(52),
               height: RFValue(52),
@@ -10756,10 +11862,17 @@ const WoundDetailScreen = ({
     const conversation = await ensureConversationForWound(localWound, {
       includeCurrentUser: userRole !== "patient",
     });
-    await sendConversationMessage(conversation.id, message);
-    setMessage("");
-    const messages = await loadConversationMessages(conversation.id);
-    setChat(messages);
+    const text = message.trim();
+    const created = await sendConversationMessage(conversation.id, text);
+    if (created) {
+      setMessage("");
+      setChat((prev) => {
+        if (prev.some((item) => item.id === created.id)) return prev;
+        return [...prev, created];
+      });
+    } else {
+      setMessage(text);
+    }
   };
 
   const woundOrder = (medOrders || []).find(
@@ -10928,8 +12041,8 @@ const WoundDetailScreen = ({
             ) : chat.length > 0 ? (
               chat.map((c) => {
                 const isMine = c.senderId && c.senderId === currentUserId;
-                const isSystem =
-                  c.kind === "system" || c.senderRole === "system";
+                const isSystem = c.kind === "system";
+                const hasImage = !!c.imageUrl;
                 return (
                   <View
                     key={c.id}
@@ -10941,10 +12054,14 @@ const WoundDetailScreen = ({
                           : "flex-start",
                       backgroundColor: isSystem
                         ? "#F3F4F6"
-                        : isMine
-                          ? "#4338CA"
-                          : "#FFF",
-                      padding: RFValue(12),
+                        : hasImage
+                          ? isMine
+                            ? "#EEF2FF"
+                            : "#FFF"
+                          : isMine
+                            ? "#4338CA"
+                            : "#FFF",
+                      padding: hasImage ? RFValue(6) : RFValue(12),
                       borderRadius: RFValue(12),
                       marginBottom: RFValue(8),
                       maxWidth: isSystem ? "92%" : "80%",
@@ -10965,18 +12082,47 @@ const WoundDetailScreen = ({
                         {c.senderName}
                       </Text>
                     ) : null}
+                    {hasImage ? (
+                      <Image
+                        source={{ uri: c.imageUrl }}
+                        style={{
+                          width: RFValue(240),
+                          maxWidth: "100%",
+                          height: RFValue(170),
+                          borderRadius: RFValue(10),
+                          backgroundColor: "#E5E7EB",
+                        }}
+                        resizeMode="cover"
+                      />
+                    ) : null}
+
+                    {c.text ? (
+                      <Text
+                        style={{
+                          color: isSystem
+                            ? "#6B7280"
+                            : hasImage
+                              ? "#1E1B4B"
+                              : isMine
+                                ? "#FFF"
+                                : "#1E1B4B",
+                          fontSize: RFValue(13),
+                          textAlign: isSystem ? "center" : "left",
+                          marginTop: hasImage ? RFValue(10) : 0,
+                        }}
+                      >
+                        {c.text}
+                      </Text>
+                    ) : null}
                     <Text
                       style={{
-                        color: isMine ? "#FFF" : "#1E1B4B",
-                        fontSize: RFValue(13),
-                        textAlign: isSystem ? "center" : "left",
-                      }}
-                    >
-                      {c.text}
-                    </Text>
-                    <Text
-                      style={{
-                        color: isMine ? "rgba(255,255,255,0.7)" : "#9CA3AF",
+                        color: isSystem
+                          ? "#9CA3AF"
+                          : hasImage
+                            ? "#9CA3AF"
+                            : isMine
+                              ? "rgba(255,255,255,0.7)"
+                              : "#9CA3AF",
                         fontSize: RFValue(9),
                         marginTop: RFValue(4),
                         textAlign: isSystem ? "center" : "right",
@@ -11795,13 +12941,19 @@ export default function App() {
     }
   };
 
-  const loadDirectoryContacts = async () => {
-    const [doctors, pharmacies] = await Promise.all([
-      fetchUsersByRole("doctor"),
-      fetchUsersByRole("pharmacy"),
-    ]);
+  const loadDirectoryContacts = async (options = {}) => {
+    const requestedRoles = safeArray(options?.roles)
+      .map(normalizeUserRole)
+      .filter(Boolean);
+    const roles = requestedRoles.length
+      ? uniqueIds(requestedRoles)
+      : ["doctor", "pharmacy", "patient"];
+
+    const recordsByRole = await Promise.all(
+      roles.map((role) => fetchUsersByRole(role)),
+    );
     const seen = new Set();
-    return [...doctors, ...pharmacies].filter((user) => {
+    return recordsByRole.flat().filter((user) => {
       if (!user?.id || seen.has(user.id)) return false;
       seen.add(user.id);
       return true;
@@ -12049,18 +13201,139 @@ export default function App() {
     }
   };
 
-  const sendConversationMessage = async (conversationId, text) => {
-    if (!currentUser?.id || !text?.trim()) return;
-    await pb.collection("messages").create({
-      conversation: conversationId,
-      sender: currentUser.id,
-      kind: "text",
-      text: text.trim(),
+  const updateConversationPreview = (conversationId, mappedMessage) => {
+    if (!mappedMessage) return;
+    setConversations((prev) => {
+      const index = prev.findIndex((item) => item.id === conversationId);
+      if (index === -1) return prev;
+      const updated = {
+        ...prev[index],
+        lastMsg: messagePreviewText(mappedMessage) || prev[index].lastMsg,
+        time: formatTimeValue(mappedMessage.created || new Date().toISOString()),
+      };
+      const next = [...prev];
+      next.splice(index, 1);
+      return [updated, ...next];
     });
+  };
+
+  const sendConversationMessage = async (conversationId, text) => {
+    if (!currentUser?.id || !text?.trim()) return null;
+    const trimmed = text.trim();
+    let createdMessage = null;
+    try {
+      createdMessage = await pb.collection("messages").create({
+        conversation: conversationId,
+        sender: currentUser.id,
+        kind: "text",
+        text: trimmed,
+      });
+    } catch (error) {
+      try {
+        createdMessage = await pb.collection("messages").create({
+          conversation: conversationId,
+          sender: currentUser.id,
+          kind: "text",
+          message: trimmed,
+        });
+      } catch (fallbackError) {
+        console.log("sendConversationMessage error:", fallbackError);
+        return null;
+      }
+    }
     await pb.collection("conversations").update(conversationId, {
       lastMessageAt: new Date().toISOString(),
     });
-    await refreshAllData();
+    const mappedMessage = createdMessage
+      ? mapMessageRecord(createdMessage)
+      : null;
+    updateConversationPreview(conversationId, mappedMessage);
+    return mappedMessage;
+  };
+
+  const sendConversationImage = async (conversationId, asset, caption = "") => {
+    if (!currentUser?.id || !conversationId || !asset?.uri) return null;
+
+    const uri = asset.uri;
+    const mimeType = (() => {
+      if (asset?.mimeType && typeof asset.mimeType === "string") {
+        return asset.mimeType;
+      }
+
+      // expo-image-picker often provides `type: "image"` instead of a real MIME.
+      if (typeof asset?.type === "string" && asset.type.includes("/")) {
+        return asset.type;
+      }
+
+      const ext = String(uri).split("?")[0].split("#")[0].split(".").pop();
+      const normalizedExt = String(ext || "").toLowerCase();
+      if (normalizedExt === "png") return "image/png";
+      if (normalizedExt === "webp") return "image/webp";
+      if (normalizedExt === "heic" || normalizedExt === "heif") {
+        return "image/heic";
+      }
+      return "image/jpeg";
+    })();
+    const extFromMime = mimeType.split("/")[1] || "jpg";
+    const normalizedExtFromMime = String(extFromMime).toLowerCase();
+    const safeExt =
+      normalizedExtFromMime === "png" ||
+      normalizedExtFromMime === "webp" ||
+      normalizedExtFromMime === "heic" ||
+      normalizedExtFromMime === "heif"
+        ? normalizedExtFromMime
+        : "jpg";
+    const name = asset.fileName || `photo_${Date.now()}.${safeExt}`;
+
+    let createdMessage = null;
+    try {
+      const formData = new FormData();
+      formData.append("conversation", conversationId);
+      formData.append("sender", currentUser.id);
+      formData.append("kind", "image");
+      formData.append("text", caption || "");
+      // PocketBase schema uses a multiple file field named `file`.
+      // (Older schemas may use `image`, so we fallback below.)
+      formData.append("file", { uri, name, type: mimeType });
+      createdMessage = await pb.collection("messages").create(formData);
+    } catch (error) {
+      // Fallback if the PocketBase `kind` field is a Select that does not include "image".
+      try {
+        const formData = new FormData();
+        formData.append("conversation", conversationId);
+        formData.append("sender", currentUser.id);
+        formData.append("kind", "text");
+        formData.append("text", caption || "");
+        formData.append("file", { uri, name, type: mimeType });
+        createdMessage = await pb.collection("messages").create(formData);
+      } catch (fallbackError) {
+        // Backwards-compatibility fallback for older PocketBase schemas.
+        try {
+          const formData = new FormData();
+          formData.append("conversation", conversationId);
+          formData.append("sender", currentUser.id);
+          formData.append("kind", "text");
+          formData.append("text", caption || "");
+          formData.append("image", { uri, name, type: mimeType });
+          createdMessage = await pb.collection("messages").create(formData);
+        } catch (legacyError) {
+          console.log("sendConversationImage error:", error);
+          console.log("sendConversationImage fallback error:", fallbackError);
+          console.log("sendConversationImage legacy error:", legacyError);
+          return null;
+        }
+      }
+    }
+
+    await pb.collection("conversations").update(conversationId, {
+      lastMessageAt: new Date().toISOString(),
+    });
+
+    const mappedMessage = createdMessage
+      ? mapMessageRecord(createdMessage)
+      : null;
+    updateConversationPreview(conversationId, mappedMessage);
+    return mappedMessage;
   };
 
   const createWoundReport = async ({ description, image }) => {
@@ -12211,11 +13484,28 @@ export default function App() {
       setConversations([]);
       return;
     }
+
+    if (
+      userRole === "doctor" &&
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
+      setWounds([]);
+      setMedOrders([]);
+      setConversations([]);
+      return;
+    }
     refreshAllData(currentUser, userRole);
-  }, [currentUser?.id, userRole]);
+  }, [currentUser?.id, userRole, patientProfile?.status]);
 
   useEffect(() => {
     if (!currentUser?.id || !userRole) return;
+
+    if (
+      userRole === "doctor" &&
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
+      return;
+    }
 
     const subscribe = async () => {
       try {
@@ -12240,7 +13530,7 @@ export default function App() {
       pb.collection("orders").unsubscribe("*");
       pb.collection("conversations").unsubscribe("*");
     };
-  }, [currentUser?.id, userRole]);
+  }, [currentUser?.id, userRole, patientProfile?.status]);
 
   if (loadingAuth) {
     return (
@@ -12280,6 +13570,7 @@ export default function App() {
     loadDirectoryContacts,
     loadConversationMessages,
     sendConversationMessage,
+    sendConversationImage,
     createWoundReport,
     prescribeForWound,
     updateOrderStatus,
@@ -12336,11 +13627,38 @@ const AppContent = ({
     setUserRole(null);
   };
 
+  const refreshDoctorStatus = async () => {
+    try {
+      // Refresh the auth model (in case role or record fields changed).
+      if (pb.authStore.isValid) {
+        await pb.collection("UsersAuth").authRefresh();
+      }
+      if (pb.authStore.record) {
+        setCurrentUser(pb.authStore.record);
+      }
+      if (currentUser?.role === "doctor" || userRole === "doctor") {
+        const profile = await ensureRoleProfile("doctor");
+        setPatientProfile(profile || null);
+      }
+    } catch (error) {
+      console.log("refreshDoctorStatus error:", error);
+    }
+  };
+
   if (!userRole) {
     return <AuthScreen onLogin={handleAuthSuccess} />;
   }
 
   if (userRole === "doctor") {
+    if (normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved") {
+      return (
+        <DoctorApplicationStatusScreen
+          status={patientProfile?.status}
+          onRefresh={refreshDoctorStatus}
+          onLogout={handleLogout}
+        />
+      );
+    }
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
         <StatusBar
