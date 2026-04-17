@@ -43,6 +43,7 @@ import {
   ensureRoleProfile,
   signUpWithEmail,
   loginWithEmail,
+  requestPasswordReset,
   signInWithOAuth,
   logoutUser,
 } from "./pocketbase";
@@ -3363,169 +3364,177 @@ const PatientChatScreen = () => {
           </View>
         </View>
 
-        <ScrollView
-          contentContainerStyle={{
-            padding: RFValue(16),
-            paddingBottom: RFValue(80),
-          }}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={{ flex: 1 }}
+          keyboardVerticalOffset={0}
         >
-          {loadingMessages ? (
-            <View style={{ alignItems: "center", marginTop: RFValue(80) }}>
-              <Text style={{ color: theme.textSecondary }}>
-                Loading chat...
-              </Text>
-            </View>
-          ) : contactMessages.length > 0 ? (
-            contactMessages.map((msg) => {
-              const isCurrentUser =
-                msg.senderId && msg.senderId === currentUserId;
-              const isSystem = msg.kind === "system";
-              const hasImage = !!msg.imageUrl;
-              const bubbleBg = isSystem
-                ? theme.bg
-                : hasImage
-                  ? isCurrentUser
-                    ? theme.accentLight
-                    : theme.card
-                  : isCurrentUser
-                    ? theme.accent
-                    : theme.card;
-              const bodyTextColor = isSystem
-                ? theme.textSecondary
-                : hasImage
-                  ? theme.textPrimary
-                  : isCurrentUser
-                    ? "#FFF"
-                    : theme.textPrimary;
-              return (
-                <View
-                  key={msg.id}
-                  style={{
-                    marginBottom: RFValue(12),
-                    flexDirection: "row",
-                    justifyContent: isSystem
-                      ? "center"
-                      : isCurrentUser
-                        ? "flex-end"
-                        : "flex-start",
-                  }}
-                >
+          <ScrollView
+            contentContainerStyle={{
+              padding: RFValue(16),
+              paddingBottom: RFValue(80),
+            }}
+            style={{ flex: 1 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {loadingMessages ? (
+              <View style={{ alignItems: "center", marginTop: RFValue(80) }}>
+                <Text style={{ color: theme.textSecondary }}>
+                  Loading chat...
+                </Text>
+              </View>
+            ) : contactMessages.length > 0 ? (
+              contactMessages.map((msg) => {
+                const isCurrentUser =
+                  msg.senderId && msg.senderId === currentUserId;
+                const isSystem = msg.kind === "system";
+                const hasImage = !!msg.imageUrl;
+                const bubbleBg = isSystem
+                  ? theme.bg
+                  : hasImage
+                    ? isCurrentUser
+                      ? theme.accentLight
+                      : theme.card
+                    : isCurrentUser
+                      ? theme.accent
+                      : theme.card;
+                const bodyTextColor = isSystem
+                  ? theme.textSecondary
+                  : hasImage
+                    ? theme.textPrimary
+                    : isCurrentUser
+                      ? "#FFF"
+                      : theme.textPrimary;
+                return (
                   <View
+                    key={msg.id}
                     style={{
-                      maxWidth: isSystem ? "88%" : "75%",
-                      backgroundColor: bubbleBg,
-                      borderRadius: RFValue(16),
-                      borderBottomRightRadius:
-                        isSystem || isCurrentUser ? RFValue(4) : RFValue(16),
-                      borderBottomLeftRadius:
-                        isSystem || isCurrentUser ? RFValue(16) : RFValue(4),
-                      padding: hasImage ? RFValue(6) : RFValue(14),
-                      shadowColor: theme.shadowColor,
-                      shadowOpacity: 0.05,
-                      elevation: 1,
-                      borderWidth: isSystem ? 1 : 0,
-                      borderColor: isSystem ? theme.cardBorder : "transparent",
+                      marginBottom: RFValue(12),
+                      flexDirection: "row",
+                      justifyContent: isSystem
+                        ? "center"
+                        : isCurrentUser
+                          ? "flex-end"
+                          : "flex-start",
                     }}
                   >
-                    {!isSystem && !isCurrentUser ? (
-                      <Text
-                        style={{
-                          fontSize: RFValue(11),
-                          color: theme.textTertiary,
-                          marginBottom: 4,
-                          fontWeight: "700",
-                        }}
-                      >
-                        {msg.senderName}
-                      </Text>
-                    ) : null}
-
-                    {hasImage ? (
-                      <Image
-                        source={{ uri: msg.imageUrl }}
-                        style={{
-                          width: RFValue(220),
-                          maxWidth: "100%",
-                          height: RFValue(160),
-                          borderRadius: RFValue(12),
-                          backgroundColor: theme.bg,
-                        }}
-                        resizeMode="cover"
-                      />
-                    ) : null}
-
-                    {msg.text ? (
-                      <Text
-                        style={{
-                          fontSize: RFValue(14),
-                          color: bodyTextColor,
-                          lineHeight: RFValue(20),
-                          textAlign: isSystem ? "center" : "left",
-                          marginTop: hasImage ? RFValue(10) : 0,
-                        }}
-                      >
-                        {msg.text}
-                      </Text>
-                    ) : null}
-                    <Text
+                    <View
                       style={{
-                        fontSize: RFValue(9),
-                        color: isSystem
-                          ? theme.textTertiary
-                          : hasImage
-                            ? theme.textTertiary
-                            : isCurrentUser
-                              ? "rgba(255,255,255,0.7)"
-                              : theme.textTertiary,
-                        marginTop: hasImage || msg.text ? 4 : 0,
-                        textAlign: isSystem ? "center" : "right",
+                        maxWidth: isSystem ? "88%" : "75%",
+                        backgroundColor: bubbleBg,
+                        borderRadius: RFValue(16),
+                        borderBottomRightRadius:
+                          isSystem || isCurrentUser ? RFValue(4) : RFValue(16),
+                        borderBottomLeftRadius:
+                          isSystem || isCurrentUser ? RFValue(16) : RFValue(4),
+                        padding: hasImage ? RFValue(6) : RFValue(14),
+                        shadowColor: theme.shadowColor,
+                        shadowOpacity: 0.05,
+                        elevation: 1,
+                        borderWidth: isSystem ? 1 : 0,
+                        borderColor: isSystem
+                          ? theme.cardBorder
+                          : "transparent",
                       }}
                     >
-                      {msg.time}
-                    </Text>
+                      {!isSystem && !isCurrentUser ? (
+                        <Text
+                          style={{
+                            fontSize: RFValue(11),
+                            color: theme.textTertiary,
+                            marginBottom: 4,
+                            fontWeight: "700",
+                          }}
+                        >
+                          {msg.senderName}
+                        </Text>
+                      ) : null}
+
+                      {hasImage ? (
+                        <Image
+                          source={{ uri: msg.imageUrl }}
+                          style={{
+                            width: RFValue(220),
+                            maxWidth: "100%",
+                            height: RFValue(160),
+                            borderRadius: RFValue(12),
+                            backgroundColor: theme.bg,
+                          }}
+                          resizeMode="cover"
+                        />
+                      ) : null}
+
+                      {msg.text ? (
+                        <Text
+                          style={{
+                            fontSize: RFValue(14),
+                            color: bodyTextColor,
+                            lineHeight: RFValue(20),
+                            textAlign: isSystem ? "center" : "left",
+                            marginTop: hasImage ? RFValue(10) : 0,
+                          }}
+                        >
+                          {msg.text}
+                        </Text>
+                      ) : null}
+                      <Text
+                        style={{
+                          fontSize: RFValue(9),
+                          color: isSystem
+                            ? theme.textTertiary
+                            : hasImage
+                              ? theme.textTertiary
+                              : isCurrentUser
+                                ? "rgba(255,255,255,0.7)"
+                                : theme.textTertiary,
+                          marginTop: hasImage || msg.text ? 4 : 0,
+                          textAlign: isSystem ? "center" : "right",
+                        }}
+                      >
+                        {msg.time}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-              );
-            })
-          ) : (
-            <View
-              style={{
-                flex: 1,
-                justifyContent: "center",
-                alignItems: "center",
-                marginTop: RFValue(100),
-              }}
-            >
+                );
+              })
+            ) : (
               <View
                 style={{
-                  width: RFValue(64),
-                  height: RFValue(64),
-                  borderRadius: RFValue(32),
-                  backgroundColor: theme.card,
+                  flex: 1,
                   justifyContent: "center",
                   alignItems: "center",
-                  marginBottom: RFValue(16),
+                  marginTop: RFValue(100),
                 }}
               >
-                <Ionicons
-                  name="chatbubbles-outline"
-                  size={32}
-                  color={theme.textTertiary}
-                />
+                <View
+                  style={{
+                    width: RFValue(64),
+                    height: RFValue(64),
+                    borderRadius: RFValue(32),
+                    backgroundColor: theme.card,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginBottom: RFValue(16),
+                  }}
+                >
+                  <Ionicons
+                    name="chatbubbles-outline"
+                    size={32}
+                    color={theme.textTertiary}
+                  />
+                </View>
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    fontSize: RFValue(13),
+                  }}
+                >
+                  This is the start of your conversation.
+                </Text>
               </View>
-              <Text
-                style={{ color: theme.textSecondary, fontSize: RFValue(13) }}
-              >
-                This is the start of your conversation.
-              </Text>
-            </View>
-          )}
-        </ScrollView>
+            )}
+          </ScrollView>
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : null}
-        >
           <View
             style={{
               backgroundColor: theme.card,
@@ -7120,8 +7129,17 @@ const AuthScreen = ({ onLogin }) => {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
 
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState("");
+
   useEffect(() => {
     const handleBack = () => {
+      if (step === "FORGOT") {
+        setStep("REG");
+        return true;
+      }
       if (step === "OTP") {
         setStep("REG");
         return true;
@@ -7153,6 +7171,37 @@ const AuthScreen = ({ onLogin }) => {
     return () => subscription.remove();
   }, [step]);
 
+  const showPasswordSafetyNotice = () =>
+    new Promise((resolve) => {
+      Alert.alert(
+        "Save your password",
+        "Please keep your password safe. Password recovery is not available right now, so you may not be able to log in if you lose it.",
+        [{ text: "I understand", onPress: () => resolve() }],
+        { cancelable: false },
+      );
+    });
+
+  const handleRequestPasswordReset = async () => {
+    try {
+      setForgotLoading(true);
+      setForgotError("");
+      setForgotSuccess("");
+
+      const emailToUse = (forgotEmail || email).trim();
+      await requestPasswordReset(emailToUse);
+
+      // Keep the message generic (privacy) even if the email isn't registered.
+      setForgotSuccess(
+        "If an account exists for this email, you'll receive a password reset link shortly.",
+      );
+    } catch (error) {
+      console.log("Password reset request error:", error);
+      setForgotError(error?.message || "Failed to request password reset");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   const handlePocketBaseAuth = async () => {
     try {
       setAuthLoading(true);
@@ -7175,6 +7224,8 @@ const AuthScreen = ({ onLogin }) => {
           password: password.trim(),
           role,
         });
+
+        await showPasswordSafetyNotice();
       } else {
         result = await loginWithEmail({
           email: email.trim(),
@@ -7279,6 +7330,130 @@ const AuthScreen = ({ onLogin }) => {
     );
   }
 
+  if (step === "FORGOT") {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1,
+            padding: RFValue(24),
+            justifyContent: "center",
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={{ marginBottom: RFValue(24) }}>
+            <TouchableOpacity
+              onPress={() => setStep("REG")}
+              style={{ marginBottom: RFValue(20) }}
+            >
+              <Ionicons name="arrow-back" size={RFValue(24)} color="#1E1B4B" />
+            </TouchableOpacity>
+
+            <Text
+              style={{
+                fontSize: RFValue(28),
+                fontWeight: "800",
+                color: "#1E1B4B",
+                marginBottom: RFValue(8),
+              }}
+            >
+              Reset password
+            </Text>
+
+            <Text style={{ fontSize: RFValue(14), color: "#6B7280" }}>
+              Enter your email and we'll send you a reset link.
+            </Text>
+          </View>
+
+          <TextInput
+            placeholder="Email"
+            value={forgotEmail}
+            onChangeText={(v) => {
+              setForgotEmail(v);
+              if (forgotError) setForgotError("");
+            }}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: RFValue(14),
+              paddingHorizontal: RFValue(16),
+              paddingVertical: RFValue(16),
+              marginBottom: RFValue(14),
+              borderWidth: 1,
+              borderColor: "#E5E7EB",
+              fontSize: RFValue(15),
+              color: "#1E1B4B",
+            }}
+            placeholderTextColor="#9CA3AF"
+          />
+
+          {!!forgotSuccess && (
+            <Text
+              style={{
+                color: "#059669",
+                marginBottom: RFValue(14),
+                fontSize: RFValue(14),
+              }}
+            >
+              {forgotSuccess}
+            </Text>
+          )}
+
+          {!!forgotError && (
+            <Text
+              style={{
+                color: "#DC2626",
+                marginBottom: RFValue(14),
+                fontSize: RFValue(14),
+              }}
+            >
+              {forgotError}
+            </Text>
+          )}
+
+          <TouchableOpacity
+            onPress={handleRequestPasswordReset}
+            disabled={forgotLoading}
+            style={{
+              backgroundColor: "#4338CA",
+              borderRadius: RFValue(16),
+              paddingVertical: RFValue(16),
+              alignItems: "center",
+              marginTop: RFValue(8),
+              opacity: forgotLoading ? 0.8 : 1,
+            }}
+          >
+            <Text
+              style={{
+                color: "#FFFFFF",
+                fontWeight: "700",
+                fontSize: RFValue(16),
+              }}
+            >
+              {forgotLoading ? "Sending..." : "Send reset link"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setStep("REG")}
+            style={{ alignItems: "center", marginTop: RFValue(18) }}
+          >
+            <Text
+              style={{
+                color: "#4338CA",
+                fontWeight: "700",
+                fontSize: RFValue(14),
+              }}
+            >
+              Back to login
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   if (step === "REG") {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
@@ -7371,6 +7546,30 @@ const AuthScreen = ({ onLogin }) => {
             }}
             placeholderTextColor="#9CA3AF"
           />
+
+          {authMode === "login" && (
+            <TouchableOpacity
+              onPress={() => {
+                setForgotEmail(email.trim());
+                setForgotError("");
+                setForgotSuccess("");
+                setStep("FORGOT");
+              }}
+              style={{ alignSelf: "flex-end", marginBottom: RFValue(10) }}
+              disabled={authLoading}
+            >
+              <Text
+                style={{
+                  color: "#4338CA",
+                  fontWeight: "700",
+                  fontSize: RFValue(13),
+                  opacity: authLoading ? 0.6 : 1,
+                }}
+              >
+                Forgot password?
+              </Text>
+            </TouchableOpacity>
+          )}
 
           {!!authError && (
             <Text
@@ -11933,12 +12132,14 @@ const WoundDetailScreen = ({
       </View>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : null}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
+        keyboardVerticalOffset={0}
       >
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: RFValue(100) }}
+          keyboardShouldPersistTaps="handled"
         >
           <View style={{ padding: RFValue(16) }}>
             <View

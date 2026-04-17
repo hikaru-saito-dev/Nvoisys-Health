@@ -146,6 +146,19 @@ export async function loginWithEmail({ email, password }) {
   return getSessionPayload(profile);
 }
 
+export async function requestPasswordReset(email) {
+  const normalizedEmail = (email || "").trim();
+
+  if (!normalizedEmail) {
+    throw new Error("Please enter your email");
+  }
+
+  // Note: PocketBase needs SMTP configured to send the email.
+  await pb
+    .collection("UsersAuth")
+    .requestPasswordReset(normalizedEmail, { requestKey: null });
+}
+
 export async function signInWithOAuth({ providerName, selectedRole }) {
   normalizeRole(selectedRole);
 
