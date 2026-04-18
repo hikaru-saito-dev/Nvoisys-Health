@@ -45,6 +45,21 @@ import {
   signUpWithEmail,
 } from "./pocketbase";
 
+// PocketBase: appointments collection (override if your admin uses another name / doctor relation).
+const PB_APPOINTMENTS_COLLECTION =
+  (typeof process !== "undefined" &&
+    process.env?.EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION) ||
+  Constants.expoConfig?.extra?.pbAppointmentsCollection ||
+  "appointments";
+
+const PB_APPOINTMENT_DOCTOR_IS_PROFILE =
+  String(
+    (typeof process !== "undefined" &&
+      process.env?.EXPO_PUBLIC_PB_APPOINTMENT_DOCTOR_IS_PROFILE) ||
+      Constants.expoConfig?.extra?.pbAppointmentDoctorIsProfile ||
+      "",
+  ).toLowerCase() === "true";
+
 // --- THEME DEFINITIONS ---
 const THEMES = {
   light: {
@@ -618,6 +633,7 @@ const mapDoctorListingRecord = (record) => {
 
 const mapAppointmentRecord = (record) => {
   const doc = record.expand?.doctor;
+  const docUser = doc?.expand?.user;
   const scheduled =
     record.scheduled_at || record.scheduledAt || record.date || record.when;
   return {
@@ -629,7 +645,12 @@ const mapAppointmentRecord = (record) => {
       record.type ||
       "video",
     status: record.status || "scheduled",
-    doctorName: doc?.name || record.doctor_name || "Doctor",
+    doctorName:
+      docUser?.name ||
+      doc?.name ||
+      doc?.full_name ||
+      record.doctor_name ||
+      "Doctor",
     doctorId: record.doctor || null,
     raw: record,
   };
@@ -9640,6 +9661,10 @@ const AppointmentBookingScreen = ({
   const [bookingError, setBookingError] = useState("");
   const [scheduledIso, setScheduledIso] = useState("");
 
+  useEffect(() => {
+    setSelectedSlot(null);
+  }, [selectedDate]);
+
   const activeDoctor = doctor || {
     name: "Doctor",
     specialty: "Specialist",
@@ -9669,6 +9694,7 @@ const AppointmentBookingScreen = ({
       setBookingLoading(true);
       await createAppointment({
         doctorUserId: activeDoctor.userId,
+        doctorProfileId: activeDoctor.profileId,
         scheduledAtIso: iso,
         consultationType: consultType,
       });
@@ -14054,14 +14080,29 @@ export default function App() {
         ]);
 
       let appointmentRecords = [];
+      const appointmentExpand = PB_APPOINTMENT_DOCTOR_IS_PROFILE
+        ? "doctor.user,patient"
+        : "doctor,patient";
       try {
-        appointmentRecords = await pb.collection("appointments").getFullList({
-          requestKey: null,
-          sort: "scheduled_at",
-          expand: "doctor,patient",
-        });
-      } catch (apptError) {
-        console.log("appointments fetch skipped:", apptError?.message);
+        appointmentRecords = await pb
+          .collection(PB_APPOINTMENTS_COLLECTION)
+          .getFullList({
+            requestKey: null,
+            sort: "scheduled_at",
+            expand: appointmentExpand,
+          });
+      } catch (sortError) {
+        try {
+          appointmentRecords = await pb
+            .collection(PB_APPOINTMENTS_COLLECTION)
+            .getFullList({
+              requestKey: null,
+              sort: "-created",
+              expand: appointmentExpand,
+            });
+        } catch (apptError) {
+          console.log("appointments fetch skipped:", apptError?.message);
+        }
       }
 
       const allWounds = woundRecords.map(mapWoundRecord);
@@ -14411,22 +14452,57 @@ export default function App() {
 
   const createAppointment = async ({
     doctorUserId,
+    doctorProfileId,
     scheduledAtIso,
     consultationType,
   }) => {
     if (!currentUser?.id) {
       throw new Error("Please login again");
     }
-    if (!doctorUserId) {
-      throw new Error("Doctor is not available for booking.");
+    const doctorRecordId = PB_APPOINTMENT_DOCTOR_IS_PROFILE
+      ? doctorProfileId
+      : doctorUserId;
+    if (!doctorRecordId) {
+      throw new Error(
+        PB_APPOINTMENT_DOCTOR_IS_PROFILE
+          ? "Doctor profile is not available for booking."
+          : "Doctor is not available for booking.",
+      );
     }
-    await pb.collection("appointments").create({
+    const payload = {
       patient: currentUser.id,
-      doctor: doctorUserId,
+      doctor: doctorRecordId,
       scheduled_at: scheduledAtIso,
       consultation_type: consultationType || "video",
       status: "scheduled",
-    });
+    };
+    try {
+      await pb.collection(PB_APPOINTMENTS_COLLECTION).create(payload);
+    } catch (error) {
+      const status = error?.status ?? error?.response?.status;
+      const pbMsg =
+        error?.data?.message ||
+        error?.response?.data?.message ||
+        error?.message;
+      if (status === 404) {
+        throw new Error(
+          `PocketBase 404: collection "${PB_APPOINTMENTS_COLLECTION}" was not found. Create it in Admin, or set EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION / app.json extra.pbAppointmentsCollection to your collection id/name.`,
+        );
+      }
+      if (status === 403) {
+        throw new Error(
+          pbMsg ||
+            "Permission denied: check PocketBase API rules for creating appointments (patient must be allowed to create their own record).",
+        );
+      }
+      if (status === 400) {
+        throw new Error(
+          pbMsg ||
+            "Invalid appointment data: check field names (scheduled_at, consultation_type) and whether `doctor` relates to UsersAuth or doctor_profile — toggle EXPO_PUBLIC_PB_APPOINTMENT_DOCTOR_IS_PROFILE=true if the relation targets doctor_profile.",
+        );
+      }
+      throw new Error(pbMsg || "Unable to create appointment.");
+    }
     await refreshAllData();
   };
 
@@ -14656,9 +14732,11 @@ export default function App() {
         console.log("App subscription error:", error);
       }
       try {
-        await pb.collection("appointments").subscribe("*", () => {
-          refreshAllData(currentUser, userRole);
-        });
+        await pb
+          .collection(PB_APPOINTMENTS_COLLECTION)
+          .subscribe("*", () => {
+            refreshAllData(currentUser, userRole);
+          });
       } catch (apptSubError) {
         console.log("appointments subscribe skipped:", apptSubError?.message);
       }
@@ -14671,7 +14749,7 @@ export default function App() {
       pb.collection("orders").unsubscribe("*");
       pb.collection("conversations").unsubscribe("*");
       try {
-        pb.collection("appointments").unsubscribe("*");
+        pb.collection(PB_APPOINTMENTS_COLLECTION).unsubscribe("*");
       } catch (e) {
         /* collection may not exist */
       }
