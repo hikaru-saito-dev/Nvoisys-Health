@@ -1,50 +1,48 @@
-import React, {
-  useState,
-  useEffect,
-  useRef,
-  createContext,
-  useContext,
-} from "react";
 import {
-  Dimensions,
-  PixelRatio,
-  StyleSheet,
-  Text,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  SafeAreaView,
-  StatusBar,
-  Image,
-  Alert,
-  Animated,
-  TextInput,
-  Platform,
-  KeyboardAvoidingView,
-  BackHandler,
-} from "react-native";
+  Ionicons
+} from "@expo/vector-icons";
 import {
-  RTCPeerConnection,
   RTCIceCandidate,
+  RTCPeerConnection,
   RTCSessionDescription,
   RTCView,
   mediaDevices,
 } from "@livekit/react-native-webrtc";
 import Constants from "expo-constants";
 import * as ImagePicker from "expo-image-picker";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
-  Ionicons,
-  MaterialCommunityIcons,
-  FontAwesome5,
-} from "@expo/vector-icons";
+  ActivityIndicator,
+  Alert,
+  Animated,
+  BackHandler,
+  Dimensions,
+  Image,
+  KeyboardAvoidingView,
+  PixelRatio,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from "react-native";
 import {
+  ensureRoleProfile,
+  loginWithEmail,
+  logoutUser,
   pb,
   restoreAuth,
-  ensureRoleProfile,
-  signUpWithEmail,
-  loginWithEmail,
   signInWithOAuth,
-  logoutUser,
+  signUpWithEmail,
 } from "./pocketbase";
 
 // --- THEME DEFINITIONS ---
@@ -321,6 +319,100 @@ const formatTimeValue = (value) => {
   }
 };
 
+const combineDateAndSlotLabel = (dateObj, slotLabel) => {
+  const base = dateObj ? new Date(dateObj) : new Date();
+  if (Number.isNaN(base.getTime())) return new Date().toISOString();
+  const label = String(slotLabel || "").trim();
+  const match = label.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) {
+    base.setHours(10, 0, 0, 0);
+    return base.toISOString();
+  }
+  let hour = parseInt(match[1], 10);
+  const minute = parseInt(match[2], 10);
+  const ap = match[3].toUpperCase();
+  if (ap === "PM" && hour !== 12) hour += 12;
+  if (ap === "AM" && hour === 12) hour = 0;
+  base.setHours(hour, minute, 0, 0);
+  return base.toISOString();
+};
+
+const formatAppointmentSummaryDate = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  try {
+    return d.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  } catch (e) {
+    return String(iso).split("T")[0];
+  }
+};
+
+const buildAppointmentDateOptions = (count = 14) => {
+  const out = [];
+  const now = new Date();
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  for (let i = 0; i < count; i += 1) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + i);
+    out.push({
+      index: i,
+      day: dayNames[d.getDay()],
+      date: String(d.getDate()),
+      dateObj: d,
+      available: true,
+    });
+  }
+  return out;
+};
+
+const DEFAULT_APPOINTMENT_TIME_SLOTS = [
+  "9:00 AM",
+  "9:30 AM",
+  "10:00 AM",
+  "10:30 AM",
+  "11:00 AM",
+  "11:30 AM",
+  "2:00 PM",
+  "2:30 PM",
+  "3:00 PM",
+  "3:30 PM",
+  "4:00 PM",
+  "4:30 PM",
+  "5:00 PM",
+].map((time) => ({ time, available: true }));
+
+const pickerAssetToUploadPart = (asset) => {
+  const uri = asset?.uri;
+  if (!uri) return null;
+  let mimeType = "image/jpeg";
+  if (asset?.mimeType && typeof asset.mimeType === "string") {
+    mimeType = asset.mimeType;
+  } else if (typeof asset?.type === "string" && asset.type.includes("/")) {
+    mimeType = asset.type;
+  } else {
+    const ext = String(uri).split("?")[0].split("#")[0].split(".").pop();
+    const normalizedExt = String(ext || "").toLowerCase();
+    if (normalizedExt === "png") mimeType = "image/png";
+    else if (normalizedExt === "webp") mimeType = "image/webp";
+    else if (normalizedExt === "heic" || normalizedExt === "heif") {
+      mimeType = "image/heic";
+    }
+  }
+  const extFromMime = mimeType.split("/")[1] || "jpg";
+  const safeExt = ["png", "webp", "heic", "heif"].includes(
+    String(extFromMime).toLowerCase(),
+  )
+    ? String(extFromMime).toLowerCase()
+    : "jpg";
+  const name = asset.fileName || `wound_${Date.now()}.${safeExt}`;
+  return { uri, name, type: mimeType };
+};
+
 const uniqueIds = (values) => [...new Set(safeArray(values).filter(Boolean))];
 
 const normalizeUserRole = (value) => {
@@ -433,13 +525,11 @@ const mapMessageRecord = (record) => {
   const senderRecord = record?.expand?.sender;
   const isSystem = record?.kind === "system";
   const imageFiles = resolveMessageImageFiles(record);
-  const imageUrls = imageFiles
-    .filter(Boolean)
-    .map((fileName) => {
-      const token = pb?.authStore?.token;
-      const options = token ? { token } : undefined;
-      return pb.files.getUrl(record, fileName, options);
-    });
+  const imageUrls = imageFiles.filter(Boolean).map((fileName) => {
+    const token = pb?.authStore?.token;
+    const options = token ? { token } : undefined;
+    return pb.files.getUrl(record, fileName, options);
+  });
   return {
     id: record.id,
     text: resolveMessageText(record),
@@ -463,6 +553,15 @@ const messagePreviewText = (mappedMessage) => {
   return mappedMessage.text || "";
 };
 
+const woundRecordImageUrl = (record) => {
+  if (!record?.image) return null;
+  const names = Array.isArray(record.image) ? record.image : [record.image];
+  const first = names.find(Boolean);
+  if (!first) return null;
+  const token = pb?.authStore?.token;
+  return pb.files.getUrl(record, first, token ? { token } : undefined);
+};
+
 const mapWoundRecord = (record) => ({
   id: record.id,
   patient: record.patient || null,
@@ -475,11 +574,66 @@ const mapWoundRecord = (record) => ({
   statusKey: normalizeWoundStatus(record.status),
   date: formatDateValue(record.created),
   image: record.image || null,
+  imageUrl: woundRecordImageUrl(record),
   doctor: record.doctor || null,
   conversation: record.conversation || null,
   hasPharmacy: !!record.hasPharmacy,
   raw: record,
 });
+
+const mapDoctorListingRecord = (record) => {
+  const user = record?.expand?.user;
+  const userId = record.user || user?.id || null;
+  const token = pb?.authStore?.token;
+  const rawAvatar = record.avatar || record.photo || record.profile_image;
+  const avatarField = Array.isArray(rawAvatar) ? rawAvatar[0] : rawAvatar;
+  const avatarUrl =
+    avatarField && record.id
+      ? pb.files.getUrl(record, avatarField, token ? { token } : undefined)
+      : null;
+  const specialty =
+    record.specialty ||
+    record.department ||
+    record.category ||
+    record.field ||
+    "General Physician";
+  return {
+    profileId: record.id,
+    userId,
+    name: user?.name || record.full_name || record.display_name || "Doctor",
+    specialty: String(specialty),
+    experience:
+      record.experience_years ??
+      record.years_experience ??
+      record.experience ??
+      null,
+    fee: Number(record.consultation_fee ?? record.fee ?? 500) || 500,
+    rating: Number(record.rating ?? 4.8) || 4.8,
+    bio: record.bio || record.about || "",
+    languages: safeArray(record.languages),
+    avatarUrl,
+    raw: record,
+  };
+};
+
+const mapAppointmentRecord = (record) => {
+  const doc = record.expand?.doctor;
+  const scheduled =
+    record.scheduled_at || record.scheduledAt || record.date || record.when;
+  return {
+    id: record.id,
+    scheduledAt: scheduled,
+    consultationType:
+      record.consultation_type ||
+      record.consultationType ||
+      record.type ||
+      "video",
+    status: record.status || "scheduled",
+    doctorName: doc?.name || record.doctor_name || "Doctor",
+    doctorId: record.doctor || null,
+    raw: record,
+  };
+};
 
 const mapOrderRecord = (record) => ({
   id: record.id,
@@ -548,10 +702,13 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
 };
 
 const normalizeDoctorApplicationStatus = (value) => {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (!normalized) return "pending";
   if (normalized === "approved") return "approved";
-  if (normalized === "rejected" || normalized === "rejection") return "rejection";
+  if (normalized === "rejected" || normalized === "rejection")
+    return "rejection";
   if (normalized === "pending") return "pending";
   return "pending";
 };
@@ -1143,13 +1300,25 @@ const PatientPlaceholderScreen = () => (
 
 const PatientHomeScreen = () => {
   const { theme } = useTheme();
+  const { appointments, refreshAllData } = useAppData();
   const [selectedEmoji, setSelectedEmoji] = useState(null);
   const [startCallType, setStartCallType] = useState(null);
-  const [showAppointment, setShowAppointment] = useState(false);
+  const [showFindDoctor, setShowFindDoctor] = useState(false);
   const [showPrescription, setShowPrescription] = useState(false);
   const [showMeds, setShowMeds] = useState(false);
   const [showFamily, setShowFamily] = useState(false);
   const [showSOS, setShowSOS] = useState(false);
+
+  const upcomingAppointments = (appointments || [])
+    .filter((a) => {
+      if (!a.scheduledAt) return false;
+      const t = new Date(a.scheduledAt).getTime();
+      return !Number.isNaN(t) && t >= Date.now() - 60 * 60 * 1000;
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
+    );
 
   useEffect(() => {
     const handleBack = () => {
@@ -1157,8 +1326,8 @@ const PatientHomeScreen = () => {
         setStartCallType(null);
         return true;
       }
-      if (showAppointment) {
-        setShowAppointment(false);
+      if (showFindDoctor) {
+        setShowFindDoctor(false);
         return true;
       }
       if (showPrescription) {
@@ -1186,7 +1355,7 @@ const PatientHomeScreen = () => {
     return () => subscription.remove();
   }, [
     startCallType,
-    showAppointment,
+    showFindDoctor,
     showPrescription,
     showMeds,
     showFamily,
@@ -1200,9 +1369,14 @@ const PatientHomeScreen = () => {
         onBack={() => setStartCallType(null)}
       />
     );
-  if (showAppointment)
+  if (showFindDoctor)
     return (
-      <AppointmentBookingScreen onBack={() => setShowAppointment(false)} />
+      <PatientDoctorBookingFlow
+        onBack={() => {
+          setShowFindDoctor(false);
+          refreshAllData();
+        }}
+      />
     );
   if (showPrescription)
     return <PrescriptionScreen onBack={() => setShowPrescription(false)} />;
@@ -1443,7 +1617,10 @@ const PatientHomeScreen = () => {
                     Medicines
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
+                <TouchableOpacity
+                  onPress={() => setShowFindDoctor(true)}
+                  style={{ alignItems: "center", flex: 1 }}
+                >
                   <View
                     style={{
                       width: RFValue(48),
@@ -1503,6 +1680,85 @@ const PatientHomeScreen = () => {
                 </TouchableOpacity>
               </View>
             </View>
+
+            {upcomingAppointments.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setShowFindDoctor(true)}
+                activeOpacity={0.9}
+                style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(16),
+                  padding: RFValue(16),
+                  marginBottom: RFValue(16),
+                  flexDirection: "row",
+                  alignItems: "center",
+                  shadowColor: theme.shadowColor,
+                  shadowOpacity: 0.06,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowRadius: 12,
+                  elevation: 3,
+                  borderLeftWidth: 4,
+                  borderLeftColor: theme.accent,
+                }}
+              >
+                <View
+                  style={{
+                    width: RFValue(44),
+                    height: RFValue(44),
+                    borderRadius: RFValue(12),
+                    backgroundColor: theme.accentLight,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginRight: RFValue(12),
+                  }}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={RFValue(22)}
+                    color={theme.accent}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                      color: theme.textTertiary,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Next appointment
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(15),
+                      fontWeight: "700",
+                      color: theme.textPrimary,
+                      marginTop: RFValue(2),
+                    }}
+                  >
+                    {upcomingAppointments[0].doctorName}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(2),
+                    }}
+                  >
+                    {formatAppointmentSummaryDate(
+                      upcomingAppointments[0].scheduledAt,
+                    )}{" "}
+                    · {formatTimeValue(upcomingAppointments[0].scheduledAt)}
+                  </Text>
+                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={RFValue(18)}
+                  color={theme.textTertiary}
+                />
+              </TouchableOpacity>
+            ) : null}
 
             {/* Telemedicine */}
             <View
@@ -1638,7 +1894,7 @@ const PatientHomeScreen = () => {
                 </TouchableOpacity>
               </View>
               <TouchableOpacity
-                onPress={() => setShowAppointment(true)}
+                onPress={() => setShowFindDoctor(true)}
                 style={{
                   flex: 1,
                   backgroundColor: theme.card,
@@ -4364,12 +4620,146 @@ const ThemeScreen = ({ onBack }) => {
   );
 };
 
+const PatientAppointmentsScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  const { appointments } = useAppData();
+  const rows = [...(appointments || [])].sort(
+    (a, b) =>
+      new Date(a.scheduledAt || 0).getTime() -
+      new Date(b.scheduledAt || 0).getTime(),
+  );
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(20),
+          paddingTop: Platform.OS === "android" ? 40 : 16,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.bg,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(14),
+          }}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={RFValue(20)}
+            color={theme.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text
+          style={{
+            fontSize: RFValue(20),
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          Appointments
+        </Text>
+      </View>
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: RFValue(100),
+        }}
+      >
+        {rows.length === 0 ? (
+          <View style={{ alignItems: "center", marginTop: RFValue(48) }}>
+            <Ionicons
+              name="calendar-outline"
+              size={RFValue(48)}
+              color={theme.cardBorder}
+            />
+            <Text
+              style={{
+                color: theme.textTertiary,
+                marginTop: RFValue(12),
+                textAlign: "center",
+              }}
+            >
+              No appointments yet. Book one from the Home tab.
+            </Text>
+          </View>
+        ) : (
+          rows.map((a) => (
+            <View
+              key={a.id}
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: RFValue(16),
+                padding: RFValue(16),
+                marginBottom: RFValue(12),
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: RFValue(16),
+                  fontWeight: "700",
+                  color: theme.textPrimary,
+                }}
+              >
+                {a.doctorName}
+              </Text>
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  color: theme.textSecondary,
+                  marginTop: RFValue(6),
+                }}
+              >
+                {formatAppointmentSummaryDate(a.scheduledAt)} ·{" "}
+                {formatTimeValue(a.scheduledAt)}
+              </Text>
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  color: theme.textTertiary,
+                  marginTop: RFValue(4),
+                }}
+              >
+                {a.consultationType === "chat"
+                  ? "Chat consult"
+                  : "Video consult"}{" "}
+                · {a.status}
+              </Text>
+            </View>
+          ))
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
 const PatientProfileScreen = ({ currentUser, patientProfile, onLogout }) => {
   const [showTheme, setShowTheme] = useState(false);
+  const [showAppointments, setShowAppointments] = useState(false);
   const [profileImage, setProfileImage] = useState(null);
   const { theme, themeKey } = useTheme();
 
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
+  if (showAppointments)
+    return (
+      <PatientAppointmentsScreen onBack={() => setShowAppointments(false)} />
+    );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -4641,6 +5031,11 @@ const PatientProfileScreen = ({ currentUser, patientProfile, onLogout }) => {
             ].map((item, idx) => (
               <TouchableOpacity
                 key={idx}
+                onPress={
+                  item.label === "Appointments"
+                    ? () => setShowAppointments(true)
+                    : undefined
+                }
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -9217,15 +9612,82 @@ const VideoCallScreen = ({ onBack }) => {
   );
 };
 
-const AppointmentBookingScreen = ({ onBack }) => {
+const doctorDisplayInitials = (name) => {
+  const parts = String(name || "DR")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "DR";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase() || "DR";
+};
+
+const AppointmentBookingScreen = ({
+  onBack,
+  doctor = null,
+  demoMode = false,
+  onBookingComplete,
+}) => {
   const { theme } = useTheme();
-  const [selectedDate, setSelectedDate] = useState(2);
+  const { createAppointment } = useAppData();
+  const dates = buildAppointmentDateOptions(14);
+  const timeSlots = DEFAULT_APPOINTMENT_TIME_SLOTS;
+  const [selectedDate, setSelectedDate] = useState(0);
   const [selectedSlot, setSelectedSlot] = useState(null);
+  const [consultType, setConsultType] = useState("video");
   const [bookingConfirmed, setBookingConfirmed] = useState(false);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [bookingError, setBookingError] = useState("");
+  const [scheduledIso, setScheduledIso] = useState("");
 
-  const dates = [];
+  const activeDoctor = doctor || {
+    name: "Doctor",
+    specialty: "Specialist",
+    experience: 15,
+    rating: 4.8,
+    fee: 500,
+    avatarUrl: null,
+    userId: null,
+  };
 
-  const timeSlots = [];
+  const expLine =
+    activeDoctor.experience != null
+      ? `${activeDoctor.experience} yrs experience`
+      : "Experienced physician";
+  const selectedDateObj = dates[selectedDate]?.dateObj || new Date();
+
+  const handleConfirmBooking = async () => {
+    if (!selectedSlot) return;
+    const iso = combineDateAndSlotLabel(selectedDateObj, selectedSlot);
+    setScheduledIso(iso);
+    setBookingError("");
+    if (demoMode || !activeDoctor.userId || !createAppointment) {
+      setBookingConfirmed(true);
+      return;
+    }
+    try {
+      setBookingLoading(true);
+      await createAppointment({
+        doctorUserId: activeDoctor.userId,
+        scheduledAtIso: iso,
+        consultationType: consultType,
+      });
+      setBookingConfirmed(true);
+    } catch (error) {
+      console.log("AppointmentBookingScreen error:", error);
+      setBookingError(
+        error?.message ||
+          "Could not book. Add an `appointments` collection in PocketBase (patient, doctor, scheduled_at, consultation_type, status).",
+      );
+    } finally {
+      setBookingLoading(false);
+    }
+  };
+
+  const handleDone = () => {
+    if (onBookingComplete) onBookingComplete();
+    else onBack();
+  };
 
   if (bookingConfirmed) {
     return (
@@ -9309,17 +9771,25 @@ const AppointmentBookingScreen = ({ onBack }) => {
                   justifyContent: "center",
                   alignItems: "center",
                   marginRight: RFValue(12),
+                  overflow: "hidden",
                 }}
               >
-                <Text
-                  style={{
-                    color: theme.success,
-                    fontSize: RFValue(16),
-                    fontWeight: "800",
-                  }}
-                >
-                  DS
-                </Text>
+                {activeDoctor.avatarUrl ? (
+                  <Image
+                    source={{ uri: activeDoctor.avatarUrl }}
+                    style={{ width: RFValue(36), height: RFValue(36) }}
+                  />
+                ) : (
+                  <Text
+                    style={{
+                      color: theme.success,
+                      fontSize: RFValue(14),
+                      fontWeight: "800",
+                    }}
+                  >
+                    {doctorDisplayInitials(activeDoctor.name)}
+                  </Text>
+                )}
               </View>
               <View>
                 <Text
@@ -9329,12 +9799,12 @@ const AppointmentBookingScreen = ({ onBack }) => {
                     color: theme.textPrimary,
                   }}
                 >
-                  Doctor
+                  {activeDoctor.name}
                 </Text>
                 <Text
                   style={{ fontSize: RFValue(12), color: theme.textSecondary }}
                 >
-                  Specialist
+                  {activeDoctor.specialty}
                 </Text>
               </View>
             </View>
@@ -9364,7 +9834,7 @@ const AppointmentBookingScreen = ({ onBack }) => {
                   color: theme.textPrimary,
                 }}
               >
-                Tue, Jan 13
+                {formatAppointmentSummaryDate(scheduledIso)}
               </Text>
             </View>
             <View
@@ -9404,13 +9874,13 @@ const AppointmentBookingScreen = ({ onBack }) => {
                   color: theme.textPrimary,
                 }}
               >
-                Video Consult
+                {consultType === "video" ? "Video consult" : "Chat consult"}
               </Text>
             </View>
           </View>
 
           <TouchableOpacity
-            onPress={onBack}
+            onPress={handleDone}
             style={{
               width: "100%",
               backgroundColor: theme.accent,
@@ -9435,15 +9905,15 @@ const AppointmentBookingScreen = ({ onBack }) => {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
-          backgroundColor: "#FFFFFF",
+          backgroundColor: theme.card,
           padding: RFValue(20),
           paddingTop: Platform.OS === "android" ? 40 : 16,
           borderBottomWidth: 1,
-          borderBottomColor: "#F3F4F6",
+          borderBottomColor: theme.cardBorder,
         }}
       >
         <View
@@ -9482,7 +9952,7 @@ const AppointmentBookingScreen = ({ onBack }) => {
               Book Appointment
             </Text>
             <Text style={{ fontSize: RFValue(12), color: theme.textSecondary }}>
-              Doctor | Specialist
+              {activeDoctor.name} · {activeDoctor.specialty}
             </Text>
           </View>
         </View>
@@ -9494,16 +9964,15 @@ const AppointmentBookingScreen = ({ onBack }) => {
           paddingBottom: RFValue(100),
         }}
       >
-        {/* Doctor Info */}
         <View
           style={{
-            backgroundColor: "#FFFFFF",
+            backgroundColor: theme.card,
             borderRadius: RFValue(16),
             padding: RFValue(16),
             marginBottom: RFValue(16),
             flexDirection: "row",
             alignItems: "center",
-            shadowColor: "#000",
+            shadowColor: theme.shadowColor,
             shadowOpacity: 0.06,
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
@@ -9515,39 +9984,47 @@ const AppointmentBookingScreen = ({ onBack }) => {
               width: RFValue(56),
               height: RFValue(56),
               borderRadius: RFValue(16),
-              backgroundColor: "#ECFDF5",
+              backgroundColor: theme.successLight,
               justifyContent: "center",
               alignItems: "center",
               marginRight: RFValue(14),
+              overflow: "hidden",
             }}
           >
-            <Text
-              style={{
-                color: "#059669",
-                fontSize: RFValue(20),
-                fontWeight: "800",
-              }}
-            >
-              DR
-            </Text>
+            {activeDoctor.avatarUrl ? (
+              <Image
+                source={{ uri: activeDoctor.avatarUrl }}
+                style={{ width: RFValue(56), height: RFValue(56) }}
+              />
+            ) : (
+              <Text
+                style={{
+                  color: theme.success,
+                  fontSize: RFValue(18),
+                  fontWeight: "800",
+                }}
+              >
+                {doctorDisplayInitials(activeDoctor.name)}
+              </Text>
+            )}
           </View>
           <View style={{ flex: 1 }}>
             <Text
               style={{
                 fontSize: RFValue(15),
                 fontWeight: "700",
-                color: "#1E1B4B",
+                color: theme.textPrimary,
               }}
             >
-              Doctor
+              {activeDoctor.name}
             </Text>
-            <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
-              15 years experience | 4.8 *
+            <Text style={{ fontSize: RFValue(12), color: theme.textSecondary }}>
+              {expLine} | {activeDoctor.rating} ★
             </Text>
           </View>
           <View
             style={{
-              backgroundColor: "#ECFDF5",
+              backgroundColor: theme.successLight,
               paddingHorizontal: RFValue(8),
               paddingVertical: RFValue(4),
               borderRadius: RFValue(8),
@@ -9555,24 +10032,23 @@ const AppointmentBookingScreen = ({ onBack }) => {
           >
             <Text
               style={{
-                color: "#059669",
+                color: theme.success,
                 fontSize: RFValue(10),
                 fontWeight: "700",
               }}
             >
-              INR 500
+              INR {activeDoctor.fee}
             </Text>
           </View>
         </View>
 
-        {/* Select Date */}
         <View
           style={{
-            backgroundColor: "#FFFFFF",
+            backgroundColor: theme.card,
             borderRadius: RFValue(16),
             padding: RFValue(16),
             marginBottom: RFValue(16),
-            shadowColor: "#000",
+            shadowColor: theme.shadowColor,
             shadowOpacity: 0.06,
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
@@ -9583,7 +10059,7 @@ const AppointmentBookingScreen = ({ onBack }) => {
             style={{
               fontSize: RFValue(15),
               fontWeight: "700",
-              color: "#1E1B4B",
+              color: theme.textPrimary,
               marginBottom: RFValue(14),
             }}
           >
@@ -9600,10 +10076,10 @@ const AppointmentBookingScreen = ({ onBack }) => {
                   borderRadius: RFValue(14),
                   backgroundColor:
                     selectedDate === idx
-                      ? "#4338CA"
+                      ? theme.accent
                       : d.available
-                        ? "#F9FAFB"
-                        : "#F3F4F4",
+                        ? theme.bg
+                        : theme.cardBorder,
                   justifyContent: "center",
                   alignItems: "center",
                   marginRight: RFValue(8),
@@ -9613,7 +10089,10 @@ const AppointmentBookingScreen = ({ onBack }) => {
                 <Text
                   style={{
                     fontSize: RFValue(11),
-                    color: selectedDate === idx ? "#C7D2FE" : "#6B7280",
+                    color:
+                      selectedDate === idx
+                        ? "rgba(255,255,255,0.85)"
+                        : theme.textSecondary,
                     fontWeight: "600",
                   }}
                 >
@@ -9623,7 +10102,7 @@ const AppointmentBookingScreen = ({ onBack }) => {
                   style={{
                     fontSize: RFValue(18),
                     fontWeight: "800",
-                    color: selectedDate === idx ? "#FFF" : "#1E1B4B",
+                    color: selectedDate === idx ? "#FFF" : theme.textPrimary,
                     marginTop: RFValue(2),
                   }}
                 >
@@ -9634,14 +10113,13 @@ const AppointmentBookingScreen = ({ onBack }) => {
           </ScrollView>
         </View>
 
-        {/* Select Time */}
         <View
           style={{
-            backgroundColor: "#FFFFFF",
+            backgroundColor: theme.card,
             borderRadius: RFValue(16),
             padding: RFValue(16),
             marginBottom: RFValue(16),
-            shadowColor: "#000",
+            shadowColor: theme.shadowColor,
             shadowOpacity: 0.06,
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
@@ -9652,7 +10130,7 @@ const AppointmentBookingScreen = ({ onBack }) => {
             style={{
               fontSize: RFValue(15),
               fontWeight: "700",
-              color: "#1E1B4B",
+              color: theme.textPrimary,
               marginBottom: RFValue(14),
             }}
           >
@@ -9669,10 +10147,10 @@ const AppointmentBookingScreen = ({ onBack }) => {
                   borderRadius: RFValue(10),
                   backgroundColor:
                     selectedSlot === slot.time
-                      ? "#4338CA"
+                      ? theme.accent
                       : slot.available
-                        ? "#F9FAFB"
-                        : "#F3F4F4",
+                        ? theme.bg
+                        : theme.cardBorder,
                   justifyContent: "center",
                   alignItems: "center",
                   marginBottom: RFValue(8),
@@ -9684,7 +10162,8 @@ const AppointmentBookingScreen = ({ onBack }) => {
                   style={{
                     fontSize: RFValue(12),
                     fontWeight: "600",
-                    color: selectedSlot === slot.time ? "#FFF" : "#374151",
+                    color:
+                      selectedSlot === slot.time ? "#FFF" : theme.textPrimary,
                   }}
                 >
                   {slot.time}
@@ -9694,14 +10173,13 @@ const AppointmentBookingScreen = ({ onBack }) => {
           </View>
         </View>
 
-        {/* Consultation Type */}
         <View
           style={{
-            backgroundColor: "#FFFFFF",
+            backgroundColor: theme.card,
             borderRadius: RFValue(16),
             padding: RFValue(16),
             marginBottom: RFValue(16),
-            shadowColor: "#000",
+            shadowColor: theme.shadowColor,
             shadowOpacity: 0.06,
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
@@ -9712,90 +10190,581 @@ const AppointmentBookingScreen = ({ onBack }) => {
             style={{
               fontSize: RFValue(15),
               fontWeight: "700",
-              color: "#1E1B4B",
+              color: theme.textPrimary,
               marginBottom: RFValue(14),
             }}
           >
             Consultation Type
           </Text>
           <View style={{ flexDirection: "row" }}>
-            <View
+            <TouchableOpacity
+              onPress={() => setConsultType("video")}
               style={{
                 flex: 1,
-                backgroundColor: "#EEF2FF",
+                backgroundColor:
+                  consultType === "video" ? theme.accentLight : theme.bg,
                 borderRadius: RFValue(12),
                 padding: RFValue(14),
                 alignItems: "center",
                 marginRight: RFValue(8),
                 borderWidth: 2,
-                borderColor: "#4338CA",
+                borderColor:
+                  consultType === "video" ? theme.accent : theme.cardBorder,
               }}
             >
               <Ionicons
                 name="videocam"
                 size={RFValue(24)}
-                color="#4338CA"
+                color={
+                  consultType === "video" ? theme.accent : theme.textTertiary
+                }
                 style={{ marginBottom: RFValue(6) }}
               />
               <Text
                 style={{
                   fontSize: RFValue(12),
                   fontWeight: "700",
-                  color: "#4338CA",
+                  color:
+                    consultType === "video" ? theme.accent : theme.textTertiary,
                 }}
               >
                 Video
               </Text>
-            </View>
-            <View
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setConsultType("chat")}
               style={{
                 flex: 1,
-                backgroundColor: "#F9FAFB",
+                backgroundColor:
+                  consultType === "chat" ? theme.accentLight : theme.bg,
                 borderRadius: RFValue(12),
                 padding: RFValue(14),
                 alignItems: "center",
                 marginLeft: RFValue(8),
+                borderWidth: 2,
+                borderColor:
+                  consultType === "chat" ? theme.accent : theme.cardBorder,
               }}
             >
               <Ionicons
                 name="chatbubble"
                 size={RFValue(24)}
-                color="#9CA3AF"
+                color={
+                  consultType === "chat" ? theme.accent : theme.textTertiary
+                }
                 style={{ marginBottom: RFValue(6) }}
               />
               <Text
                 style={{
                   fontSize: RFValue(12),
                   fontWeight: "600",
-                  color: "#9CA3AF",
+                  color:
+                    consultType === "chat" ? theme.accent : theme.textTertiary,
                 }}
               >
                 Chat
               </Text>
-            </View>
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Book Button */}
+        {bookingError ? (
+          <Text
+            style={{
+              color: theme.danger,
+              fontWeight: "600",
+              marginBottom: RFValue(12),
+            }}
+          >
+            {bookingError}
+          </Text>
+        ) : null}
+
         <TouchableOpacity
-          onPress={() => selectedSlot && setBookingConfirmed(true)}
+          onPress={handleConfirmBooking}
+          disabled={!selectedSlot || bookingLoading}
           style={{
-            backgroundColor: selectedSlot ? "#4338CA" : "#E5E7EB",
+            backgroundColor:
+              selectedSlot && !bookingLoading ? theme.accent : theme.cardBorder,
             borderRadius: RFValue(14),
             paddingVertical: RFValue(16),
             alignItems: "center",
           }}
         >
-          <Text
+          {bookingLoading ? (
+            <ActivityIndicator color="#FFF" />
+          ) : (
+            <Text
+              style={{
+                color: selectedSlot ? "#FFF" : theme.textTertiary,
+                fontSize: RFValue(16),
+                fontWeight: "700",
+              }}
+            >
+              {selectedSlot ? `Book at ${selectedSlot}` : "Select a Time Slot"}
+            </Text>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const PatientDoctorBookingFlow = ({ onBack }) => {
+  const { theme } = useTheme();
+  const { fetchApprovedDoctors } = useAppData();
+  const [step, setStep] = useState("browse");
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+  const [doctors, setDoctors] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("All");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setLoadError("");
+        const list = await fetchApprovedDoctors();
+        if (!cancelled) setDoctors(list);
+      } catch (e) {
+        if (!cancelled) setLoadError(e?.message || "Unable to load doctors");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const categories = [
+    "All",
+    ...uniqueIds(doctors.map((d) => d.specialty).filter(Boolean)),
+  ];
+
+  const filteredDoctors = doctors.filter((d) => {
+    const q = search.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      d.name.toLowerCase().includes(q) ||
+      d.specialty.toLowerCase().includes(q);
+    const matchesCat = category === "All" || d.specialty === category;
+    return matchesSearch && matchesCat;
+  });
+
+  if (step === "book" && selectedDoctor) {
+    return (
+      <AppointmentBookingScreen
+        doctor={selectedDoctor}
+        onBack={() => setStep("profile")}
+        onBookingComplete={onBack}
+      />
+    );
+  }
+
+  if (step === "profile" && selectedDoctor) {
+    const d = selectedDoctor;
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+        <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+        <View
+          style={{
+            backgroundColor: theme.card,
+            padding: RFValue(20),
+            paddingTop: Platform.OS === "android" ? 40 : 16,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.cardBorder,
+            flexDirection: "row",
+            alignItems: "center",
+          }}
+        >
+          <TouchableOpacity
+            onPress={() => setStep("browse")}
             style={{
-              color: selectedSlot ? "#FFF" : "#9CA3AF",
-              fontSize: RFValue(16),
-              fontWeight: "700",
+              width: RFValue(36),
+              height: RFValue(36),
+              borderRadius: RFValue(10),
+              backgroundColor: theme.bg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(14),
             }}
           >
-            {selectedSlot ? `Book at ${selectedSlot}` : "Select a Time Slot"}
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+          <Text
+            style={{
+              fontSize: RFValue(18),
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            Doctor profile
           </Text>
-        </TouchableOpacity>
+        </View>
+        <ScrollView
+          contentContainerStyle={{
+            padding: RFValue(16),
+            paddingBottom: RFValue(120),
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: RFValue(20),
+              padding: RFValue(20),
+              alignItems: "center",
+              marginBottom: RFValue(16),
+              shadowColor: theme.shadowColor,
+              shadowOpacity: 0.06,
+              shadowOffset: { width: 0, height: 4 },
+              shadowRadius: 12,
+              elevation: 3,
+            }}
+          >
+            <View
+              style={{
+                width: RFValue(88),
+                height: RFValue(88),
+                borderRadius: RFValue(24),
+                backgroundColor: theme.accentLight,
+                justifyContent: "center",
+                alignItems: "center",
+                marginBottom: RFValue(12),
+                overflow: "hidden",
+              }}
+            >
+              {d.avatarUrl ? (
+                <Image
+                  source={{ uri: d.avatarUrl }}
+                  style={{ width: RFValue(88), height: RFValue(88) }}
+                />
+              ) : (
+                <Text
+                  style={{
+                    fontSize: RFValue(28),
+                    fontWeight: "800",
+                    color: theme.accent,
+                  }}
+                >
+                  {doctorDisplayInitials(d.name)}
+                </Text>
+              )}
+            </View>
+            <Text
+              style={{
+                fontSize: RFValue(20),
+                fontWeight: "800",
+                color: theme.textPrimary,
+              }}
+            >
+              {d.name}
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(14),
+                color: theme.textSecondary,
+                marginTop: RFValue(4),
+              }}
+            >
+              {d.specialty}
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(13),
+                color: theme.textTertiary,
+                marginTop: RFValue(8),
+              }}
+            >
+              {d.experience != null ? `${d.experience}+ yrs` : "Clinician"} ·{" "}
+              {d.rating} ★ · INR {d.fee}
+            </Text>
+            {d.bio ? (
+              <Text
+                style={{
+                  marginTop: RFValue(16),
+                  fontSize: RFValue(14),
+                  color: theme.textSecondary,
+                  lineHeight: RFValue(22),
+                  textAlign: "center",
+                }}
+              >
+                {d.bio}
+              </Text>
+            ) : null}
+          </View>
+        </ScrollView>
+        <View
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            padding: RFValue(16),
+            paddingBottom: Platform.OS === "ios" ? RFValue(28) : RFValue(16),
+            backgroundColor: theme.card,
+            borderTopWidth: 1,
+            borderTopColor: theme.cardBorder,
+          }}
+        >
+          <TouchableOpacity
+            onPress={() => setStep("book")}
+            style={{
+              backgroundColor: theme.accent,
+              borderRadius: RFValue(14),
+              paddingVertical: RFValue(16),
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{
+                color: "#FFF",
+                fontWeight: "700",
+                fontSize: RFValue(16),
+              }}
+            >
+              Book appointment
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(20),
+          paddingTop: Platform.OS === "android" ? 40 : 16,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <TouchableOpacity
+            onPress={onBack}
+            style={{
+              width: RFValue(36),
+              height: RFValue(36),
+              borderRadius: RFValue(10),
+              backgroundColor: theme.bg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(14),
+            }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text
+              style={{
+                fontSize: RFValue(18),
+                fontWeight: "800",
+                color: theme.textPrimary,
+              }}
+            >
+              Find a doctor
+            </Text>
+            <Text style={{ fontSize: RFValue(12), color: theme.textSecondary }}>
+              Search by name or specialty
+            </Text>
+          </View>
+        </View>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: theme.bg,
+            borderRadius: RFValue(12),
+            paddingHorizontal: RFValue(14),
+            marginTop: RFValue(14),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+          }}
+        >
+          <Ionicons
+            name="search"
+            size={RFValue(18)}
+            color={theme.textTertiary}
+            style={{ marginRight: RFValue(8) }}
+          />
+          <TextInput
+            placeholder="Search doctors..."
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              flex: 1,
+              paddingVertical: RFValue(10),
+              fontSize: RFValue(14),
+              color: theme.textPrimary,
+            }}
+            value={search}
+            onChangeText={setSearch}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingTop: RFValue(10) }}
+        >
+          {categories.map((cat) => {
+            const active = category === cat;
+            return (
+              <TouchableOpacity
+                key={cat}
+                onPress={() => setCategory(cat)}
+                style={{
+                  paddingHorizontal: RFValue(14),
+                  paddingVertical: RFValue(8),
+                  borderRadius: RFValue(20),
+                  backgroundColor: active ? theme.accent : theme.bg,
+                  marginRight: RFValue(8),
+                  borderWidth: 1,
+                  borderColor: active ? theme.accent : theme.cardBorder,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    fontWeight: "700",
+                    color: active ? "#FFF" : theme.textSecondary,
+                  }}
+                >
+                  {cat}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: RFValue(100),
+        }}
+      >
+        {loading ? (
+          <View style={{ paddingVertical: RFValue(40), alignItems: "center" }}>
+            <ActivityIndicator color={theme.accent} />
+          </View>
+        ) : loadError ? (
+          <Text style={{ color: theme.danger, fontWeight: "600" }}>
+            {loadError}
+          </Text>
+        ) : filteredDoctors.length === 0 ? (
+          <View style={{ alignItems: "center", marginTop: RFValue(40) }}>
+            <Ionicons
+              name="medical-outline"
+              size={RFValue(48)}
+              color={theme.cardBorder}
+            />
+            <Text
+              style={{
+                color: theme.textTertiary,
+                marginTop: RFValue(12),
+                textAlign: "center",
+              }}
+            >
+              No doctors match your filters. Try another specialty or clear
+              search.
+            </Text>
+          </View>
+        ) : (
+          filteredDoctors.map((d) => (
+            <TouchableOpacity
+              key={d.profileId || d.userId}
+              onPress={() => {
+                setSelectedDoctor(d);
+                setStep("profile");
+              }}
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: RFValue(16),
+                padding: RFValue(16),
+                marginBottom: RFValue(12),
+                flexDirection: "row",
+                alignItems: "center",
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
+              }}
+            >
+              <View
+                style={{
+                  width: RFValue(52),
+                  height: RFValue(52),
+                  borderRadius: RFValue(14),
+                  backgroundColor: theme.accentLight,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginRight: RFValue(12),
+                  overflow: "hidden",
+                }}
+              >
+                {d.avatarUrl ? (
+                  <Image
+                    source={{ uri: d.avatarUrl }}
+                    style={{ width: RFValue(52), height: RFValue(52) }}
+                  />
+                ) : (
+                  <Text
+                    style={{
+                      fontWeight: "800",
+                      color: theme.accent,
+                      fontSize: RFValue(14),
+                    }}
+                  >
+                    {doctorDisplayInitials(d.name)}
+                  </Text>
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: RFValue(15),
+                    fontWeight: "700",
+                    color: theme.textPrimary,
+                  }}
+                >
+                  {d.name}
+                </Text>
+                <Text
+                  style={{ fontSize: RFValue(12), color: theme.textSecondary }}
+                >
+                  {d.specialty} · {d.rating} ★
+                </Text>
+                <Text
+                  style={{ fontSize: RFValue(11), color: theme.textTertiary }}
+                >
+                  INR {d.fee} consult
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={RFValue(20)}
+                color={theme.textTertiary}
+              />
+            </TouchableOpacity>
+          ))
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -10856,7 +11825,10 @@ const DoctorRootPlaceholder = () => {
 
   if (showAppointment)
     return (
-      <AppointmentBookingScreen onBack={() => setShowAppointment(false)} />
+      <AppointmentBookingScreen
+        onBack={() => setShowAppointment(false)}
+        demoMode
+      />
     );
 
   return (
@@ -11531,13 +12503,22 @@ const PatientWoundScreen = ({ navigation, wounds, setWounds }) => {
                   justifyContent: "center",
                   alignItems: "center",
                   marginRight: RFValue(12),
+                  overflow: "hidden",
                 }}
               >
-                <Ionicons
-                  name="bandage-outline"
-                  size={RFValue(24)}
-                  color="#4338CA"
-                />
+                {w.imageUrl ? (
+                  <Image
+                    source={{ uri: w.imageUrl }}
+                    style={{ width: RFValue(50), height: RFValue(50) }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Ionicons
+                    name="bandage-outline"
+                    size={RFValue(24)}
+                    color="#4338CA"
+                  />
+                )}
               </View>
               <View style={{ flex: 1 }}>
                 <Text
@@ -11603,6 +12584,44 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   const [submitError, setSubmitError] = useState("");
   const { createWoundReport } = useAppData();
 
+  const pickWoundPhoto = async (source) => {
+    try {
+      if (source === "camera") {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow camera access to take a photo.",
+          );
+          return;
+        }
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow photo library access to pick a photo.",
+          );
+          return;
+        }
+      }
+      const pickerOptions = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      };
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      if (!result || result.canceled) return;
+      const asset = result.assets?.[0];
+      if (asset?.uri) setImage(asset);
+    } catch (error) {
+      console.log("pickWoundPhoto error:", error);
+      Alert.alert("Photo", error?.message || "Could not add photo.");
+    }
+  };
+
   const handleSubmit = async () => {
     if (!desc.trim()) return;
     try {
@@ -11665,18 +12684,31 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
             borderWidth: 2,
             borderColor: "#E5E7EB",
             borderStyle: "dashed",
+            overflow: "hidden",
           }}
-          onPress={() => setImage("placeholder")}
+          activeOpacity={0.85}
+          onPress={() =>
+            Alert.alert("Wound photo", "Choose a source", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Camera",
+                onPress: () => pickWoundPhoto("camera"),
+              },
+              {
+                text: "Photo library",
+                onPress: () => pickWoundPhoto("library"),
+              },
+            ])
+          }
         >
-          {image ? (
-            <View style={{ alignItems: "center" }}>
-              <Ionicons name="image" size={RFValue(48)} color="#4338CA" />
-              <Text style={{ color: "#6B7280", marginTop: RFValue(8) }}>
-                Photo Attached
-              </Text>
-            </View>
+          {image?.uri ? (
+            <Image
+              source={{ uri: image.uri }}
+              style={{ width: "100%", height: "100%" }}
+              resizeMode="cover"
+            />
           ) : (
-            <View style={{ alignItems: "center" }}>
+            <View style={{ alignItems: "center", padding: RFValue(16) }}>
               <Ionicons name="camera" size={RFValue(48)} color="#9CA3AF" />
               <Text style={{ color: "#9CA3AF", marginTop: RFValue(8) }}>
                 Tap to capture or upload photo
@@ -12890,6 +13922,7 @@ export default function App() {
   const [wounds, setWounds] = useState([]);
   const [medOrders, setMedOrders] = useState([]);
   const [conversations, setConversations] = useState([]);
+  const [appointments, setAppointments] = useState([]);
   const [patients, setPatients] = useState([
     {
       id: 1,
@@ -12993,6 +14026,7 @@ export default function App() {
       setWounds([]);
       setMedOrders([]);
       setConversations([]);
+      setAppointments([]);
       return;
     }
 
@@ -13019,6 +14053,17 @@ export default function App() {
           }),
         ]);
 
+      let appointmentRecords = [];
+      try {
+        appointmentRecords = await pb.collection("appointments").getFullList({
+          requestKey: null,
+          sort: "scheduled_at",
+          expand: "doctor,patient",
+        });
+      } catch (apptError) {
+        console.log("appointments fetch skipped:", apptError?.message);
+      }
+
       const allWounds = woundRecords.map(mapWoundRecord);
       const allOrders = orderRecords.map(mapOrderRecord);
       const memberConversations = conversationRecords.filter((record) =>
@@ -13038,12 +14083,23 @@ export default function App() {
         setMedOrders(
           allOrders.filter((record) => record.patientId === activeUser.id),
         );
+        setAppointments(
+          appointmentRecords
+            .filter((record) => record.patient === activeUser.id)
+            .map(mapAppointmentRecord),
+        );
       } else if (activeRole === "doctor") {
         setWounds(allWounds);
         setMedOrders(allOrders);
+        setAppointments(
+          appointmentRecords
+            .filter((record) => record.doctor === activeUser.id)
+            .map(mapAppointmentRecord),
+        );
       } else if (activeRole === "pharmacy") {
         setWounds(allWounds.filter((record) => record.hasPharmacy));
         setMedOrders(allOrders);
+        setAppointments([]);
       }
 
       setConversations(allConversations);
@@ -13053,6 +14109,7 @@ export default function App() {
       setWounds([]);
       setMedOrders([]);
       setConversations([]);
+      setAppointments([]);
     } finally {
       setDataLoading(false);
     }
@@ -13209,7 +14266,9 @@ export default function App() {
       const updated = {
         ...prev[index],
         lastMsg: messagePreviewText(mappedMessage) || prev[index].lastMsg,
-        time: formatTimeValue(mappedMessage.created || new Date().toISOString()),
+        time: formatTimeValue(
+          mappedMessage.created || new Date().toISOString(),
+        ),
       };
       const next = [...prev];
       next.splice(index, 1);
@@ -13336,19 +14395,92 @@ export default function App() {
     return mappedMessage;
   };
 
+  const fetchApprovedDoctors = async () => {
+    try {
+      const records = await pb.collection("doctor_profile").getFullList({
+        requestKey: null,
+        filter: `status="approved"`,
+        expand: "user",
+      });
+      return records.map(mapDoctorListingRecord).filter((item) => item.userId);
+    } catch (error) {
+      console.log("fetchApprovedDoctors error:", error);
+      return [];
+    }
+  };
+
+  const createAppointment = async ({
+    doctorUserId,
+    scheduledAtIso,
+    consultationType,
+  }) => {
+    if (!currentUser?.id) {
+      throw new Error("Please login again");
+    }
+    if (!doctorUserId) {
+      throw new Error("Doctor is not available for booking.");
+    }
+    await pb.collection("appointments").create({
+      patient: currentUser.id,
+      doctor: doctorUserId,
+      scheduled_at: scheduledAtIso,
+      consultation_type: consultationType || "video",
+      status: "scheduled",
+    });
+    await refreshAllData();
+  };
+
   const createWoundReport = async ({ description, image }) => {
     if (!currentUser?.id) {
       throw new Error("Please login again");
     }
     const doctorUsers = await fetchUsersByRole("doctor");
-    const woundRecord = await pb.collection("wounds").create({
-      patient: currentUser.id,
-      description: description?.trim() || "",
-      severity: "moderate",
-      status: "review_pending",
-      notes: "",
-      hasPharmacy: false,
-    });
+    const filePart = image?.uri ? pickerAssetToUploadPart(image) : null;
+
+    let woundRecord;
+    if (filePart) {
+      const formData = new FormData();
+      formData.append("patient", currentUser.id);
+      formData.append("description", description?.trim() || "");
+      formData.append("severity", "moderate");
+      formData.append("status", "review_pending");
+      formData.append("notes", "");
+      formData.append("image", filePart);
+      try {
+        woundRecord = await pb.collection("wounds").create(formData);
+      } catch (imageError) {
+        console.log("wounds create with image failed, retrying:", imageError);
+        const fd = new FormData();
+        fd.append("patient", currentUser.id);
+        fd.append("description", description?.trim() || "");
+        fd.append("severity", "moderate");
+        fd.append("status", "review_pending");
+        fd.append("notes", "");
+        fd.append("photo", filePart);
+        try {
+          woundRecord = await pb.collection("wounds").create(fd);
+        } catch (e2) {
+          console.log("wound photo upload failed, saving without photo:", e2);
+          woundRecord = await pb.collection("wounds").create({
+            patient: currentUser.id,
+            description: description?.trim() || "",
+            severity: "moderate",
+            status: "review_pending",
+            notes: "",
+            hasPharmacy: false,
+          });
+        }
+      }
+    } else {
+      woundRecord = await pb.collection("wounds").create({
+        patient: currentUser.id,
+        description: description?.trim() || "",
+        severity: "moderate",
+        status: "review_pending",
+        notes: "",
+        hasPharmacy: false,
+      });
+    }
     const conversation = await pb.collection("conversations").create({
       title: buildConversationTitle(woundRecord),
       linkedWound: woundRecord.id,
@@ -13482,6 +14614,7 @@ export default function App() {
       setWounds([]);
       setMedOrders([]);
       setConversations([]);
+      setAppointments([]);
       return;
     }
 
@@ -13492,6 +14625,7 @@ export default function App() {
       setWounds([]);
       setMedOrders([]);
       setConversations([]);
+      setAppointments([]);
       return;
     }
     refreshAllData(currentUser, userRole);
@@ -13521,6 +14655,13 @@ export default function App() {
       } catch (error) {
         console.log("App subscription error:", error);
       }
+      try {
+        await pb.collection("appointments").subscribe("*", () => {
+          refreshAllData(currentUser, userRole);
+        });
+      } catch (apptSubError) {
+        console.log("appointments subscribe skipped:", apptSubError?.message);
+      }
     };
 
     subscribe();
@@ -13529,6 +14670,11 @@ export default function App() {
       pb.collection("wounds").unsubscribe("*");
       pb.collection("orders").unsubscribe("*");
       pb.collection("conversations").unsubscribe("*");
+      try {
+        pb.collection("appointments").unsubscribe("*");
+      } catch (e) {
+        /* collection may not exist */
+      }
     };
   }, [currentUser?.id, userRole, patientProfile?.status]);
 
@@ -13562,6 +14708,7 @@ export default function App() {
     wounds,
     medOrders,
     conversations,
+    appointments,
     dataLoading,
     dataError,
     refreshAllData,
@@ -13574,6 +14721,8 @@ export default function App() {
     createWoundReport,
     prescribeForWound,
     updateOrderStatus,
+    fetchApprovedDoctors,
+    createAppointment,
   };
 
   return (
@@ -13650,7 +14799,9 @@ const AppContent = ({
   }
 
   if (userRole === "doctor") {
-    if (normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved") {
+    if (
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
       return (
         <DoctorApplicationStatusScreen
           status={patientProfile?.status}
