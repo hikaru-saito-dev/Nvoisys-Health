@@ -37,6 +37,7 @@ import {
   MaterialCommunityIcons,
   FontAwesome5,
 } from "@expo/vector-icons";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { decryptChatText, encryptChatText } from "./chatCrypto";
 import {
   pb,
@@ -435,13 +436,11 @@ const mapMessageRecord = (record) => {
   const senderRecord = record?.expand?.sender;
   const isSystem = record?.kind === "system";
   const imageFiles = resolveMessageImageFiles(record);
-  const imageUrls = imageFiles
-    .filter(Boolean)
-    .map((fileName) => {
-      const token = pb?.authStore?.token;
-      const options = token ? { token } : undefined;
-      return pb.files.getUrl(record, fileName, options);
-    });
+  const imageUrls = imageFiles.filter(Boolean).map((fileName) => {
+    const token = pb?.authStore?.token;
+    const options = token ? { token } : undefined;
+    return pb.files.getUrl(record, fileName, options);
+  });
   return {
     id: record.id,
     text: decryptChatText(resolveMessageText(record)),
@@ -550,10 +549,13 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
 };
 
 const normalizeDoctorApplicationStatus = (value) => {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (!normalized) return "pending";
   if (normalized === "approved") return "approved";
-  if (normalized === "rejected" || normalized === "rejection") return "rejection";
+  if (normalized === "rejected" || normalized === "rejection")
+    return "rejection";
   if (normalized === "pending") return "pending";
   return "pending";
 };
@@ -705,10 +707,209 @@ const DoctorApplicationStatusScreen = ({ status, onRefresh, onLogout }) => {
 };
 
 // --- RESPONSIVE SCALING ---
+// Device type detection
+const getDeviceType = () => {
+  const { width, height } = Dimensions.get("window");
+  const smallestSide = Math.min(width, height);
+  const largestSide = Math.max(width, height);
+
+  if (smallestSide >= 600) return "tablet";
+  if (largestSide >= 850 && smallestSide >= 400) return "foldable";
+  return "phone";
+};
+
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-const scale = SCREEN_WIDTH / 375;
+const DEVICE_TYPE = getDeviceType();
+
+// Dynamic scaling calculations
+const baseWidth = 375;
+const baseHeight = 812;
+
+const widthScale = SCREEN_WIDTH / baseWidth;
+const heightScale = SCREEN_HEIGHT / baseHeight;
+const avgScale = (widthScale + heightScale) / 2;
+
+// Device-specific adjustments
+const spacingMultiplier = DEVICE_TYPE === "tablet" ? 1.2 : 1;
+const iconMultiplier = DEVICE_TYPE === "tablet" ? 1.15 : 1;
+
+// Capped scaling to prevent extreme sizes
+const cappedScale = Math.min(Math.max(avgScale, 0.75), 1.4);
+
+// Main responsive value function - auto-adjusts for any screen
 const RFValue = (size) =>
-  Math.round(PixelRatio.roundToNearestPixel(size * scale));
+  Math.round(
+    PixelRatio.roundToNearestPixel(size * cappedScale * spacingMultiplier),
+  );
+
+// Responsive font function - averages width/height scaling for better text fit
+const RFText = (size, options = {}) => {
+  const { min = 0.75, max = 1.4 } = options;
+  const scale = Math.min(Math.max(avgScale, min), max);
+  return Math.round(PixelRatio.roundToNearestPixel(size * scale));
+};
+
+// Helper: Calculate value as percentage of screen width
+const rw = (percentage) => Math.round(SCREEN_WIDTH * (percentage / 100));
+
+// Helper: Calculate value as percentage of screen height
+const rh = (percentage) => Math.round(SCREEN_HEIGHT * (percentage / 100));
+
+// Helper: Responsive spacing that scales with device type
+const rs = (size) => Math.round(size * cappedScale * spacingMultiplier);
+
+// Helper: Responsive icon size
+const ri = (size) => Math.round(size * cappedScale * iconMultiplier);
+
+// Responsive breakpoints info (for debugging/logging if needed)
+const ResponsiveInfo = {
+  deviceType: DEVICE_TYPE,
+  screenWidth: SCREEN_WIDTH,
+  screenHeight: SCREEN_HEIGHT,
+  scale: cappedScale,
+  isTablet: DEVICE_TYPE === "tablet",
+  isFoldable: DEVICE_TYPE === "foldable",
+  isPhone: DEVICE_TYPE === "phone",
+};
+
+// --- RESPONSIVE COMPONENTS ---
+
+// Auto-adjusting card component
+const ResponsiveCard = ({ children, style, ...props }) => {
+  const padding = rs(16);
+  const borderRadius = rs(20);
+  const shadowRadius = rs(12);
+
+  return (
+    <View
+      style={[
+        {
+          backgroundColor: "#FFFFFF",
+          borderRadius,
+          padding,
+          marginBottom: rs(16),
+          shadowColor: "#000",
+          shadowOpacity: 0.06,
+          shadowOffset: { width: 0, height: 4 },
+          shadowRadius,
+          elevation: 3,
+        },
+        style,
+      ]}
+      {...props}
+    >
+      {children}
+    </View>
+  );
+};
+
+// Auto-adjusting text component
+const ResponsiveText = ({
+  children,
+  style,
+  size = 14,
+  weight = 400,
+  ...props
+}) => {
+  const fontSize = RFText(size);
+  const lineHeight = Math.round(fontSize * 1.4);
+
+  return (
+    <Text
+      style={[
+        {
+          fontSize,
+          lineHeight,
+          fontWeight: weight === "bold" ? "700" : weight === "semi" ? "600" : weight,
+        },
+        style,
+      ]}
+      {...props}
+    >
+      {children}
+    </Text>
+  );
+};
+
+// Auto-adjusting button with minimum touch target
+const ResponsiveButton = ({
+  children,
+  onPress,
+  style,
+  disabled,
+  ...props
+}) => {
+  const minTouchTarget = 44;
+  const buttonHeight = Math.max(rs(48), minTouchTarget);
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      style={[
+        {
+          minHeight: buttonHeight,
+          justifyContent: "center",
+          alignItems: "center",
+          borderRadius: rs(16),
+          paddingHorizontal: rs(20),
+          paddingVertical: rs(14),
+        },
+        style,
+      ]}
+      {...props}
+    >
+      {children}
+    </TouchableOpacity>
+  );
+};
+
+// Auto-adjusting grid that adapts columns based on screen width
+const ResponsiveGrid = ({ children, columns = 4, spacing = 8, style }) => {
+  const colWidth = 100 / columns;
+
+  return (
+    <View style={[styles.gridContainer, { flexWrap: "wrap" }, style]}>
+      {React.Children.map(children, (child, index) => (
+        <View
+          key={index}
+          style={{
+            width: `${colWidth}%`,
+            padding: rs(spacing) / 2,
+          }}
+        >
+          {child}
+        </View>
+      ))}
+    </View>
+  );
+};
+
+// Auto-adjusting icon container
+const ResponsiveIcon = ({ name, color, size = 24, ...props }) => {
+  const iconSize = ri(size);
+
+  return (
+    <View
+      style={{
+        width: iconSize,
+        height: iconSize,
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+      {...props}
+    >
+      <Ionicons name={name} size={iconSize} color={color} />
+    </View>
+  );
+};
+
+// Inline styles for grid container
+const styles = {
+  gridContainer: {
+    flexDirection: "row",
+  },
+};
 
 // --- ANIMATION WRAPPERS ---
 const FadeInView = ({ children, style, delay = 0 }) => {
@@ -1384,10 +1585,11 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
-                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  justifyContent: "flex-start",
                 }}
               >
-                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
+                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1416,7 +1618,7 @@ const PatientHomeScreen = () => {
                     Symptoms
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
+                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1445,7 +1647,7 @@ const PatientHomeScreen = () => {
                     Medicines
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
+                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1474,7 +1676,7 @@ const PatientHomeScreen = () => {
                     Book Appt
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
+                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1530,6 +1732,7 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
+                  flexWrap: "wrap",
                   justifyContent: "space-between",
                   marginBottom: RFValue(12),
                 }}
@@ -1537,11 +1740,11 @@ const PatientHomeScreen = () => {
                 <TouchableOpacity
                   onPress={() => setStartCallType("video")}
                   style={{
-                    flex: 1,
+                    width: "48%",
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
-                    marginRight: RFValue(8),
+                    marginBottom: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
@@ -1589,11 +1792,11 @@ const PatientHomeScreen = () => {
                 <TouchableOpacity
                   onPress={() => setStartCallType("audio")}
                   style={{
-                    flex: 1,
+                    width: "48%",
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
-                    marginLeft: RFValue(8),
+                    marginBottom: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
@@ -11233,63 +11436,68 @@ const DoctorRootPlaceholder = () => {
 };
 
 // --- CUSTOM TAB BAR ---
-const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => (
-  <View
-    style={{
-      flexDirection: "row",
-      backgroundColor: "#FFFFFF",
-      borderTopWidth: 1,
-      borderTopColor: "#F3F4F6",
-      paddingBottom: Platform.OS === "ios" ? 24 : 8,
-      paddingTop: RFValue(8),
-      shadowColor: "#000",
-      shadowOpacity: 0.08,
-      shadowOffset: { width: 0, height: -4 },
-      shadowRadius: 10,
-      elevation: 10,
-    }}
-  >
-    {state.routes.map((route, index) => {
-      const { options } = descriptors[route.key];
-      const isFocused = state.index === index;
-      const label = options.tabBarLabel || route.name;
-      const icon = options.tabBarIcon
-        ? options.tabBarIcon({
-            color: isFocused ? activeColor : "#9CA3AF",
-            size: RFValue(24),
-            focused: isFocused,
-          })
-        : null;
+const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
+  const insets = useSafeAreaInsets();
 
-      const onPress = () => {
-        const event = navigation.emit({ type: "tabPress", target: route.key });
-        if (!isFocused && !event.defaultPrevented) {
-          navigation.navigate(route.name);
-        }
-      };
-
-      return (
-        <TouchableOpacity
-          key={route.key}
-          onPress={onPress}
-          style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
-        >
-          {icon}
-          <Text
-            style={{
-              fontSize: RFValue(10),
-              fontWeight: isFocused ? "700" : "500",
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        backgroundColor: "#FFFFFF",
+        borderTopWidth: 1,
+        borderTopColor: "#F3F4F6",
+        paddingBottom:
+          Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 8,
+        paddingTop: RFValue(8),
+        shadowColor: "#000",
+        shadowOpacity: 0.08,
+        shadowOffset: { width: 0, height: -4 },
+        shadowRadius: 10,
+        elevation: 10,
+      }}
+    >
+      {state.routes.map((route, index) => {
+        const { options } = descriptors[route.key];
+        const isFocused = state.index === index;
+        const label = options.tabBarLabel || route.name;
+        const icon = options.tabBarIcon
+          ? options.tabBarIcon({
               color: isFocused ? activeColor : "#9CA3AF",
-              marginTop: RFValue(2),
-            }}
+              size: RFValue(24),
+              focused: isFocused,
+            })
+          : null;
+
+        const onPress = () => {
+          const event = navigation.emit({ type: "tabPress", target: route.key });
+          if (!isFocused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
+          }
+        };
+
+        return (
+          <TouchableOpacity
+            key={route.key}
+            onPress={onPress}
+            style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
           >
-            {label}
-          </Text>
-        </TouchableOpacity>
-      );
-    })}
-  </View>
-);
+            {icon}
+            <Text
+              style={{
+                fontSize: RFValue(10),
+                fontWeight: isFocused ? "700" : "500",
+                color: isFocused ? activeColor : "#9CA3AF",
+                marginTop: RFValue(2),
+              }}
+            >
+              {label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+};
 
 // --- CUSTOM TAB NAVIGATOR ---
 const CustomTabNavigator = ({ routes, activeColor }) => {
@@ -13411,7 +13619,9 @@ export default function App() {
       const updated = {
         ...prev[index],
         lastMsg: messagePreviewText(mappedMessage) || prev[index].lastMsg,
-        time: formatTimeValue(mappedMessage.created || new Date().toISOString()),
+        time: formatTimeValue(
+          mappedMessage.created || new Date().toISOString(),
+        ),
       };
       const next = [...prev];
       next.splice(index, 1);
@@ -13782,25 +13992,27 @@ export default function App() {
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, changeTheme, themeKey }}>
-      <AppDataContext.Provider value={appDataValue}>
-        <AppContent
-          userRole={userRole}
-          setUserRole={setUserRole}
-          currentUser={currentUser}
-          setCurrentUser={setCurrentUser}
-          patientProfile={patientProfile}
-          setPatientProfile={setPatientProfile}
-          theme={theme}
-          wounds={wounds}
-          setWounds={setWounds}
-          medOrders={medOrders}
-          setMedOrders={setMedOrders}
-          patients={patients}
-          setPatients={setPatients}
-        />
-      </AppDataContext.Provider>
-    </ThemeContext.Provider>
+    <SafeAreaProvider>
+      <ThemeContext.Provider value={{ theme, changeTheme, themeKey }}>
+        <AppDataContext.Provider value={appDataValue}>
+          <AppContent
+            userRole={userRole}
+            setUserRole={setUserRole}
+            currentUser={currentUser}
+            setCurrentUser={setCurrentUser}
+            patientProfile={patientProfile}
+            setPatientProfile={setPatientProfile}
+            theme={theme}
+            wounds={wounds}
+            setWounds={setWounds}
+            medOrders={medOrders}
+            setMedOrders={setMedOrders}
+            patients={patients}
+            setPatients={setPatients}
+          />
+        </AppDataContext.Provider>
+      </ThemeContext.Provider>
+    </SafeAreaProvider>
   );
 }
 
@@ -13855,7 +14067,9 @@ const AppContent = ({
   }
 
   if (userRole === "doctor") {
-    if (normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved") {
+    if (
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
       return (
         <DoctorApplicationStatusScreen
           status={patientProfile?.status}
