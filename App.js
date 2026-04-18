@@ -22,7 +22,6 @@ import {
   Platform,
   KeyboardAvoidingView,
   BackHandler,
-  useSafeAreaInsets,
 } from "react-native";
 import {
   RTCPeerConnection,
@@ -38,6 +37,7 @@ import {
   MaterialCommunityIcons,
   FontAwesome5,
 } from "@expo/vector-icons";
+import { decryptChatText, encryptChatText } from "./chatCrypto";
 import {
   pb,
   restoreAuth,
@@ -444,7 +444,7 @@ const mapMessageRecord = (record) => {
     });
   return {
     id: record.id,
-    text: resolveMessageText(record),
+    text: decryptChatText(resolveMessageText(record)),
     kind: record.kind || "text",
     imageUrls,
     imageUrl: imageUrls[0] || null,
@@ -704,197 +704,11 @@ const DoctorApplicationStatusScreen = ({ status, onRefresh, onLogout }) => {
   );
 };
 
-// --- AUTO-ADJUSTING RESPONSIVE SYSTEM ---
-
-// Device type detection
-const getDeviceType = () => {
-  const { width, height } = Dimensions.get("window");
-  const smallestSide = Math.min(width, height);
-  const largestSide = Math.max(width, height);
-  
-  if (smallestSide >= 600) return "tablet";
-  if (largestSide >= 850 && smallestSide >= 400) return "foldable";
-  return "phone";
-};
-
+// --- RESPONSIVE SCALING ---
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-const DEVICE_TYPE = getDeviceType();
-
-// Dynamic scaling calculations
-const baseWidth = 375;
-const baseHeight = 812;
-
-const widthScale = SCREEN_WIDTH / baseWidth;
-const heightScale = SCREEN_HEIGHT / baseHeight;
-const avgScale = (widthScale + heightScale) / 2;
-
-// Device-specific adjustments
-const spacingMultiplier = DEVICE_TYPE === "tablet" ? 1.2 : 1;
-const iconMultiplier = DEVICE_TYPE === "tablet" ? 1.15 : 1;
-
-// Capped scaling to prevent extreme sizes
-const cappedScale = Math.min(Math.max(avgScale, 0.75), 1.4);
-
-// Main responsive value function - auto-adjusts for any screen
+const scale = SCREEN_WIDTH / 375;
 const RFValue = (size) =>
-  Math.round(PixelRatio.roundToNearestPixel(size * cappedScale * spacingMultiplier));
-
-// Responsive font function - averages width/height scaling for better text fit
-const RFText = (size, options = {}) => {
-  const { min = 0.75, max = 1.4 } = options;
-  const scale = Math.min(Math.max(avgScale, min), max);
-  return Math.round(PixelRatio.roundToNearestPixel(size * scale));
-};
-
-// Helper: Calculate value as percentage of screen width
-const rw = (percentage) => Math.round(SCREEN_WIDTH * (percentage / 100));
-
-// Helper: Calculate value as percentage of screen height
-const rh = (percentage) => Math.round(SCREEN_HEIGHT * (percentage / 100));
-
-// Helper: Responsive spacing that scales with device type
-const rs = (size) => Math.round(size * cappedScale * spacingMultiplier);
-
-// Helper: Responsive icon size
-const ri = (size) => Math.round(size * cappedScale * iconMultiplier);
-
-// Responsive breakpoints info (for debugging/logging if needed)
-const ResponsiveInfo = {
-  deviceType: DEVICE_TYPE,
-  screenWidth: SCREEN_WIDTH,
-  screenHeight: SCREEN_HEIGHT,
-  scale: cappedScale,
-  isTablet: DEVICE_TYPE === "tablet",
-  isFoldable: DEVICE_TYPE === "foldable",
-  isPhone: DEVICE_TYPE === "phone",
-};
-
-// --- RESPONSIVE COMPONENTS ---
-
-// Auto-adjusting card component
-const ResponsiveCard = ({ children, style, ...props }) => {
-  const padding = rs(16);
-  const borderRadius = rs(20);
-  const shadowRadius = rs(12);
-  
-  return (
-    <View
-      style={[
-        {
-          backgroundColor: "#FFFFFF",
-          borderRadius,
-          padding,
-          marginBottom: rs(16),
-          shadowColor: "#000",
-          shadowOpacity: 0.06,
-          shadowOffset: { width: 0, height: 4 },
-          shadowRadius,
-          elevation: 3,
-        },
-        style,
-      ]}
-      {...props}
-    >
-      {children}
-    </View>
-  );
-};
-
-// Auto-adjusting text component
-const ResponsiveText = ({ children, style, size = 14, weight = 400, ...props }) => {
-  const fontSize = RFText(size);
-  const lineHeight = Math.round(fontSize * 1.4);
-  
-  return (
-    <Text
-      style={[
-        {
-          fontSize,
-          lineHeight,
-          fontWeight: weight === "bold" ? "700" : weight === "semi" ? "600" : weight,
-        },
-        style,
-      ]}
-      {...props}
-    >
-      {children}
-    </Text>
-  );
-};
-
-// Auto-adjusting button with minimum touch target
-const ResponsiveButton = ({ children, onPress, style, disabled, ...props }) => {
-  const minTouchTarget = 44;
-  const buttonHeight = Math.max(rs(48), minTouchTarget);
-  
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={disabled}
-      style={[
-        {
-          minHeight: buttonHeight,
-          justifyContent: "center",
-          alignItems: "center",
-          borderRadius: rs(16),
-          paddingHorizontal: rs(20),
-          paddingVertical: rs(14),
-        },
-        style,
-      ]}
-      {...props}
-    >
-      {children}
-    </TouchableOpacity>
-  );
-};
-
-// Auto-adjusting grid that adapts columns based on screen width
-const ResponsiveGrid = ({ children, columns = 4, spacing = 8, style }) => {
-  const colWidth = 100 / columns;
-  
-  return (
-    <View style={[styles.gridContainer, { flexWrap: "wrap" }, style]}>
-      {React.Children.map(children, (child, index) => (
-        <View
-          key={index}
-          style={{
-            width: `${colWidth}%`,
-            padding: rs(spacing) / 2,
-          }}
-        >
-          {child}
-        </View>
-      ))}
-    </View>
-  );
-};
-
-// Auto-adjusting icon container
-const ResponsiveIcon = ({ name, color, size = 24, ...props }) => {
-  const iconSize = ri(size);
-  
-  return (
-    <View
-      style={{
-        width: iconSize,
-        height: iconSize,
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-      {...props}
-    >
-      <Ionicons name={name} size={iconSize} color={color} />
-    </View>
-  );
-};
-
-// Inline styles for grid container
-const styles = {
-  gridContainer: {
-    flexDirection: "row",
-  },
-};
+  Math.round(PixelRatio.roundToNearestPixel(size * scale));
 
 // --- ANIMATION WRAPPERS ---
 const FadeInView = ({ children, style, delay = 0 }) => {
@@ -1570,11 +1384,10 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
-                  flexWrap: "wrap",
-                  justifyContent: "flex-start",
+                  justifyContent: "space-between",
                 }}
               >
-                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
+                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1603,7 +1416,7 @@ const PatientHomeScreen = () => {
                     Symptoms
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
+                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1632,7 +1445,7 @@ const PatientHomeScreen = () => {
                     Medicines
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
+                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1661,7 +1474,7 @@ const PatientHomeScreen = () => {
                     Book Appt
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
+                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1717,7 +1530,6 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
-                  flexWrap: "wrap",
                   justifyContent: "space-between",
                   marginBottom: RFValue(12),
                 }}
@@ -1725,11 +1537,11 @@ const PatientHomeScreen = () => {
                 <TouchableOpacity
                   onPress={() => setStartCallType("video")}
                   style={{
-                    width: "48%",
+                    flex: 1,
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
-                    marginBottom: RFValue(8),
+                    marginRight: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
@@ -1777,11 +1589,11 @@ const PatientHomeScreen = () => {
                 <TouchableOpacity
                   onPress={() => setStartCallType("audio")}
                   style={{
-                    width: "48%",
+                    flex: 1,
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
-                    marginBottom: RFValue(8),
+                    marginLeft: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
@@ -11421,24 +11233,22 @@ const DoctorRootPlaceholder = () => {
 };
 
 // --- CUSTOM TAB BAR ---
-const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
-  const insets = useSafeAreaInsets();
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        backgroundColor: "#FFFFFF",
-        borderTopWidth: 1,
-        borderTopColor: "#F3F4F6",
-        paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 8,
-        paddingTop: RFValue(8),
-        shadowColor: "#000",
-        shadowOpacity: 0.08,
-        shadowOffset: { width: 0, height: -4 },
-        shadowRadius: 10,
-        elevation: 10,
-      }}
-    >
+const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => (
+  <View
+    style={{
+      flexDirection: "row",
+      backgroundColor: "#FFFFFF",
+      borderTopWidth: 1,
+      borderTopColor: "#F3F4F6",
+      paddingBottom: Platform.OS === "ios" ? 24 : 8,
+      paddingTop: RFValue(8),
+      shadowColor: "#000",
+      shadowOpacity: 0.08,
+      shadowOffset: { width: 0, height: -4 },
+      shadowRadius: 10,
+      elevation: 10,
+    }}
+  >
     {state.routes.map((route, index) => {
       const { options } = descriptors[route.key];
       const isFocused = state.index === index;
@@ -13614,19 +13424,21 @@ export default function App() {
     const trimmed = text.trim();
     let createdMessage = null;
     try {
+      const encrypted = await encryptChatText(trimmed);
       createdMessage = await pb.collection("messages").create({
         conversation: conversationId,
         sender: currentUser.id,
         kind: "text",
-        text: trimmed,
+        text: encrypted,
       });
     } catch (error) {
       try {
+        const encrypted = await encryptChatText(trimmed);
         createdMessage = await pb.collection("messages").create({
           conversation: conversationId,
           sender: currentUser.id,
           kind: "text",
-          message: trimmed,
+          message: encrypted,
         });
       } catch (fallbackError) {
         console.log("sendConversationMessage error:", fallbackError);
@@ -13678,12 +13490,13 @@ export default function App() {
     const name = asset.fileName || `photo_${Date.now()}.${safeExt}`;
 
     let createdMessage = null;
+    const encryptedCaption = caption ? await encryptChatText(caption) : "";
     try {
       const formData = new FormData();
       formData.append("conversation", conversationId);
       formData.append("sender", currentUser.id);
       formData.append("kind", "image");
-      formData.append("text", caption || "");
+      formData.append("text", encryptedCaption || "");
       // PocketBase schema uses a multiple file field named `file`.
       // (Older schemas may use `image`, so we fallback below.)
       formData.append("file", { uri, name, type: mimeType });
@@ -13695,7 +13508,7 @@ export default function App() {
         formData.append("conversation", conversationId);
         formData.append("sender", currentUser.id);
         formData.append("kind", "text");
-        formData.append("text", caption || "");
+        formData.append("text", encryptedCaption || "");
         formData.append("file", { uri, name, type: mimeType });
         createdMessage = await pb.collection("messages").create(formData);
       } catch (fallbackError) {
@@ -13705,7 +13518,7 @@ export default function App() {
           formData.append("conversation", conversationId);
           formData.append("sender", currentUser.id);
           formData.append("kind", "text");
-          formData.append("text", caption || "");
+          formData.append("text", encryptedCaption || "");
           formData.append("image", { uri, name, type: mimeType });
           createdMessage = await pb.collection("messages").create(formData);
         } catch (legacyError) {
