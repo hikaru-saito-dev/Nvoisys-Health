@@ -577,6 +577,37 @@ const woundRecordImageUrl = (record) => {
   return pb.files.getUrl(record, first, token ? { token } : undefined);
 };
 
+const patientProfileFileUrl = (profile, fieldName) => {
+  if (!profile?.[fieldName] || !profile.id) return null;
+  const raw = profile[fieldName];
+  const names = Array.isArray(raw) ? raw : [raw];
+  const first = names.find(Boolean);
+  if (!first) return null;
+  const token = pb?.authStore?.token;
+  return pb.files.getUrl(profile, first, token ? { token } : undefined);
+};
+
+const patientProfileAvatarUrl = (profile) =>
+  patientProfileFileUrl(profile, "avatar") ||
+  patientProfileFileUrl(profile, "photo") ||
+  patientProfileFileUrl(profile, "profile_image");
+
+const patientProfilePhoneRaw = (profile) =>
+  profile?.phone ||
+  profile?.mobile ||
+  profile?.phone_number ||
+  profile?.tel ||
+  "";
+
+const formatPhoneForDisplay = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length === 10) {
+    return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+  }
+  if (String(value || "").trim()) return String(value).trim();
+  return "";
+};
+
 const mapWoundRecord = (record) => ({
   id: record.id,
   patient: record.patient || null,
@@ -4660,6 +4691,376 @@ const ThemeScreen = ({ onBack }) => {
   );
 };
 
+const PatientEditProfileScreen = ({
+  onBack,
+  currentUser,
+  patientProfile,
+  onSaved,
+}) => {
+  const { theme } = useTheme();
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [condition, setCondition] = useState("");
+  const [gender, setGender] = useState("");
+  const [avatarAsset, setAvatarAsset] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setFullName(
+      String(patientProfile?.full_name || currentUser?.name || "").trim(),
+    );
+    setPhone(String(patientProfilePhoneRaw(patientProfile) || ""));
+    setCondition(
+      String(
+        patientProfile?.primary_condition ||
+          patientProfile?.condition ||
+          "",
+      ).trim(),
+    );
+    setGender(String(patientProfile?.gender || "").trim());
+    setAvatarAsset(null);
+    setError("");
+  }, [patientProfile?.id, currentUser?.id]);
+
+  const pickAvatar = async (source) => {
+    try {
+      if (source === "camera") {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow camera access to take a profile photo.",
+          );
+          return;
+        }
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow photo library access to pick a profile photo.",
+          );
+          return;
+        }
+      }
+      const pickerOptions = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      };
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      if (!result || result.canceled) return;
+      const asset = result.assets?.[0];
+      if (asset?.uri) setAvatarAsset(asset);
+    } catch (err) {
+      console.log("pickAvatar error:", err);
+      Alert.alert("Photo", err?.message || "Could not add photo.");
+    }
+  };
+
+  const handleSave = async () => {
+    if (!patientProfile?.id) {
+      setError("Profile not loaded. Please try again.");
+      return;
+    }
+    if (!fullName.trim()) {
+      setError("Please enter your full name.");
+      return;
+    }
+    try {
+      setSaving(true);
+      setError("");
+      await pb.collection("patient_profile").update(patientProfile.id, {
+        full_name: fullName.trim(),
+        phone: phone.trim(),
+        primary_condition: condition.trim(),
+        gender: gender.trim(),
+      });
+      if (currentUser?.id) {
+        await pb.collection("UsersAuth").update(currentUser.id, {
+          name: fullName.trim(),
+        });
+      }
+      if (avatarAsset?.uri) {
+        const part = pickerAssetToUploadPart(avatarAsset);
+        if (part) {
+          const fd = new FormData();
+          fd.append("avatar", part);
+          try {
+            await pb.collection("patient_profile").update(patientProfile.id, fd);
+          } catch (imgErr) {
+            const fd2 = new FormData();
+            fd2.append("photo", part);
+            await pb.collection("patient_profile").update(patientProfile.id, fd2);
+          }
+        }
+      }
+      if (onSaved) await onSaved();
+      onBack();
+    } catch (err) {
+      console.log("PatientEditProfileScreen save:", err);
+      setError(
+        err?.data?.message ||
+          err?.message ||
+          "Could not save. Add fields on patient_profile in PocketBase: full_name, phone, primary_condition, gender, avatar.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const previewUri = avatarAsset?.uri || patientProfileAvatarUrl(patientProfile);
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View
+          style={{
+            backgroundColor: theme.card,
+            padding: RFValue(20),
+            paddingTop: Platform.OS === "android" ? 40 : 16,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.cardBorder,
+            flexDirection: "row",
+            alignItems: "center",
+          }}
+        >
+          <TouchableOpacity
+            onPress={onBack}
+            style={{
+              width: RFValue(36),
+              height: RFValue(36),
+              borderRadius: RFValue(10),
+              backgroundColor: theme.bg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(14),
+            }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+          <Text
+            style={{
+              fontSize: RFValue(20),
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            Edit profile
+          </Text>
+        </View>
+        <ScrollView
+          contentContainerStyle={{
+            padding: RFValue(16),
+            paddingBottom: RFValue(120),
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text
+            style={{
+              fontSize: RFValue(13),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(8),
+            }}
+          >
+            Profile photo
+          </Text>
+          <TouchableOpacity
+            onPress={() =>
+              Alert.alert("Profile photo", "Choose a source", [
+                { text: "Cancel", style: "cancel" },
+                { text: "Camera", onPress: () => pickAvatar("camera") },
+                { text: "Library", onPress: () => pickAvatar("library") },
+              ])
+            }
+            style={{
+              width: RFValue(100),
+              height: RFValue(100),
+              borderRadius: RFValue(24),
+              backgroundColor: theme.accentLight,
+              overflow: "hidden",
+              marginBottom: RFValue(20),
+              alignSelf: "center",
+            }}
+          >
+            {previewUri ? (
+              <Image
+                source={{ uri: previewUri }}
+                style={{ width: "100%", height: "100%" }}
+                resizeMode="cover"
+              />
+            ) : (
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons name="person" size={RFValue(40)} color={theme.accent} />
+              </View>
+            )}
+          </TouchableOpacity>
+
+          {[
+            {
+              label: "Full name",
+              value: fullName,
+              onChange: setFullName,
+              placeholder: "Your name",
+            },
+            {
+              label: "Phone number",
+              value: phone,
+              onChange: setPhone,
+              placeholder: "e.g. 9876543210",
+              keyboard: "phone-pad",
+            },
+            {
+              label: "Condition / main concern",
+              value: condition,
+              onChange: setCondition,
+              placeholder: "Helps match you with the right doctors",
+            },
+          ].map((field) => (
+            <View key={field.label} style={{ marginBottom: RFValue(16) }}>
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  fontWeight: "700",
+                  color: theme.textSecondary,
+                  marginBottom: RFValue(8),
+                }}
+              >
+                {field.label}
+              </Text>
+              <TextInput
+                value={field.value}
+                onChangeText={field.onChange}
+                placeholder={field.placeholder}
+                placeholderTextColor={theme.textTertiary}
+                keyboardType={field.keyboard || "default"}
+                style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(14),
+                  paddingHorizontal: RFValue(16),
+                  paddingVertical: RFValue(14),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  fontSize: RFValue(15),
+                  color: theme.textPrimary,
+                }}
+              />
+            </View>
+          ))}
+
+          <Text
+            style={{
+              fontSize: RFValue(13),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(8),
+            }}
+          >
+            Gender
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: RFValue(20) }}>
+            {[
+              { id: "male", label: "Male" },
+              { id: "female", label: "Female" },
+              { id: "other", label: "Other" },
+            ].map((g) => {
+              const active = gender === g.id;
+              return (
+                <TouchableOpacity
+                  key={g.id}
+                  onPress={() => setGender(g.id)}
+                  style={{
+                    paddingHorizontal: RFValue(16),
+                    paddingVertical: RFValue(10),
+                    borderRadius: RFValue(12),
+                    backgroundColor: active ? theme.accent : theme.bg,
+                    borderWidth: 1,
+                    borderColor: active ? theme.accent : theme.cardBorder,
+                    marginRight: RFValue(8),
+                    marginBottom: RFValue(8),
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontWeight: "700",
+                      fontSize: RFValue(14),
+                      color: active ? "#FFF" : theme.textPrimary,
+                    }}
+                  >
+                    {g.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: theme.textTertiary,
+              marginBottom: RFValue(12),
+            }}
+          >
+            Email ({currentUser?.email || "—"}) is tied to your login. To change
+            it, contact support or use account recovery in PocketBase.
+          </Text>
+
+          {error ? (
+            <Text
+              style={{
+                color: theme.danger,
+                marginBottom: RFValue(12),
+                fontWeight: "600",
+              }}
+            >
+              {error}
+            </Text>
+          ) : null}
+
+          <TouchableOpacity
+            onPress={handleSave}
+            disabled={saving}
+            style={{
+              backgroundColor: theme.accent,
+              borderRadius: RFValue(14),
+              paddingVertical: RFValue(16),
+              alignItems: "center",
+              marginTop: RFValue(8),
+              opacity: saving ? 0.85 : 1,
+            }}
+          >
+            {saving ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={{ color: "#FFF", fontWeight: "700", fontSize: RFValue(16) }}>
+                Save changes
+              </Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+};
+
 const PatientAppointmentsScreen = ({ onBack }) => {
   const { theme } = useTheme();
   const { appointments } = useAppData();
@@ -4789,16 +5190,33 @@ const PatientAppointmentsScreen = ({ onBack }) => {
   );
 };
 
-const PatientProfileScreen = ({ currentUser, patientProfile, onLogout }) => {
+const PatientProfileScreen = ({
+  currentUser,
+  patientProfile,
+  onLogout,
+  onPatientProfileSaved,
+}) => {
   const [showTheme, setShowTheme] = useState(false);
   const [showAppointments, setShowAppointments] = useState(false);
-  const [profileImage, setProfileImage] = useState(null);
+  const [showEditProfile, setShowEditProfile] = useState(false);
   const { theme, themeKey } = useTheme();
+
+  const avatarUrl = patientProfileAvatarUrl(patientProfile);
+  const phoneDisplay = formatPhoneForDisplay(patientProfilePhoneRaw(patientProfile));
 
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
   if (showAppointments)
     return (
       <PatientAppointmentsScreen onBack={() => setShowAppointments(false)} />
+    );
+  if (showEditProfile)
+    return (
+      <PatientEditProfileScreen
+        onBack={() => setShowEditProfile(false)}
+        currentUser={currentUser}
+        patientProfile={patientProfile}
+        onSaved={onPatientProfileSaved}
+      />
     );
 
   return (
@@ -4822,8 +5240,9 @@ const PatientProfileScreen = ({ currentUser, patientProfile, onLogout }) => {
           }}
         >
           <TouchableOpacity
-            onPress={() => setProfileImage("placeholder")}
+            onPress={() => setShowEditProfile(true)}
             style={{ position: "relative", marginBottom: RFValue(14) }}
+            activeOpacity={0.85}
           >
             <View
               style={{
@@ -4836,7 +5255,15 @@ const PatientProfileScreen = ({ currentUser, patientProfile, onLogout }) => {
                 overflow: "hidden",
               }}
             >
-              <Ionicons name="person" size={RFValue(40)} color={theme.accent} />
+              {avatarUrl ? (
+                <Image
+                  source={{ uri: avatarUrl }}
+                  style={{ width: RFValue(80), height: RFValue(80) }}
+                  resizeMode="cover"
+                />
+              ) : (
+                <Ionicons name="person" size={RFValue(40)} color={theme.accent} />
+              )}
             </View>
             <View
               style={{
@@ -4881,8 +5308,39 @@ const PatientProfileScreen = ({ currentUser, patientProfile, onLogout }) => {
               marginTop: RFValue(2),
             }}
           >
-            +91 ----- -----
+            {phoneDisplay || "Add phone in Edit profile"}
           </Text>
+          {(patientProfile?.primary_condition || patientProfile?.condition) &&
+          String(
+            patientProfile?.primary_condition || patientProfile?.condition || "",
+          ).trim() ? (
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                color: theme.textSecondary,
+                marginTop: RFValue(8),
+                textAlign: "center",
+                paddingHorizontal: RFValue(8),
+              }}
+            >
+              Concern:{" "}
+              {String(
+                patientProfile?.primary_condition ||
+                  patientProfile?.condition ||
+                  "",
+              ).trim()}
+              {patientProfile?.gender
+                ? ` · ${
+                    {
+                      male: "Male",
+                      female: "Female",
+                      other: "Other",
+                    }[String(patientProfile.gender).toLowerCase()] ||
+                    patientProfile.gender
+                  }`
+                : ""}
+            </Text>
+          ) : null}
         </View>
 
         <View style={{ padding: RFValue(16) }}>
@@ -4912,13 +5370,18 @@ const PatientProfileScreen = ({ currentUser, patientProfile, onLogout }) => {
               Account
             </Text>
             {[
-              { icon: "person-outline", label: "Edit Profile" },
+              {
+                icon: "person-outline",
+                label: "Edit Profile",
+                onPress: () => setShowEditProfile(true),
+              },
               { icon: "shield-checkmark-outline", label: "Privacy & Security" },
               { icon: "notifications-outline", label: "Notifications" },
               { icon: "language-outline", label: "Language" },
             ].map((item, idx) => (
               <TouchableOpacity
                 key={idx}
+                onPress={item.onPress}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -15555,6 +16018,20 @@ const AppContent = ({
                 patientProfile={patientProfile}
                 currentUser={currentUser}
                 onLogout={handleLogout}
+                onPatientProfileSaved={async () => {
+                  try {
+                    if (pb.authStore.isValid) {
+                      await pb.collection("UsersAuth").authRefresh();
+                    }
+                    if (pb.authStore.record) {
+                      setCurrentUser(pb.authStore.record);
+                    }
+                    const pr = await ensureRoleProfile("patient");
+                    setPatientProfile(pr);
+                  } catch (e) {
+                    console.log("onPatientProfileSaved:", e);
+                  }
+                }}
               />
             ),
             icon: ({ color, focused }) => (
