@@ -625,10 +625,29 @@ const mapDoctorListingRecord = (record) => {
     fee: Number(record.consultation_fee ?? record.fee ?? 500) || 500,
     rating: Number(record.rating ?? 4.8) || 4.8,
     bio: record.bio || record.about || "",
+    clinicOrHospital:
+      record.clinic_or_hospital || record.workplace || record.hospital || "",
     languages: safeArray(record.languages),
     avatarUrl,
     raw: record,
   };
+};
+
+const doctorMatchesPatientHealthFocus = (doctor, patientProfile) => {
+  const focus = (
+    patientProfile?.primary_condition ||
+    patientProfile?.condition ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+  if (!focus) return true;
+  const hay = `${doctor.specialty || ""} ${doctor.bio || ""} ${doctor.clinicOrHospital || ""}`.toLowerCase();
+  if (hay.includes(focus)) return true;
+  return focus
+    .split(/\s+/)
+    .filter((w) => w.length > 2)
+    .some((w) => hay.includes(w));
 };
 
 const mapAppointmentRecord = (record) => {
@@ -7535,6 +7554,49 @@ const AuthScreen = ({ onLogin }) => {
   const [password, setPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [patientCondition, setPatientCondition] = useState("");
+  const [patientGender, setPatientGender] = useState("");
+  const [patientRegAvatar, setPatientRegAvatar] = useState(null);
+  const [doctorSpecialtyField, setDoctorSpecialtyField] = useState("");
+  const [doctorClinic, setDoctorClinic] = useState("");
+
+  const pickRegistrationAvatar = async (source) => {
+    try {
+      if (source === "camera") {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow camera access to take a profile photo.",
+          );
+          return;
+        }
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow photo library access to pick a profile photo.",
+          );
+          return;
+        }
+      }
+      const pickerOptions = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      };
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      if (!result || result.canceled) return;
+      const asset = result.assets?.[0];
+      if (asset?.uri) setPatientRegAvatar(asset);
+    } catch (error) {
+      console.log("pickRegistrationAvatar error:", error);
+      Alert.alert("Photo", error?.message || "Could not add photo.");
+    }
+  };
 
   useEffect(() => {
     const handleBack = () => {
@@ -7585,11 +7647,41 @@ const AuthScreen = ({ onLogin }) => {
           throw new Error("Password must be at least 8 characters.");
         }
 
+        if (role === "patient") {
+          if (!patientCondition.trim()) {
+            throw new Error("Please enter your condition or disease name");
+          }
+          if (!patientGender) {
+            throw new Error("Please select Male or Female (or Other)");
+          }
+        }
+        if (role === "doctor") {
+          if (!doctorSpecialtyField.trim()) {
+            throw new Error("Please enter your medical field / specialty");
+          }
+          if (!doctorClinic.trim()) {
+            throw new Error("Please enter the clinic or hospital you work with");
+          }
+        }
+
         result = await signUpWithEmail({
           name: name.trim(),
           email: email.trim(),
           password: password.trim(),
           role,
+          profileFields:
+            role === "patient"
+              ? {
+                  primary_condition: patientCondition.trim(),
+                  gender: patientGender,
+                  avatarAsset: patientRegAvatar,
+                }
+              : role === "doctor"
+                ? {
+                    specialty: doctorSpecialtyField.trim(),
+                    clinic_or_hospital: doctorClinic.trim(),
+                  }
+                : {},
         });
       } else {
         result = await loginWithEmail({
@@ -7788,6 +7880,222 @@ const AuthScreen = ({ onLogin }) => {
             placeholderTextColor="#9CA3AF"
           />
 
+          {authMode === "signup" && role === "patient" && (
+            <>
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  fontWeight: "700",
+                  color: "#374151",
+                  marginBottom: RFValue(8),
+                }}
+              >
+                Condition / disease name
+              </Text>
+              <TextInput
+                placeholder="e.g. Diabetes, hypertension, wound care…"
+                value={patientCondition}
+                onChangeText={setPatientCondition}
+                style={{
+                  backgroundColor: "#FFFFFF",
+                  borderRadius: RFValue(14),
+                  paddingHorizontal: RFValue(16),
+                  paddingVertical: RFValue(16),
+                  marginBottom: RFValue(14),
+                  borderWidth: 1,
+                  borderColor: "#E5E7EB",
+                  fontSize: RFValue(15),
+                  color: "#1E1B4B",
+                }}
+                placeholderTextColor="#9CA3AF"
+              />
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  fontWeight: "700",
+                  color: "#374151",
+                  marginBottom: RFValue(8),
+                }}
+              >
+                Gender
+              </Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  marginBottom: RFValue(14),
+                }}
+              >
+                {[
+                  { id: "male", label: "Male" },
+                  { id: "female", label: "Female" },
+                  { id: "other", label: "Other" },
+                ].map((g) => {
+                  const active = patientGender === g.id;
+                  return (
+                    <TouchableOpacity
+                      key={g.id}
+                      onPress={() => setPatientGender(g.id)}
+                      style={{
+                        paddingHorizontal: RFValue(18),
+                        paddingVertical: RFValue(10),
+                        borderRadius: RFValue(12),
+                        backgroundColor: active ? "#4338CA" : "#FFFFFF",
+                        borderWidth: 1,
+                        borderColor: active ? "#4338CA" : "#E5E7EB",
+                        marginRight: RFValue(8),
+                        marginBottom: RFValue(8),
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: RFValue(14),
+                          fontWeight: "700",
+                          color: active ? "#FFF" : "#374151",
+                        }}
+                      >
+                        {g.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  fontWeight: "700",
+                  color: "#374151",
+                  marginBottom: RFValue(8),
+                }}
+              >
+                Profile photo (optional)
+              </Text>
+              <TouchableOpacity
+                onPress={() =>
+                  Alert.alert("Profile photo", "Choose a source", [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Camera",
+                      onPress: () => pickRegistrationAvatar("camera"),
+                    },
+                    {
+                      text: "Library",
+                      onPress: () => pickRegistrationAvatar("library"),
+                    },
+                  ])
+                }
+                style={{
+                  height: RFValue(120),
+                  borderRadius: RFValue(14),
+                  backgroundColor: "#FFFFFF",
+                  borderWidth: 2,
+                  borderColor: "#E5E7EB",
+                  borderStyle: "dashed",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginBottom: RFValue(14),
+                  overflow: "hidden",
+                }}
+              >
+                {patientRegAvatar?.uri ? (
+                  <Image
+                    source={{ uri: patientRegAvatar.uri }}
+                    style={{ width: "100%", height: "100%" }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={{ alignItems: "center" }}>
+                    <Ionicons name="camera" size={RFValue(32)} color="#9CA3AF" />
+                    <Text
+                      style={{
+                        color: "#9CA3AF",
+                        marginTop: RFValue(6),
+                        fontSize: RFValue(13),
+                      }}
+                    >
+                      Tap to add photo
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              {patientRegAvatar?.uri ? (
+                <TouchableOpacity
+                  onPress={() => setPatientRegAvatar(null)}
+                  style={{ marginBottom: RFValue(14) }}
+                >
+                  <Text
+                    style={{
+                      color: "#DC2626",
+                      fontWeight: "600",
+                      fontSize: RFValue(13),
+                    }}
+                  >
+                    Remove photo
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </>
+          )}
+
+          {authMode === "signup" && role === "doctor" && (
+            <>
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  fontWeight: "700",
+                  color: "#374151",
+                  marginBottom: RFValue(8),
+                }}
+              >
+                Medical field / specialty
+              </Text>
+              <TextInput
+                placeholder="e.g. Cardiology, general practice, wound care…"
+                value={doctorSpecialtyField}
+                onChangeText={setDoctorSpecialtyField}
+                style={{
+                  backgroundColor: "#FFFFFF",
+                  borderRadius: RFValue(14),
+                  paddingHorizontal: RFValue(16),
+                  paddingVertical: RFValue(16),
+                  marginBottom: RFValue(14),
+                  borderWidth: 1,
+                  borderColor: "#E5E7EB",
+                  fontSize: RFValue(15),
+                  color: "#1E1B4B",
+                }}
+                placeholderTextColor="#9CA3AF"
+              />
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  fontWeight: "700",
+                  color: "#374151",
+                  marginBottom: RFValue(8),
+                }}
+              >
+                Clinic or hospital
+              </Text>
+              <TextInput
+                placeholder="Where you currently work or consult"
+                value={doctorClinic}
+                onChangeText={setDoctorClinic}
+                style={{
+                  backgroundColor: "#FFFFFF",
+                  borderRadius: RFValue(14),
+                  paddingHorizontal: RFValue(16),
+                  paddingVertical: RFValue(16),
+                  marginBottom: RFValue(14),
+                  borderWidth: 1,
+                  borderColor: "#E5E7EB",
+                  fontSize: RFValue(15),
+                  color: "#1E1B4B",
+                }}
+                placeholderTextColor="#9CA3AF"
+              />
+            </>
+          )}
+
           {!!authError && (
             <Text
               style={{
@@ -7880,6 +8188,11 @@ const AuthScreen = ({ onLogin }) => {
             onPress={() => {
               setAuthMode(authMode === "signup" ? "login" : "signup");
               setAuthError("");
+              setPatientCondition("");
+              setPatientGender("");
+              setPatientRegAvatar(null);
+              setDoctorSpecialtyField("");
+              setDoctorClinic("");
             }}
             style={{ alignItems: "center", marginTop: RFValue(18) }}
           >
@@ -10338,7 +10651,7 @@ const AppointmentBookingScreen = ({
 
 const PatientDoctorBookingFlow = ({ onBack }) => {
   const { theme } = useTheme();
-  const { fetchApprovedDoctors } = useAppData();
+  const { fetchApprovedDoctors, patientProfile } = useAppData();
   const [step, setStep] = useState("browse");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [doctors, setDoctors] = useState([]);
@@ -10346,6 +10659,17 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
+  const hasHealthFocus = !!(
+    patientProfile?.primary_condition ||
+    patientProfile?.condition ||
+    ""
+  )
+    .trim();
+  const [showAllDoctors, setShowAllDoctors] = useState(!hasHealthFocus);
+
+  useEffect(() => {
+    setShowAllDoctors(!hasHealthFocus);
+  }, [hasHealthFocus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -10378,7 +10702,9 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
       d.name.toLowerCase().includes(q) ||
       d.specialty.toLowerCase().includes(q);
     const matchesCat = category === "All" || d.specialty === category;
-    return matchesSearch && matchesCat;
+    const matchesHealth =
+      showAllDoctors || doctorMatchesPatientHealthFocus(d, patientProfile);
+    return matchesSearch && matchesCat && matchesHealth;
   });
 
   if (step === "book" && selectedDoctor) {
@@ -10502,6 +10828,34 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             >
               {d.specialty}
             </Text>
+            {d.clinicOrHospital ? (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginTop: RFValue(6),
+                  paddingHorizontal: RFValue(8),
+                }}
+              >
+                <Ionicons
+                  name="business-outline"
+                  size={RFValue(14)}
+                  color={theme.textTertiary}
+                />
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    color: theme.textTertiary,
+                    marginLeft: RFValue(6),
+                    flexShrink: 1,
+                    textAlign: "center",
+                  }}
+                >
+                  {d.clinicOrHospital}
+                </Text>
+              </View>
+            ) : null}
             <Text
               style={{
                 fontSize: RFValue(13),
@@ -10643,6 +10997,47 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             autoCapitalize="none"
           />
         </View>
+        {hasHealthFocus ? (
+          <View
+            style={{
+              marginTop: RFValue(10),
+              padding: RFValue(12),
+              borderRadius: RFValue(12),
+              backgroundColor: theme.accentLight,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                color: theme.textSecondary,
+                marginBottom: RFValue(6),
+              }}
+            >
+              Matched to your profile:{" "}
+              <Text style={{ fontWeight: "700", color: theme.textPrimary }}>
+                {(patientProfile?.primary_condition ||
+                  patientProfile?.condition ||
+                  "")
+                  .trim()}
+              </Text>
+            </Text>
+            <TouchableOpacity onPress={() => setShowAllDoctors(!showAllDoctors)}>
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  fontWeight: "700",
+                  color: theme.accent,
+                }}
+              >
+                {showAllDoctors
+                  ? "Show recommended doctors only"
+                  : "Show all doctors"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -10707,9 +11102,26 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 textAlign: "center",
               }}
             >
-              No doctors match your filters. Try another specialty or clear
-              search.
+              {hasHealthFocus && !showAllDoctors
+                ? "No doctors matched your health profile yet. Try showing all doctors or adjust search."
+                : "No doctors match your filters. Try another specialty or clear search."}
             </Text>
+            {hasHealthFocus && !showAllDoctors ? (
+              <TouchableOpacity
+                onPress={() => setShowAllDoctors(true)}
+                style={{ marginTop: RFValue(16) }}
+              >
+                <Text
+                  style={{
+                    fontSize: RFValue(14),
+                    fontWeight: "700",
+                    color: theme.accent,
+                  }}
+                >
+                  Show all doctors
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         ) : (
           filteredDoctors.map((d) => (
@@ -10777,6 +11189,14 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 >
                   {d.specialty} · {d.rating} ★
                 </Text>
+                {d.clinicOrHospital ? (
+                  <Text
+                    style={{ fontSize: RFValue(11), color: theme.textTertiary }}
+                    numberOfLines={1}
+                  >
+                    {d.clinicOrHospital}
+                  </Text>
+                ) : null}
                 <Text
                   style={{ fontSize: RFValue(11), color: theme.textTertiary }}
                 >
@@ -14783,6 +15203,7 @@ export default function App() {
     userRole,
     currentUser,
     currentUserId: currentUser?.id || null,
+    patientProfile,
     wounds,
     medOrders,
     conversations,

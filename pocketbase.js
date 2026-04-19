@@ -78,7 +78,41 @@ function getSessionPayload(profile) {
   };
 }
 
-export async function ensureRoleProfile(roleOverride = null) {
+function compactProfileFields(fields) {
+  if (!fields || typeof fields !== "object") return {};
+  const { avatarAsset: _a, ...rest } = fields;
+  return Object.fromEntries(
+    Object.entries(rest).filter(
+      ([, v]) => v !== undefined && v !== null && String(v).trim() !== "",
+    ),
+  );
+}
+
+function uploadPartFromImageAsset(asset) {
+  const uri = asset?.uri;
+  if (!uri) return null;
+  let mimeType =
+    (asset.mimeType && String(asset.mimeType)) ||
+    (typeof asset.type === "string" && asset.type.includes("/")
+      ? asset.type
+      : null) ||
+    "image/jpeg";
+  const ext = String(uri).split("?")[0].split("#")[0].split(".").pop();
+  const low = String(ext || "").toLowerCase();
+  if (low === "png") mimeType = "image/png";
+  else if (low === "webp") mimeType = "image/webp";
+  else if (low === "heic" || low === "heif") mimeType = "image/heic";
+  const extFromMime = mimeType.split("/")[1] || "jpg";
+  const safeExt = ["png", "webp", "heic", "heif"].includes(
+    String(extFromMime).toLowerCase(),
+  )
+    ? String(extFromMime).toLowerCase()
+    : "jpg";
+  const name = asset.fileName || `avatar_${Date.now()}.${safeExt}`;
+  return { uri, name, type: mimeType };
+}
+
+export async function ensureRoleProfile(roleOverride = null, extraFields = {}) {
   const user = getAuthUser();
 
   if (!user) {
@@ -87,6 +121,7 @@ export async function ensureRoleProfile(roleOverride = null) {
 
   const role = normalizeRole(roleOverride || user.role);
   const collection = ROLE_TO_PROFILE_COLLECTION[role];
+  const merged = compactProfileFields(extraFields);
 
   try {
     return await pb
@@ -94,14 +129,14 @@ export async function ensureRoleProfile(roleOverride = null) {
       .getFirstListItem(`user="${user.id}"`, { requestKey: null });
   } catch (error) {
     if (error?.status === 404) {
-      // For doctors, start in "pending" until manually approved in PocketBase.
       const payload =
         role === "doctor"
           ? {
               user: user.id,
               status: "pending",
+              ...merged,
             }
-          : { user: user.id };
+          : { user: user.id, ...merged };
 
       return await pb.collection(collection).create(payload);
     }
@@ -109,8 +144,17 @@ export async function ensureRoleProfile(roleOverride = null) {
   }
 }
 
-export async function signUpWithEmail({ name, email, password, role }) {
+export async function signUpWithEmail({
+  name,
+  email,
+  password,
+  role,
+  profileFields = {},
+}) {
   normalizeRole(role);
+
+  const { avatarAsset, ...rawProfile } = profileFields || {};
+  const profilePayload = compactProfileFields(rawProfile);
 
   await pb.collection("UsersAuth").create({
     name: name?.trim() || "",
@@ -129,7 +173,24 @@ export async function signUpWithEmail({ name, email, password, role }) {
     pb.authStore.save(authData.token, authData.record);
   }
 
-  const profile = await ensureRoleProfile(role);
+  let profile = await ensureRoleProfile(role, profilePayload);
+
+  if (role === "patient" && avatarAsset?.uri && profile?.id) {
+    const part = uploadPartFromImageAsset(avatarAsset);
+    if (part) {
+      try {
+        const formData = new FormData();
+        formData.append("avatar", part);
+        await pb.collection("patient_profile").update(profile.id, formData);
+        profile = await pb.collection("patient_profile").getOne(profile.id, {
+          requestKey: null,
+        });
+      } catch (avatarError) {
+        console.log("Patient profile avatar upload skipped:", avatarError);
+      }
+    }
+  }
+
   return getSessionPayload(profile);
 }
 
