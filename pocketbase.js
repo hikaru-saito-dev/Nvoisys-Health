@@ -12,7 +12,7 @@ if (!global.EventSource) {
   global.EventSource = EventSource;
 }
 
-const PB_URL = "https://pb.jpoop.in";
+const PB_URL = "https://pbs.nvoisyshealth.com";
 
 // Mobile OAuth2 note:
 // PocketBase's "all-in-one" authWithOAuth2 flow depends on a realtime (SSE)
@@ -21,10 +21,10 @@ const PB_URL = "https://pb.jpoop.in";
 // Tabs is open.
 //
 // For Google we use a "manual code exchange" flow with a small HTTPS redirect
-// helper page hosted on the PocketBase domain:
-// - https://vpn.jpoop.in/oauth2.html (served from PocketBase pb_public)
+// helper page hosted on the PocketBase domain (pb_public/oauth2.html):
+// - https://pbs.nvoisyshealth.com/oauth2.html
 // That page bounces back into the app via deep link: myapp://oauth2
-const OAUTH2_REDIRECT_URL = `https://vpn.jpoop.in/oauth2.html`;
+const OAUTH2_REDIRECT_URL = `https://pbs.nvoisyshealth.com/oauth2.html`;
 const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
 
 const authStore = new AsyncAuthStore({
@@ -78,7 +78,96 @@ function getSessionPayload(profile) {
   };
 }
 
-export async function ensureRoleProfile(roleOverride = null) {
+function compactProfileFields(fields) {
+  if (!fields || typeof fields !== "object") return {};
+  const { avatarAsset: _a, ...rest } = fields;
+  return Object.fromEntries(
+    Object.entries(rest).filter(
+      ([, v]) => v !== undefined && v !== null && String(v).trim() !== "",
+    ),
+  );
+}
+
+/**
+ * Matches PocketBase `patient_profile`: user, primary_condition, gender, phone (optional).
+ * Avatar is uploaded after create in signUpWithEmail (file field).
+ */
+async function createPatientProfileRecord(userId, merged) {
+  const primary_condition = String(merged.primary_condition || "").trim();
+  const gender = String(merged.gender || "").trim();
+  const phone = String(merged.phone || "").trim();
+
+  const payload = {
+    user: userId,
+    primary_condition,
+    gender,
+  };
+  if (phone) {
+    payload.phone = phone;
+  }
+
+  return await pb.collection("patient_profile").create(payload);
+}
+
+/**
+ * Matches PocketBase `doctor_profile`: user, status, specialty, clinic_or_hospital.
+ * Status select: pending | approved | rejection
+ */
+async function createDoctorProfileRecord(userId, merged) {
+  const specialty = String(merged.specialty || "").trim();
+  const clinic_or_hospital = String(merged.clinic_or_hospital || "").trim();
+
+  return await pb.collection("doctor_profile").create({
+    user: userId,
+    status: "pending",
+    specialty,
+    clinic_or_hospital,
+  });
+}
+
+export function formatPocketBaseClientError(error) {
+  const fieldBlock =
+    error?.response?.data?.data || error?.data?.data || null;
+  if (fieldBlock && typeof fieldBlock === "object") {
+    for (const v of Object.values(fieldBlock)) {
+      if (v && typeof v === "object" && v.message) {
+        return String(v.message);
+      }
+    }
+  }
+  return (
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    ""
+  );
+}
+
+function uploadPartFromImageAsset(asset) {
+  const uri = asset?.uri;
+  if (!uri) return null;
+  let mimeType =
+    (asset.mimeType && String(asset.mimeType)) ||
+    (typeof asset.type === "string" && asset.type.includes("/")
+      ? asset.type
+      : null) ||
+    "image/jpeg";
+  const ext = String(uri).split("?")[0].split("#")[0].split(".").pop();
+  const low = String(ext || "").toLowerCase();
+  if (low === "png") mimeType = "image/png";
+  else if (low === "webp") mimeType = "image/webp";
+  else if (low === "heic" || low === "heif") mimeType = "image/heic";
+  const extFromMime = mimeType.split("/")[1] || "jpg";
+  const safeExt = ["png", "webp", "heic", "heif"].includes(
+    String(extFromMime).toLowerCase(),
+  )
+    ? String(extFromMime).toLowerCase()
+    : "jpg";
+  const name = asset.fileName || `avatar_${Date.now()}.${safeExt}`;
+  return { uri, name, type: mimeType };
+}
+
+export async function ensureRoleProfile(roleOverride = null, extraFields = {}) {
   const user = getAuthUser();
 
   if (!user) {
@@ -87,6 +176,7 @@ export async function ensureRoleProfile(roleOverride = null) {
 
   const role = normalizeRole(roleOverride || user.role);
   const collection = ROLE_TO_PROFILE_COLLECTION[role];
+  const merged = compactProfileFields(extraFields);
 
   try {
     return await pb
@@ -94,23 +184,32 @@ export async function ensureRoleProfile(roleOverride = null) {
       .getFirstListItem(`user="${user.id}"`, { requestKey: null });
   } catch (error) {
     if (error?.status === 404) {
-      // For doctors, start in "pending" until manually approved in PocketBase.
-      const payload =
-        role === "doctor"
-          ? {
-              user: user.id,
-              status: "pending",
-            }
-          : { user: user.id };
-
-      return await pb.collection(collection).create(payload);
+      if (role === "doctor") {
+        return await createDoctorProfileRecord(user.id, merged);
+      }
+      if (role === "patient") {
+        return await createPatientProfileRecord(user.id, merged);
+      }
+      return await pb.collection(collection).create({
+        user: user.id,
+        ...merged,
+      });
     }
     throw error;
   }
 }
 
-export async function signUpWithEmail({ name, email, password, role }) {
+export async function signUpWithEmail({
+  name,
+  email,
+  password,
+  role,
+  profileFields = {},
+}) {
   normalizeRole(role);
+
+  const { avatarAsset, ...rawProfile } = profileFields || {};
+  const profilePayload = compactProfileFields(rawProfile);
 
   await pb.collection("UsersAuth").create({
     name: name?.trim() || "",
@@ -129,7 +228,24 @@ export async function signUpWithEmail({ name, email, password, role }) {
     pb.authStore.save(authData.token, authData.record);
   }
 
-  const profile = await ensureRoleProfile(role);
+  let profile = await ensureRoleProfile(role, profilePayload);
+
+  if (role === "patient" && avatarAsset?.uri && profile?.id) {
+    const part = uploadPartFromImageAsset(avatarAsset);
+    if (part) {
+      try {
+        const formData = new FormData();
+        formData.append("avatar", part);
+        await pb.collection("patient_profile").update(profile.id, formData);
+        profile = await pb.collection("patient_profile").getOne(profile.id, {
+          requestKey: null,
+        });
+      } catch (avatarError) {
+        console.log("Patient profile avatar upload skipped:", avatarError);
+      }
+    }
+  }
+
   return getSessionPayload(profile);
 }
 
@@ -191,7 +307,9 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
       // 3) Exchange the received code via PocketBase authWithOAuth2Code.
 
       // IMPORTANT:
-      // - Add `https://vpn.jpoop.in/oauth2.html` to Google Console redirect URIs
+      
+      // - Add `https://pbs.nvoisyshealth.com/oauth2.html` to Google Console redirect URIs
+
       // - Upload `pb_public/oauth2.html` next to your PocketBase executable.
 
       const authUrl = `${provider.authUrl}${OAUTH2_REDIRECT_URL}`;
