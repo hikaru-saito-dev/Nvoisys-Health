@@ -262,6 +262,19 @@ export async function loginWithEmail({ email, password }) {
   return getSessionPayload(profile);
 }
 
+export async function requestPasswordReset(email) {
+  const normalizedEmail = (email || "").trim();
+
+  if (!normalizedEmail) {
+    throw new Error("Please enter your email");
+  }
+
+  // Note: PocketBase needs SMTP configured to send the email.
+  await pb
+    .collection("UsersAuth")
+    .requestPasswordReset(normalizedEmail, { requestKey: null });
+}
+
 export async function signInWithOAuth({ providerName, selectedRole }) {
   normalizeRole(selectedRole);
 
@@ -294,7 +307,9 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
       // 3) Exchange the received code via PocketBase authWithOAuth2Code.
 
       // IMPORTANT:
+      
       // - Add `https://pbs.nvoisyshealth.com/oauth2.html` to Google Console redirect URIs
+
       // - Upload `pb_public/oauth2.html` next to your PocketBase executable.
 
       const authUrl = `${provider.authUrl}${OAUTH2_REDIRECT_URL}`;

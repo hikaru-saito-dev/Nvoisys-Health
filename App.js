@@ -32,14 +32,37 @@ import {
   ScrollView,
   StatusBar,
   Text,
+  Image,
+  Alert,
+  Animated,
   TextInput,
   TouchableOpacity,
   View
 } from "react-native";
 import {
+  RTCPeerConnection,
+  RTCIceCandidate,
+  RTCSessionDescription,
+  RTCView,
+  mediaDevices,
+} from "@livekit/react-native-webrtc";
+import Constants from "expo-constants";
+import * as ImagePicker from "expo-image-picker";
+import {
+  Ionicons,
+  MaterialCommunityIcons,
+  FontAwesome5,
+} from "@expo/vector-icons";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import { decryptChatText, encryptChatText } from "./chatCrypto";
+import {
+  pb,
+  restoreAuth,
   ensureRoleProfile,
   formatPocketBaseClientError,
   loginWithEmail,
+  requestPasswordReset,
+  signInWithOAuth,
   logoutUser,
   pb,
   restoreAuth,
@@ -623,7 +646,7 @@ const mapMessageRecord = (record) => {
   });
   return {
     id: record.id,
-    text: resolveMessageText(record),
+    text: decryptChatText(resolveMessageText(record)),
     kind: record.kind || "text",
     imageUrls,
     imageUrl: imageUrls[0] || null,
@@ -1061,10 +1084,209 @@ const DoctorApplicationStatusScreen = ({ status, onRefresh, onLogout }) => {
 };
 
 // --- RESPONSIVE SCALING ---
+// Device type detection
+const getDeviceType = () => {
+  const { width, height } = Dimensions.get("window");
+  const smallestSide = Math.min(width, height);
+  const largestSide = Math.max(width, height);
+
+  if (smallestSide >= 600) return "tablet";
+  if (largestSide >= 850 && smallestSide >= 400) return "foldable";
+  return "phone";
+};
+
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-const scale = SCREEN_WIDTH / 375;
+const DEVICE_TYPE = getDeviceType();
+
+// Dynamic scaling calculations
+const baseWidth = 375;
+const baseHeight = 812;
+
+const widthScale = SCREEN_WIDTH / baseWidth;
+const heightScale = SCREEN_HEIGHT / baseHeight;
+const avgScale = (widthScale + heightScale) / 2;
+
+// Device-specific adjustments
+const spacingMultiplier = DEVICE_TYPE === "tablet" ? 1.2 : 1;
+const iconMultiplier = DEVICE_TYPE === "tablet" ? 1.15 : 1;
+
+// Capped scaling to prevent extreme sizes
+const cappedScale = Math.min(Math.max(avgScale, 0.75), 1.4);
+
+// Main responsive value function - auto-adjusts for any screen
 const RFValue = (size) =>
-  Math.round(PixelRatio.roundToNearestPixel(size * scale));
+  Math.round(
+    PixelRatio.roundToNearestPixel(size * cappedScale * spacingMultiplier),
+  );
+
+// Responsive font function - averages width/height scaling for better text fit
+const RFText = (size, options = {}) => {
+  const { min = 0.75, max = 1.4 } = options;
+  const scale = Math.min(Math.max(avgScale, min), max);
+  return Math.round(PixelRatio.roundToNearestPixel(size * scale));
+};
+
+// Helper: Calculate value as percentage of screen width
+const rw = (percentage) => Math.round(SCREEN_WIDTH * (percentage / 100));
+
+// Helper: Calculate value as percentage of screen height
+const rh = (percentage) => Math.round(SCREEN_HEIGHT * (percentage / 100));
+
+// Helper: Responsive spacing that scales with device type
+const rs = (size) => Math.round(size * cappedScale * spacingMultiplier);
+
+// Helper: Responsive icon size
+const ri = (size) => Math.round(size * cappedScale * iconMultiplier);
+
+// Responsive breakpoints info (for debugging/logging if needed)
+const ResponsiveInfo = {
+  deviceType: DEVICE_TYPE,
+  screenWidth: SCREEN_WIDTH,
+  screenHeight: SCREEN_HEIGHT,
+  scale: cappedScale,
+  isTablet: DEVICE_TYPE === "tablet",
+  isFoldable: DEVICE_TYPE === "foldable",
+  isPhone: DEVICE_TYPE === "phone",
+};
+
+// --- RESPONSIVE COMPONENTS ---
+
+// Auto-adjusting card component
+const ResponsiveCard = ({ children, style, ...props }) => {
+  const padding = rs(16);
+  const borderRadius = rs(20);
+  const shadowRadius = rs(12);
+
+  return (
+    <View
+      style={[
+        {
+          backgroundColor: "#FFFFFF",
+          borderRadius,
+          padding,
+          marginBottom: rs(16),
+          shadowColor: "#000",
+          shadowOpacity: 0.06,
+          shadowOffset: { width: 0, height: 4 },
+          shadowRadius,
+          elevation: 3,
+        },
+        style,
+      ]}
+      {...props}
+    >
+      {children}
+    </View>
+  );
+};
+
+// Auto-adjusting text component
+const ResponsiveText = ({
+  children,
+  style,
+  size = 14,
+  weight = 400,
+  ...props
+}) => {
+  const fontSize = RFText(size);
+  const lineHeight = Math.round(fontSize * 1.4);
+
+  return (
+    <Text
+      style={[
+        {
+          fontSize,
+          lineHeight,
+          fontWeight: weight === "bold" ? "700" : weight === "semi" ? "600" : weight,
+        },
+        style,
+      ]}
+      {...props}
+    >
+      {children}
+    </Text>
+  );
+};
+
+// Auto-adjusting button with minimum touch target
+const ResponsiveButton = ({
+  children,
+  onPress,
+  style,
+  disabled,
+  ...props
+}) => {
+  const minTouchTarget = 44;
+  const buttonHeight = Math.max(rs(48), minTouchTarget);
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      style={[
+        {
+          minHeight: buttonHeight,
+          justifyContent: "center",
+          alignItems: "center",
+          borderRadius: rs(16),
+          paddingHorizontal: rs(20),
+          paddingVertical: rs(14),
+        },
+        style,
+      ]}
+      {...props}
+    >
+      {children}
+    </TouchableOpacity>
+  );
+};
+
+// Auto-adjusting grid that adapts columns based on screen width
+const ResponsiveGrid = ({ children, columns = 4, spacing = 8, style }) => {
+  const colWidth = 100 / columns;
+
+  return (
+    <View style={[styles.gridContainer, { flexWrap: "wrap" }, style]}>
+      {React.Children.map(children, (child, index) => (
+        <View
+          key={index}
+          style={{
+            width: `${colWidth}%`,
+            padding: rs(spacing) / 2,
+          }}
+        >
+          {child}
+        </View>
+      ))}
+    </View>
+  );
+};
+
+// Auto-adjusting icon container
+const ResponsiveIcon = ({ name, color, size = 24, ...props }) => {
+  const iconSize = ri(size);
+
+  return (
+    <View
+      style={{
+        width: iconSize,
+        height: iconSize,
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+      {...props}
+    >
+      <Ionicons name={name} size={iconSize} color={color} />
+    </View>
+  );
+};
+
+// Inline styles for grid container
+const styles = {
+  gridContainer: {
+    flexDirection: "row",
+  },
+};
 
 // --- ANIMATION WRAPPERS ---
 const FadeInView = ({ children, style, delay = 0 }) => {
@@ -1505,6 +1727,7 @@ const PatientHomeScreen = () => {
   const [selectedEmoji, setSelectedEmoji] = useState(null);
   const [startCallType, setStartCallType] = useState(null);
   const [showFindDoctor, setShowFindDoctor] = useState(false);
+  const [showAppointment, setShowAppointment] = useState(false);
   const [showPrescription, setShowPrescription] = useState(false);
   const [showMeds, setShowMeds] = useState(false);
   const [showFamily, setShowFamily] = useState(false);
@@ -1557,6 +1780,7 @@ const PatientHomeScreen = () => {
   }, [
     startCallType,
     showFindDoctor,
+    showAppointment,
     showPrescription,
     showMeds,
     showFamily,
@@ -1757,10 +1981,11 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
-                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  justifyContent: "flex-start",
                 }}
               >
-                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
+                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1789,7 +2014,7 @@ const PatientHomeScreen = () => {
                     Symptoms
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
+                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1850,7 +2075,7 @@ const PatientHomeScreen = () => {
                     Book Appt
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", flex: 1 }}>
+                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
                   <View
                     style={{
                       width: RFValue(48),
@@ -1985,6 +2210,7 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
+                  flexWrap: "wrap",
                   justifyContent: "space-between",
                   marginBottom: RFValue(12),
                 }}
@@ -1992,11 +2218,11 @@ const PatientHomeScreen = () => {
                 <TouchableOpacity
                   onPress={() => setStartCallType("video")}
                   style={{
-                    flex: 1,
+                    width: "48%",
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
-                    marginRight: RFValue(8),
+                    marginBottom: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
@@ -2044,11 +2270,11 @@ const PatientHomeScreen = () => {
                 <TouchableOpacity
                   onPress={() => setStartCallType("audio")}
                   style={{
-                    flex: 1,
+                    width: "48%",
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
-                    marginLeft: RFValue(8),
+                    marginBottom: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
@@ -3174,6 +3400,528 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
       // Calls don't depend on chats existing; ignore errors.
     } finally {
       setStartingCallId(null);
+    }
+  };
+
+  if (activeCall) {
+    return (
+      <CallScreen
+        conversationId={activeCall.roomId}
+        callType={activeCall.callType}
+        contact={activeCall.contact}
+        onClose={() => {
+          setActiveCall(null);
+          if (onBack) onBack();
+        }}
+      />
+    );
+  }
+
+  const filterChip = (value, label) => {
+    const isActive = roleFilter === value;
+    return (
+      <TouchableOpacity
+        key={value}
+        onPress={() => setRoleFilter(value)}
+        style={{
+          paddingHorizontal: RFValue(12),
+          paddingVertical: RFValue(8),
+          borderRadius: RFValue(999),
+          backgroundColor: isActive ? theme.accent : theme.bg,
+          borderWidth: 1,
+          borderColor: isActive ? theme.accent : theme.cardBorder,
+          marginRight: RFValue(8),
+        }}
+      >
+        <Text
+          style={{
+            fontSize: RFValue(12),
+            fontWeight: "800",
+            color: isActive ? "#FFF" : theme.textSecondary,
+          }}
+        >
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
+
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(16),
+          paddingTop: Platform.OS === "android" ? 40 : 16,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <TouchableOpacity
+            onPress={onBack}
+            style={{
+              width: RFValue(40),
+              height: RFValue(40),
+              borderRadius: RFValue(12),
+              backgroundColor: theme.bg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(12),
+            }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text
+              style={{
+                fontSize: RFValue(18),
+                fontWeight: "900",
+                color: theme.textPrimary,
+              }}
+              numberOfLines={1}
+            >
+              {callType === "video" ? "Start Video Call" : "Start Audio Call"}
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                color: theme.textSecondary,
+                marginTop: 2,
+              }}
+              numberOfLines={1}
+            >
+              Pick who to call. They must join the same call.
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ marginTop: RFValue(14) }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: theme.bg,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(14),
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Ionicons
+              name="search"
+              size={RFValue(18)}
+              color={theme.textTertiary}
+              style={{ marginRight: RFValue(8) }}
+            />
+            <TextInput
+              placeholder="Search people..."
+              placeholderTextColor={theme.textTertiary}
+              style={{
+                flex: 1,
+                paddingVertical: RFValue(10),
+                fontSize: RFValue(14),
+                color: theme.textPrimary,
+              }}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingTop: RFValue(10) }}
+          >
+            {[
+              filterChip("all", "All"),
+              filterChip("doctor", "Doctors"),
+              filterChip("patient", "Patients"),
+              filterChip("pharmacy", "Pharmacies"),
+            ]}
+          </ScrollView>
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: RFValue(16) }}>
+        {directoryLoading ? (
+          <View style={{ alignItems: "center", paddingVertical: RFValue(24) }}>
+            <Text style={{ fontSize: RFValue(12), color: theme.textTertiary }}>
+              Loading directory...
+            </Text>
+          </View>
+        ) : formattedContacts.length > 0 ? (
+          formattedContacts.map((contact) => {
+            const { color, bg } = roleThemeTokensFor(theme, contact.role);
+            return (
+              <TouchableOpacity
+                key={contact.id}
+                onPress={() => handleStartCall(contact)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  backgroundColor: theme.card,
+                  padding: RFValue(14),
+                  borderRadius: RFValue(18),
+                  marginBottom: RFValue(10),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <View
+                  style={{
+                    width: RFValue(48),
+                    height: RFValue(48),
+                    borderRadius: RFValue(16),
+                    backgroundColor: bg,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginRight: RFValue(14),
+                  }}
+                >
+                  <Ionicons
+                    name={contact.icon}
+                    size={RFValue(22)}
+                    color={color}
+                  />
+                </View>
+                <View style={{ flex: 1, marginRight: RFValue(10) }}>
+                  <Text
+                    style={{
+                      fontSize: RFValue(14),
+                      fontWeight: "900",
+                      color: theme.textPrimary,
+                      marginBottom: 2,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {contact.displayName}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      fontWeight: "700",
+                    }}
+                    numberOfLines={1}
+                  >
+                    {contact.roleLabel}
+                  </Text>
+                  {contact.email ? (
+                    <Text
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textTertiary,
+                        marginTop: 2,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {contact.email}
+                    </Text>
+                  ) : null}
+                </View>
+                <View
+                  style={{
+                    width: RFValue(44),
+                    height: RFValue(44),
+                    borderRadius: RFValue(14),
+                    backgroundColor: theme.bg,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    borderWidth: 1,
+                    borderColor: color,
+                    opacity: startingCallId === contact.id ? 0.55 : 1,
+                  }}
+                >
+                  <Ionicons
+                    name={callType === "video" ? "videocam" : "call"}
+                    size={RFValue(18)}
+                    color={color}
+                  />
+                </View>
+              </TouchableOpacity>
+            );
+          })
+        ) : (
+          <View style={{ alignItems: "center", paddingVertical: RFValue(24) }}>
+            <Ionicons
+              name="search"
+              size={RFValue(32)}
+              color={theme.cardBorder}
+              style={{ marginBottom: RFValue(10) }}
+            />
+            <Text style={{ fontSize: RFValue(12), color: theme.textTertiary }}>
+              No contacts match your search.
+            </Text>
+          </View>
+        )}
+
+        {directoryError ? (
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: theme.danger,
+              marginTop: RFValue(8),
+              textAlign: "center",
+            }}
+          >
+            {directoryError}
+          </Text>
+        ) : null}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const StartCallScreen = ({ callType = "video", onBack }) => {
+  const { theme } = useTheme();
+  const {
+    userRole,
+    currentUserId,
+    conversations,
+    loadConversationMessages,
+    sendConversationMessage,
+    sendConversationImage,
+    ensureDirectConversation,
+    loadDirectoryContacts,
+    ensureDirectConversation,
+  } = useAppData();
+
+  const [directoryContacts, setDirectoryContacts] = useState([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState(() => {
+    if (userRole === "doctor") return "patient";
+    if (userRole === "patient") return "doctor";
+    return "all";
+  });
+  const [activeCall, setActiveCall] = useState(null);
+  const [startingCallId, setStartingCallId] = useState(null);
+  const [startingChatId, setStartingChatId] = useState(null);
+  const [activeCall, setActiveCall] = useState(null);
+  const [sendingAttachment, setSendingAttachment] = useState(false);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredContacts = conversations.filter((c) => {
+    if (!normalizedQuery) return true;
+    return (
+      c.displayName.toLowerCase().includes(normalizedQuery) ||
+      c.roleLabel.toLowerCase().includes(normalizedQuery) ||
+      c.lastMsg.toLowerCase().includes(normalizedQuery)
+    );
+  });
+
+  const formatDirectoryContact = (user) => {
+    const role = normalizeUserRole(user?.role);
+    const displayName = user?.name || user?.email || roleLabelFor(role);
+    return {
+      id: user?.id,
+      displayName,
+      role,
+      roleLabel: roleLabelFor(role),
+      icon: roleIconFor(role),
+      email: user?.email || "",
+    };
+  };
+
+  const resolveCallRoomId = (conversation) => {
+    const memberIds = safeArray(conversation?.members);
+    if (memberIds.length === 2 && currentUserId) {
+      const otherId = memberIds.find((id) => id !== currentUserId);
+      const roomId = buildDirectCallRoomId(currentUserId, otherId);
+      if (roomId) return roomId;
+    }
+    return conversation?.id || "";
+  };
+
+  const showDirectoryResults = normalizedQuery.length > 0;
+  const directoryMatches = showDirectoryResults
+    ? directoryContacts
+        .filter((user) => user?.id && user.id !== currentUserId)
+        .map(formatDirectoryContact)
+        .filter((contact) => {
+          const searchValue =
+            `${contact.displayName} ${contact.roleLabel} ${contact.email}`
+              .toLowerCase()
+              .trim();
+          return searchValue.includes(normalizedQuery);
+        })
+    : [];
+
+  const findDirectConversation = (targetId) =>
+    conversations.find((conversation) => {
+      const members = safeArray(conversation.members);
+      return (
+        !conversation.linkedWoundId &&
+        members.length === 2 &&
+        members.includes(currentUserId) &&
+        members.includes(targetId)
+      );
+    });
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadDirectory = async () => {
+      if (!currentUserId) return;
+      try {
+        setDirectoryLoading(true);
+        setDirectoryError("");
+        const records = await loadDirectoryContacts();
+        if (mounted) {
+          setDirectoryContacts(records);
+        }
+      } catch (error) {
+        if (mounted) {
+          setDirectoryError(error?.message || "Unable to load directory");
+          setDirectoryContacts([]);
+        }
+      } finally {
+        if (mounted) {
+          setDirectoryLoading(false);
+        }
+      }
+    };
+
+    loadDirectory();
+    return () => {
+      mounted = false;
+    };
+  }, [currentUserId, loadDirectoryContacts]);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const formattedContacts = directoryContacts
+    .filter((user) => user?.id && user.id !== currentUserId)
+    .map((user) => {
+      const role = normalizeUserRole(user?.role);
+      const displayName = user?.name || user?.email || "User";
+      return {
+        id: user.id,
+        displayName,
+        role,
+        roleLabel: roleLabelFor(role),
+        icon: roleIconFor(role),
+        email: user?.email || "",
+      };
+    })
+    .filter((contact) => {
+      if (roleFilter && roleFilter !== "all" && contact.role !== roleFilter) {
+        return false;
+      }
+      if (!normalizedQuery) return true;
+      const haystack =
+        `${contact.displayName} ${contact.roleLabel} ${contact.email}`
+          .toLowerCase()
+          .trim();
+      return haystack.includes(normalizedQuery);
+    })
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  const handleStartCall = async (contact) => {
+    if (!contact?.id || !currentUserId || startingCallId) return;
+    setStartingCallId(contact.id);
+
+    const roomId = buildDirectCallRoomId(currentUserId, contact.id);
+    const contactForCall = {
+      id: contact.id,
+      displayName: contact.displayName,
+    };
+
+    setActiveCall({ roomId, callType, contact: contactForCall });
+    subscribe();
+
+    return () => {
+      mounted = false;
+      pb.collection("messages").unsubscribe("*");
+    };
+  }, [selectedContact?.id]);
+
+  const sendMessage = async () => {
+    if (!message.trim() || !selectedContact?.id) return;
+    const text = message.trim();
+    const created = await sendConversationMessage(selectedContact.id, text);
+    if (created) {
+      setMessage("");
+      setContactMessages((prev) => {
+        if (prev.some((item) => item.id === created.id)) return prev;
+        return [...prev, created];
+      });
+    } else {
+      setMessage(text);
+    }
+  };
+
+    try {
+      await ensureDirectConversation(contact.id);
+    } catch (error) {
+      // Calls don't depend on chats existing; ignore errors.
+    } finally {
+      setStartingCallId(null);
+    }
+  };
+
+  const sendAttachment = async (source) => {
+    if (!selectedContact?.id || sendingAttachment) return;
+
+    try {
+      setSendingAttachment(true);
+
+      if (source === "camera") {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow camera access to take a photo.",
+          );
+          return;
+        }
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow photo library access to pick a photo.",
+          );
+          return;
+        }
+      }
+
+      const pickerOptions = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      };
+
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+
+      if (!result || result.canceled) return;
+      const asset = result.assets?.[0];
+      if (!asset?.uri) return;
+
+      const created = await sendConversationImage(selectedContact.id, asset);
+      if (created) {
+        setContactMessages((prev) => {
+          if (prev.some((item) => item.id === created.id)) return prev;
+          return [...prev, created];
+        });
+      }
+    } catch (error) {
+      console.log("sendAttachment error:", error);
+      Alert.alert("Upload failed", error?.message || "Unable to send photo.");
+    } finally {
+      setSendingAttachment(false);
     }
   };
 
@@ -13135,63 +13883,68 @@ const DoctorRootPlaceholder = () => {
 };
 
 // --- CUSTOM TAB BAR ---
-const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => (
-  <View
-    style={{
-      flexDirection: "row",
-      backgroundColor: "#FFFFFF",
-      borderTopWidth: 1,
-      borderTopColor: "#F3F4F6",
-      paddingBottom: Platform.OS === "ios" ? 24 : 8,
-      paddingTop: RFValue(8),
-      shadowColor: "#000",
-      shadowOpacity: 0.08,
-      shadowOffset: { width: 0, height: -4 },
-      shadowRadius: 10,
-      elevation: 10,
-    }}
-  >
-    {state.routes.map((route, index) => {
-      const { options } = descriptors[route.key];
-      const isFocused = state.index === index;
-      const label = options.tabBarLabel || route.name;
-      const icon = options.tabBarIcon
-        ? options.tabBarIcon({
-            color: isFocused ? activeColor : "#9CA3AF",
-            size: RFValue(24),
-            focused: isFocused,
-          })
-        : null;
+const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
+  const insets = useSafeAreaInsets();
 
-      const onPress = () => {
-        const event = navigation.emit({ type: "tabPress", target: route.key });
-        if (!isFocused && !event.defaultPrevented) {
-          navigation.navigate(route.name);
-        }
-      };
-
-      return (
-        <TouchableOpacity
-          key={route.key}
-          onPress={onPress}
-          style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
-        >
-          {icon}
-          <Text
-            style={{
-              fontSize: RFValue(10),
-              fontWeight: isFocused ? "700" : "500",
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        backgroundColor: "#FFFFFF",
+        borderTopWidth: 1,
+        borderTopColor: "#F3F4F6",
+        paddingBottom:
+          Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 8,
+        paddingTop: RFValue(8),
+        shadowColor: "#000",
+        shadowOpacity: 0.08,
+        shadowOffset: { width: 0, height: -4 },
+        shadowRadius: 10,
+        elevation: 10,
+      }}
+    >
+      {state.routes.map((route, index) => {
+        const { options } = descriptors[route.key];
+        const isFocused = state.index === index;
+        const label = options.tabBarLabel || route.name;
+        const icon = options.tabBarIcon
+          ? options.tabBarIcon({
               color: isFocused ? activeColor : "#9CA3AF",
-              marginTop: RFValue(2),
-            }}
+              size: RFValue(24),
+              focused: isFocused,
+            })
+          : null;
+
+        const onPress = () => {
+          const event = navigation.emit({ type: "tabPress", target: route.key });
+          if (!isFocused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
+          }
+        };
+
+        return (
+          <TouchableOpacity
+            key={route.key}
+            onPress={onPress}
+            style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
           >
-            {label}
-          </Text>
-        </TouchableOpacity>
-      );
-    })}
-  </View>
-);
+            {icon}
+            <Text
+              style={{
+                fontSize: RFValue(10),
+                fontWeight: isFocused ? "700" : "500",
+                color: isFocused ? activeColor : "#9CA3AF",
+                marginTop: RFValue(2),
+              }}
+            >
+              {label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+};
 
 // --- CUSTOM TAB NAVIGATOR ---
 const CustomTabNavigator = ({ routes, activeColor }) => {
@@ -14107,12 +14860,14 @@ const WoundDetailScreen = ({
       </View>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : null}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
+        keyboardVerticalOffset={0}
       >
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: RFValue(100) }}
+          keyboardShouldPersistTaps="handled"
         >
           <View style={{ padding: RFValue(16) }}>
             <View
@@ -15568,19 +16323,21 @@ export default function App() {
     const trimmed = text.trim();
     let createdMessage = null;
     try {
+      const encrypted = await encryptChatText(trimmed);
       createdMessage = await pb.collection("messages").create({
         conversation: conversationId,
         sender: currentUser.id,
         kind: "text",
-        text: trimmed,
+        text: encrypted,
       });
     } catch (error) {
       try {
+        const encrypted = await encryptChatText(trimmed);
         createdMessage = await pb.collection("messages").create({
           conversation: conversationId,
           sender: currentUser.id,
           kind: "text",
-          message: trimmed,
+          message: encrypted,
         });
       } catch (fallbackError) {
         console.log("sendConversationMessage error:", fallbackError);
@@ -15632,6 +16389,7 @@ export default function App() {
     const name = asset.fileName || `photo_${Date.now()}.${safeExt}`;
 
     let createdMessage = null;
+    const encryptedCaption = caption ? await encryptChatText(caption) : "";
     try {
       const formData = new FormData();
       formData.append("conversation", conversationId);
@@ -16054,6 +16812,16 @@ export default function App() {
       setAppointments([]);
       return;
     }
+
+    if (
+      userRole === "doctor" &&
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
+      setWounds([]);
+      setMedOrders([]);
+      setConversations([]);
+      return;
+    }
     refreshAllData(currentUser, userRole);
   }, [currentUser?.id, userRole, patientProfile?.status]);
 
@@ -16178,25 +16946,27 @@ export default function App() {
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, changeTheme, themeKey }}>
-      <AppDataContext.Provider value={appDataValue}>
-        <AppContent
-          userRole={userRole}
-          setUserRole={setUserRole}
-          currentUser={currentUser}
-          setCurrentUser={setCurrentUser}
-          patientProfile={patientProfile}
-          setPatientProfile={setPatientProfile}
-          theme={theme}
-          wounds={wounds}
-          setWounds={setWounds}
-          medOrders={medOrders}
-          setMedOrders={setMedOrders}
-          patients={patients}
-          setPatients={setPatients}
-        />
-      </AppDataContext.Provider>
-    </ThemeContext.Provider>
+    <SafeAreaProvider>
+      <ThemeContext.Provider value={{ theme, changeTheme, themeKey }}>
+        <AppDataContext.Provider value={appDataValue}>
+          <AppContent
+            userRole={userRole}
+            setUserRole={setUserRole}
+            currentUser={currentUser}
+            setCurrentUser={setCurrentUser}
+            patientProfile={patientProfile}
+            setPatientProfile={setPatientProfile}
+            theme={theme}
+            wounds={wounds}
+            setWounds={setWounds}
+            medOrders={medOrders}
+            setMedOrders={setMedOrders}
+            patients={patients}
+            setPatients={setPatients}
+          />
+        </AppDataContext.Provider>
+      </ThemeContext.Provider>
+    </SafeAreaProvider>
   );
 }
 
@@ -16235,6 +17005,24 @@ const AppContent = ({
     setDoctorSelectedWoundId(null);
     setPatientSelectedWoundId(null);
     setPatientShowNewWound(false);
+  };
+
+  const refreshDoctorStatus = async () => {
+    try {
+      // Refresh the auth model (in case role or record fields changed).
+      if (pb.authStore.isValid) {
+        await pb.collection("UsersAuth").authRefresh();
+      }
+      if (pb.authStore.record) {
+        setCurrentUser(pb.authStore.record);
+      }
+      if (currentUser?.role === "doctor" || userRole === "doctor") {
+        const profile = await ensureRoleProfile("doctor");
+        setPatientProfile(profile || null);
+      }
+    } catch (error) {
+      console.log("refreshDoctorStatus error:", error);
+    }
   };
 
   const refreshDoctorStatus = async () => {

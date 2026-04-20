@@ -20,6 +20,7 @@
       "bundleIdentifier": "com.anonymous.myapp"
     },
     "android": {
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -74,6 +75,9 @@
       "eas": {
         "projectId": "b8650bf1-168b-4698-820e-16a085b5f543"
       }
+      // "eas": {
+      //  "projectId": "be3cb489-0b31-4f16-893d-8bc7bb2e889d"
+      // }
     },
     "owner": "kokoshiro"
   }
