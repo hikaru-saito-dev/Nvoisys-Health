@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "myapp",
-    "slug": "myapp",
+    "name": "Nvoisys Health",
+    "slug": "nvoisys-health",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -72,9 +72,9 @@
       "pbAppointmentsCollection": "appointments",
       "pbAppointmentDoctorIsProfile": false,
       "eas": {
-        "projectId": "65822fa5-8f65-4ac2-b4e6-4887102c7ee3"
+        "projectId": "b8650bf1-168b-4698-820e-16a085b5f543"
       }
     },
-    "owner": "dartmouthospava"
+    "owner": "kokoshiro"
   }
 }

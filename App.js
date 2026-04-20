@@ -37,6 +37,7 @@ import {
 } from "react-native";
 import {
   ensureRoleProfile,
+  formatPocketBaseClientError,
   loginWithEmail,
   logoutUser,
   pb,
@@ -496,11 +497,85 @@ const buildConversationTitle = (woundRecord) => {
     : description;
 };
 
+const prescriptionLineName = (entry) => {
+  if (entry == null) return "";
+  if (typeof entry === "string") return String(entry).trim();
+  return String(entry?.name || entry?.medicine || "").trim();
+};
+
+const normalizePrescriptionLineFromUnknown = (entry) => {
+  if (entry == null) return null;
+  if (typeof entry === "string") {
+    const name = entry.trim();
+    if (!name) return null;
+    return {
+      name,
+      dosage: "",
+      whenToTake: "",
+      duration: "",
+    };
+  }
+  if (typeof entry === "object") {
+    const name = prescriptionLineName(entry);
+    if (!name) return null;
+    return {
+      name,
+      dosage: String(entry.dosage || entry.amount || "").trim(),
+      whenToTake: String(
+        entry.whenToTake ||
+          entry.frequency ||
+          entry.schedule ||
+          entry.timing ||
+          "",
+      ).trim(),
+      duration: String(
+        entry.duration || entry.howLong || entry.days || "",
+      ).trim(),
+    };
+  }
+  return null;
+};
+
+const normalizeOrderItemsList = (record) => {
+  const raw = record?.items;
+  let list = [];
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    list = [raw];
+  } else if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) list = parsed;
+      else list = [raw];
+    } catch {
+      list = [raw];
+    }
+  }
+  return list
+    .map((item) => normalizePrescriptionLineFromUnknown(item))
+    .filter(Boolean);
+};
+
+const formatPrescriptionSummaryText = (lines, diagnosis) => {
+  const head = diagnosis ? `Condition: ${diagnosis}\n` : "";
+  const body = safeArray(lines)
+    .map((l) => {
+      const bits = [l.name];
+      if (l.dosage) bits.push(`Dose: ${l.dosage}`);
+      if (l.whenToTake) bits.push(`When: ${l.whenToTake}`);
+      if (l.duration) bits.push(`Duration: ${l.duration}`);
+      return bits.join(" · ");
+    })
+    .join("\n");
+  return `${head}${body}`.trim();
+};
+
 const sumMedicationAmount = (items) =>
-  safeArray(items).reduce(
-    (total, name) => total + (MEDICINE_PRICE_MAP[name] || 100),
-    0,
-  );
+  safeArray(items).reduce((total, entry) => {
+    const name = prescriptionLineName(entry);
+    return total + (MEDICINE_PRICE_MAP[name] || 100);
+  }, 0);
 
 const resolveMessageText = (record) => {
   const value =
@@ -706,21 +781,75 @@ const mapAppointmentRecord = (record) => {
   };
 };
 
-const mapOrderRecord = (record) => ({
-  id: record.id,
-  wound: record.wound || null,
-  conversation: record.conversation || null,
-  patient: record.expand?.patient?.name || "Patient",
-  patientId: record.patient || null,
-  itemsList: safeArray(record.items),
-  items: safeArray(record.items).join(", ") || "Medicine items",
-  totalAmount: Number(record.totalAmount || 0),
-  total: formatCurrency(record.totalAmount || 0),
-  status: humanizeOrderStatus(record.status),
-  statusKey: normalizeOrderStatus(record.status),
-  time: formatTimeValue(record.updated || record.created),
-  raw: record,
-});
+const mapOrderRecord = (record) => {
+  const itemsList = normalizeOrderItemsList(record);
+  const diagnosis = String(
+    record?.diagnosis ||
+      record?.disease ||
+      record?.condition ||
+      record?.condition_for ||
+      record?.prescription_for ||
+      "",
+  ).trim();
+  const woundExpand = record.expand?.wound;
+  const doctorUser =
+    woundExpand?.expand?.doctor ||
+    woundExpand?.expand?.assigned_doctor ||
+    record.expand?.doctor;
+  const doctorName =
+    doctorUser?.name ||
+    doctorUser?.full_name ||
+    record.expand?.doctor_profile?.expand?.user?.name ||
+    "Attending physician";
+  const itemsText =
+    itemsList.length > 0
+      ? formatPrescriptionSummaryText(itemsList, diagnosis)
+      : safeArray(record.items).join(", ") || "Medicine items";
+  return {
+    id: record.id,
+    wound: record.wound || null,
+    conversation: record.conversation || null,
+    patient: record.expand?.patient?.name || "Patient",
+    patientId: record.patient || null,
+    itemsList,
+    items: itemsText,
+    diagnosis: diagnosis || null,
+    doctorName,
+    totalAmount: Number(record.totalAmount || 0),
+    total: formatCurrency(record.totalAmount || 0),
+    status: humanizeOrderStatus(record.status),
+    statusKey: normalizeOrderStatus(record.status),
+    time: formatTimeValue(record.updated || record.created),
+    raw: record,
+  };
+};
+
+const mapPrescriptionRecord = (record) => {
+  const itemsList = normalizeOrderItemsList(record);
+  const diagnosis = String(record?.notes || "").trim();
+  const doctorUser = record?.expand?.doctor;
+  const doctorName =
+    doctorUser?.name || doctorUser?.full_name || "Attending physician";
+  const itemsText =
+    itemsList.length > 0
+      ? formatPrescriptionSummaryText(itemsList, diagnosis)
+      : "Medicine items";
+  return {
+    id: record.id,
+    wound: record.wound || null,
+    conversation: record.conversation || null,
+    patientId: record.patient || null,
+    patientName: record.expand?.patient?.name || "Patient",
+    doctorId: record.doctor || null,
+    itemsList,
+    items: itemsText,
+    diagnosis: diagnosis || null,
+    doctorName,
+    date: formatDateValue(record.created),
+    time: formatTimeValue(record.created),
+    raw: record,
+  };
+};
 
 const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
   const members = safeArray(record.expand?.members);
@@ -8162,13 +8291,16 @@ const AuthScreen = ({ onLogin }) => {
       const pbFieldErrors =
         error?.data?.data || error?.response?.data?.data || null;
       const passwordError = pbFieldErrors?.password?.message;
+      const detailed = formatPocketBaseClientError(error);
 
       if (authMode === "signup" && password.trim().length < 8) {
         setAuthError("Password must be at least 8 characters.");
       } else if (passwordError) {
         setAuthError(passwordError);
+      } else if (detailed) {
+        setAuthError(detailed);
       } else {
-        setAuthError(error?.message || "Authentication failed");
+        setAuthError("Authentication failed");
       }
     } finally {
       setAuthLoading(false);
@@ -11680,7 +11812,40 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
 };
 
 const PrescriptionScreen = ({ onBack }) => {
-  const prescriptions = []; // Empty state for real data later
+  const { prescriptions: prescriptionRecords } = useAppData();
+
+  const cards = React.useMemo(() => {
+    const list = [...(prescriptionRecords || [])].sort(
+      (a, b) =>
+        new Date(b.raw?.created || 0).getTime() -
+        new Date(a.raw?.created || 0).getTime(),
+    );
+    return list.map((o) => {
+      const lines =
+        o.itemsList?.length > 0
+          ? o.itemsList
+          : [
+              {
+                name: o.items || "Prescription",
+                dosage: "",
+                whenToTake: "",
+                duration: "",
+              },
+            ];
+      return {
+        id: o.id,
+        doctor: o.doctorName || "Doctor",
+        date: o.date || formatDateValue(o.raw?.created),
+        diagnosis: o.diagnosis,
+        medicines: lines.map((m) => ({
+          name: m.name,
+          dosage: m.dosage || "—",
+          whenToTake: m.whenToTake || "—",
+          duration: m.duration || "—",
+        })),
+      };
+    });
+  }, [prescriptionRecords]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
@@ -11733,98 +11898,119 @@ const PrescriptionScreen = ({ onBack }) => {
           paddingBottom: RFValue(100),
         }}
       >
-        {prescriptions.map((rx) => (
-          <View
-            key={rx.id}
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderRadius: RFValue(18),
-              marginBottom: RFValue(16),
-              shadowColor: "#000",
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-              overflow: "hidden",
-            }}
-          >
-            {/* Prescription Header */}
-            <View
+        {cards.length === 0 ? (
+          <View style={{ alignItems: "center", paddingVertical: RFValue(40) }}>
+            <Ionicons
+              name="document-text-outline"
+              size={RFValue(48)}
+              color="#D1D5DB"
+            />
+            <Text
               style={{
-                backgroundColor: "#4338CA",
-                padding: RFValue(16),
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
+                marginTop: RFValue(12),
+                fontSize: RFValue(14),
+                color: "#6B7280",
+                textAlign: "center",
               }}
             >
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
+              No prescriptions yet. When your doctor sends one, it will appear
+              here.
+            </Text>
+          </View>
+        ) : (
+          cards.map((rx) => (
+            <View
+              key={rx.id}
+              style={{
+                backgroundColor: "#FFFFFF",
+                borderRadius: RFValue(18),
+                marginBottom: RFValue(16),
+                shadowColor: "#000",
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
+                overflow: "hidden",
+              }}
+            >
+              <View
+                style={{
+                  backgroundColor: "#4338CA",
+                  padding: RFValue(16),
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <View
+                    style={{
+                      width: RFValue(36),
+                      height: RFValue(36),
+                      borderRadius: RFValue(10),
+                      backgroundColor: "rgba(255,255,255,0.2)",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginRight: RFValue(10),
+                    }}
+                  >
+                    <Ionicons name="medical" size={RFValue(18)} color="#FFF" />
+                  </View>
+                  <View>
+                    <Text
+                      style={{
+                        color: "#FFF",
+                        fontSize: RFValue(14),
+                        fontWeight: "700",
+                      }}
+                    >
+                      {rx.doctor}
+                    </Text>
+                    <Text style={{ color: "#C7D2FE", fontSize: RFValue(11) }}>
+                      {rx.date}
+                    </Text>
+                  </View>
+                </View>
                 <View
                   style={{
-                    width: RFValue(36),
-                    height: RFValue(36),
-                    borderRadius: RFValue(10),
                     backgroundColor: "rgba(255,255,255,0.2)",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    marginRight: RFValue(10),
+                    paddingHorizontal: RFValue(10),
+                    paddingVertical: RFValue(4),
+                    borderRadius: RFValue(8),
                   }}
                 >
-                  <Ionicons name="medical" size={RFValue(18)} color="#FFF" />
-                </View>
-                <View>
                   <Text
                     style={{
                       color: "#FFF",
-                      fontSize: RFValue(14),
+                      fontSize: RFValue(10),
                       fontWeight: "700",
                     }}
                   >
-                    {rx.doctor}
-                  </Text>
-                  <Text style={{ color: "#C7D2FE", fontSize: RFValue(11) }}>
-                    {rx.date}
+                    Rx #{rx.id}
                   </Text>
                 </View>
               </View>
-              <View
-                style={{
-                  backgroundColor: "rgba(255,255,255,0.2)",
-                  paddingHorizontal: RFValue(10),
-                  paddingVertical: RFValue(4),
-                  borderRadius: RFValue(8),
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#FFF",
-                    fontSize: RFValue(10),
-                    fontWeight: "700",
-                  }}
-                >
-                  Rx #{rx.id}
-                </Text>
-              </View>
-            </View>
 
-            {/* Medicines */}
-            {rx.medicines.map((med, idx) => (
-              <View
-                key={idx}
-                style={{
-                  padding: RFValue(16),
-                  borderBottomWidth: idx < rx.medicines.length - 1 ? 1 : 0,
-                  borderBottomColor: "#F3F4F6",
-                }}
-              >
+              {rx.diagnosis ? (
                 <View
                   style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: RFValue(8),
+                    paddingHorizontal: RFValue(16),
+                    paddingVertical: RFValue(12),
+                    backgroundColor: "#F5F3FF",
+                    borderBottomWidth: 1,
+                    borderBottomColor: "#E9D5FF",
                   }}
                 >
+                  <Text
+                    style={{
+                      fontSize: RFValue(11),
+                      fontWeight: "700",
+                      color: "#6D28D9",
+                      marginBottom: 4,
+                    }}
+                  >
+                    Condition / diagnosis
+                  </Text>
                   <Text
                     style={{
                       fontSize: RFValue(14),
@@ -11832,111 +12018,143 @@ const PrescriptionScreen = ({ onBack }) => {
                       color: "#1E1B4B",
                     }}
                   >
-                    {med.name}
+                    {rx.diagnosis}
                   </Text>
+                </View>
+              ) : null}
+
+              {rx.medicines.map((med, idx) => (
+                <View
+                  key={`${rx.id}-${idx}`}
+                  style={{
+                    padding: RFValue(16),
+                    borderBottomWidth: idx < rx.medicines.length - 1 ? 1 : 0,
+                    borderBottomColor: "#F3F4F6",
+                  }}
+                >
                   <View
                     style={{
-                      backgroundColor: "#EEF2FF",
-                      paddingHorizontal: RFValue(8),
-                      paddingVertical: RFValue(4),
-                      borderRadius: RFValue(8),
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      marginBottom: RFValue(8),
                     }}
                   >
                     <Text
                       style={{
-                        color: "#4338CA",
-                        fontSize: RFValue(10),
+                        fontSize: RFValue(14),
                         fontWeight: "700",
+                        color: "#1E1B4B",
+                        flex: 1,
+                        marginRight: RFValue(8),
                       }}
                     >
-                      {med.dosage}
+                      {med.name}
                     </Text>
+                    <View
+                      style={{
+                        backgroundColor: "#EEF2FF",
+                        paddingHorizontal: RFValue(8),
+                        paddingVertical: RFValue(4),
+                        borderRadius: RFValue(8),
+                        maxWidth: "45%",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: "#4338CA",
+                          fontSize: RFValue(10),
+                          fontWeight: "700",
+                        }}
+                        numberOfLines={3}
+                      >
+                        {med.dosage}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
-                    Duration: {med.duration}
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: "#6B7280",
+                      marginBottom: RFValue(4),
+                    }}
+                  >
+                    When to take: {med.whenToTake}
                   </Text>
                   <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
-                    {med.instructions}
+                    How long: {med.duration}
                   </Text>
                 </View>
-              </View>
-            ))}
+              ))}
 
-            {/* Actions */}
-            <View
-              style={{
-                padding: RFValue(12),
-                flexDirection: "row",
-                borderTopWidth: 1,
-                borderTopColor: "#F3F4F6",
-              }}
-            >
-              <TouchableOpacity
+              <View
                 style={{
-                  flex: 1,
+                  padding: RFValue(12),
                   flexDirection: "row",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  paddingVertical: RFValue(10),
-                  backgroundColor: "#ECFDF5",
-                  borderRadius: RFValue(10),
-                  marginRight: RFValue(8),
+                  borderTopWidth: 1,
+                  borderTopColor: "#F3F4F6",
                 }}
               >
-                <Ionicons
-                  name="download-outline"
-                  size={RFValue(16)}
-                  color="#059669"
-                  style={{ marginRight: RFValue(6) }}
-                />
-                <Text
+                <TouchableOpacity
                   style={{
-                    color: "#059669",
-                    fontSize: RFValue(12),
-                    fontWeight: "700",
+                    flex: 1,
+                    flexDirection: "row",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    paddingVertical: RFValue(10),
+                    backgroundColor: "#ECFDF5",
+                    borderRadius: RFValue(10),
+                    marginRight: RFValue(8),
                   }}
                 >
-                  Download
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{
-                  flex: 1,
-                  flexDirection: "row",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  paddingVertical: RFValue(10),
-                  backgroundColor: "#EEF2FF",
-                  borderRadius: RFValue(10),
-                  marginLeft: RFValue(8),
-                }}
-              >
-                <Ionicons
-                  name="cart-outline"
-                  size={RFValue(16)}
-                  color="#4338CA"
-                  style={{ marginRight: RFValue(6) }}
-                />
-                <Text
+                  <Ionicons
+                    name="download-outline"
+                    size={RFValue(16)}
+                    color="#059669"
+                    style={{ marginRight: RFValue(6) }}
+                  />
+                  <Text
+                    style={{
+                      color: "#059669",
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                    }}
+                  >
+                    Download
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={{
-                    color: "#4338CA",
-                    fontSize: RFValue(12),
-                    fontWeight: "700",
+                    flex: 1,
+                    flexDirection: "row",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    paddingVertical: RFValue(10),
+                    backgroundColor: "#EEF2FF",
+                    borderRadius: RFValue(10),
+                    marginLeft: RFValue(8),
                   }}
                 >
-                  Order Meds
-                </Text>
-              </TouchableOpacity>
+                  <Ionicons
+                    name="cart-outline"
+                    size={RFValue(16)}
+                    color="#4338CA"
+                    style={{ marginRight: RFValue(6) }}
+                  />
+                  <Text
+                    style={{
+                      color: "#4338CA",
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                    }}
+                  >
+                    Order Meds
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        ))}
+          ))
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -14125,20 +14343,30 @@ const WoundDetailScreen = ({
       {showPrescriptionModal && (
         <PrescriptionModal
           onBack={() => setShowPrescriptionModal(false)}
-          onConfirm={async (selectedMeds) => {
-            await prescribeForWound(localWound, selectedMeds);
-            await refreshAllData();
-            const conversation = await ensureConversationForWound(localWound, {
-              includeCurrentUser: true,
-            });
-            const messages = await loadConversationMessages(conversation.id);
-            setChat(messages);
-            setLocalWound((prev) => ({
-              ...prev,
-              status: "Medication Prescribed",
-              conversation: conversation.id,
-            }));
-            setShowPrescriptionModal(false);
+          onConfirm={async (prescription) => {
+            try {
+              await prescribeForWound(localWound, prescription);
+              const conversation = await ensureConversationForWound(
+                localWound,
+                {
+                  includeCurrentUser: true,
+                },
+              );
+              const messages = await loadConversationMessages(conversation.id);
+              setChat(messages);
+              setLocalWound((prev) => ({
+                ...prev,
+                status: "Medication Prescribed",
+                conversation: conversation.id,
+              }));
+              setShowPrescriptionModal(false);
+            } catch (err) {
+              Alert.alert(
+                "Prescription not sent",
+                err?.message ||
+                  "Unable to save the prescription. Try again or check PocketBase rules.",
+              );
+            }
           }}
         />
       )}
@@ -14146,55 +14374,75 @@ const WoundDetailScreen = ({
   );
 };
 
+const newPrescriptionLine = () => ({
+  key: `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+  name: "",
+  dosage: "",
+  whenToTake: "",
+  duration: "",
+});
+
 const PrescriptionModal = ({ onBack, onConfirm }) => {
-  const [selectedMeds, setSelectedMeds] = useState([]);
-  const [aiAnalysis, setAiAnalysis] = useState(null);
+  const [disease, setDisease] = useState("");
+  const [lines, setLines] = useState(() => [newPrescriptionLine()]);
 
-  const meds = [
-    { name: "Amoxicillin", type: "Antibiotic", risk: "Low" },
-    {
-      name: "Warfarin",
-      type: "Blood Thinner",
-      risk: "High",
-      warning: "High risk of bleeding. Use with caution.",
-    },
-    {
-      name: "Ibuprofen",
-      type: "NSAID",
-      risk: "Medium",
-      warning: "May cause stomach irritation.",
-    },
-    { name: "Neosporin", type: "Ointment", risk: "Low" },
-  ];
-
-  const toggleMed = (med) => {
-    let newMeds = [];
-    if (selectedMeds.includes(med.name)) {
-      newMeds = selectedMeds.filter((m) => m !== med.name);
-    } else {
-      newMeds = [...selectedMeds, med.name];
-    }
-    setSelectedMeds(newMeds);
-
-    // Simulate AI Analysis
-    const hasHighRisk = meds.filter(
-      (m) => newMeds.includes(m.name) && m.risk === "High",
+  const updateLine = (key, field, value) => {
+    setLines((prev) =>
+      prev.map((row) => (row.key === key ? { ...row, [field]: value } : row)),
     );
-    if (hasHighRisk.length > 0) {
-      setAiAnalysis({
-        status: "Warning",
-        message:
-          "AI Review: High risk interaction found! Warfarin increases bleeding risk for this patient profile.",
-      });
-    } else if (newMeds.length > 0) {
-      setAiAnalysis({
-        status: "Clear",
-        message:
-          "AI Review: No significant side effects detected for these medicines.",
-      });
-    } else {
-      setAiAnalysis(null);
+  };
+
+  const addLine = () => setLines((prev) => [...prev, newPrescriptionLine()]);
+
+  const removeLine = (key) => {
+    setLines((prev) =>
+      prev.length <= 1 ? prev : prev.filter((r) => r.key !== key),
+    );
+  };
+
+  const handleConfirm = () => {
+    const d = disease.trim();
+    if (!d) {
+      Alert.alert(
+        "Missing condition",
+        "Enter the disease or diagnosis this prescription is for.",
+      );
+      return;
     }
+    const normalized = lines
+      .map((l) => ({
+        name: l.name.trim(),
+        dosage: l.dosage.trim(),
+        whenToTake: l.whenToTake.trim(),
+        duration: l.duration.trim(),
+      }))
+      .filter((l) => l.name);
+    if (!normalized.length) {
+      Alert.alert(
+        "Add medicine",
+        "Enter at least one medicine name before sending.",
+      );
+      return;
+    }
+    onConfirm({ disease: d, lines: normalized });
+  };
+
+  const inputStyle = {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: RFValue(10),
+    paddingHorizontal: RFValue(12),
+    paddingVertical: Platform.OS === "ios" ? RFValue(10) : RFValue(8),
+    fontSize: RFValue(14),
+    color: "#1E1B4B",
+    backgroundColor: "#F9FAFB",
+  };
+
+  const labelStyle = {
+    fontSize: RFValue(11),
+    fontWeight: "700",
+    color: "#6B7280",
+    marginBottom: RFValue(6),
   };
 
   return (
@@ -14215,7 +14463,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
           borderTopLeftRadius: RFValue(24),
           borderTopRightRadius: RFValue(24),
           padding: RFValue(24),
-          maxHeight: "90%",
+          maxHeight: "92%",
         }}
       >
         <View
@@ -14223,7 +14471,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
             flexDirection: "row",
             justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: RFValue(20),
+            marginBottom: RFValue(16),
           }}
         >
           <Text
@@ -14233,163 +14481,141 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
               color: "#1E1B4B",
             }}
           >
-            Prescribe Medicine
+            Send prescription
           </Text>
           <TouchableOpacity onPress={onBack}>
             <Ionicons name="close" size={RFValue(28)} color="#1E1B4B" />
           </TouchableOpacity>
         </View>
 
-        <Text
-          style={{
-            fontSize: RFValue(14),
-            fontWeight: "700",
-            color: "#6B7280",
-            marginBottom: RFValue(12),
-          }}
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          style={{ maxHeight: RFValue(440) }}
         >
-          Available Medicines
-        </Text>
-        <ScrollView style={{ maxHeight: RFValue(300) }}>
-          {meds.map((m, i) => (
-            <TouchableOpacity
-              key={i}
-              onPress={() => toggleMed(m)}
+          <Text style={labelStyle}>Condition / diagnosis (required)</Text>
+          <TextInput
+            style={[inputStyle, { marginBottom: RFValue(16) }]}
+            placeholder="e.g. Post-operative wound infection"
+            placeholderTextColor="#9CA3AF"
+            value={disease}
+            onChangeText={setDisease}
+          />
+
+          {lines.map((line, index) => (
+            <View
+              key={line.key}
               style={{
-                flexDirection: "row",
-                alignItems: "center",
+                marginBottom: RFValue(14),
                 padding: RFValue(14),
-                backgroundColor: selectedMeds.includes(m.name)
-                  ? "#EEF2FF"
-                  : "#F9FAFB",
-                borderRadius: RFValue(12),
-                marginBottom: RFValue(8),
+                borderRadius: RFValue(14),
+                backgroundColor: "#F9FAFB",
                 borderWidth: 1,
-                borderColor: selectedMeds.includes(m.name)
-                  ? "#4338CA"
-                  : "#E5E7EB",
+                borderColor: "#E5E7EB",
               }}
             >
-              <Ionicons
-                name={
-                  selectedMeds.includes(m.name) ? "checkbox" : "square-outline"
-                }
-                size={24}
-                color={selectedMeds.includes(m.name) ? "#4338CA" : "#9CA3AF"}
-              />
-              <View style={{ marginLeft: RFValue(12), flex: 1 }}>
-                <Text
-                  style={{
-                    fontSize: RFValue(15),
-                    fontWeight: "700",
-                    color: "#1E1B4B",
-                  }}
-                >
-                  {m.name}
-                </Text>
-                <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
-                  {m.type}
-                </Text>
-              </View>
               <View
                 style={{
-                  backgroundColor:
-                    m.risk === "High"
-                      ? "#FEE2E2"
-                      : m.risk === "Medium"
-                        ? "#FEF3C7"
-                        : "#DCFCE7",
-                  paddingHorizontal: RFValue(8),
-                  paddingVertical: RFValue(2),
-                  borderRadius: 8,
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: RFValue(10),
                 }}
               >
                 <Text
                   style={{
-                    fontSize: RFValue(10),
-                    color:
-                      m.risk === "High"
-                        ? "#DC2626"
-                        : m.risk === "Medium"
-                          ? "#D97706"
-                          : "#166534",
-                    fontWeight: "700",
+                    fontSize: RFValue(13),
+                    fontWeight: "800",
+                    color: "#374151",
                   }}
                 >
-                  {m.risk} Risk
+                  Medicine {index + 1}
                 </Text>
+                {lines.length > 1 ? (
+                  <TouchableOpacity onPress={() => removeLine(line.key)}>
+                    <Text style={{ fontSize: RFValue(12), color: "#DC2626" }}>
+                      Remove
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
 
-        {aiAnalysis && (
-          <View
+              <Text style={labelStyle}>Medicine name</Text>
+              <TextInput
+                style={[inputStyle, { marginBottom: RFValue(10) }]}
+                placeholder="e.g. Amoxicillin"
+                placeholderTextColor="#9CA3AF"
+                value={line.name}
+                onChangeText={(t) => updateLine(line.key, "name", t)}
+              />
+
+              <Text style={labelStyle}>How much to take</Text>
+              <TextInput
+                style={[inputStyle, { marginBottom: RFValue(10) }]}
+                placeholder="e.g. 500 mg, 1 tablet"
+                placeholderTextColor="#9CA3AF"
+                value={line.dosage}
+                onChangeText={(t) => updateLine(line.key, "dosage", t)}
+              />
+
+              <Text style={labelStyle}>When to take</Text>
+              <TextInput
+                style={[inputStyle, { marginBottom: RFValue(10) }]}
+                placeholder="e.g. Twice daily after meals"
+                placeholderTextColor="#9CA3AF"
+                value={line.whenToTake}
+                onChangeText={(t) => updateLine(line.key, "whenToTake", t)}
+              />
+
+              <Text style={labelStyle}>How long to take</Text>
+              <TextInput
+                style={inputStyle}
+                placeholder="e.g. 7 days"
+                placeholderTextColor="#9CA3AF"
+                value={line.duration}
+                onChangeText={(t) => updateLine(line.key, "duration", t)}
+              />
+            </View>
+          ))}
+
+          <TouchableOpacity
+            onPress={addLine}
             style={{
-              backgroundColor:
-                aiAnalysis.status === "Warning" ? "#FEF2F2" : "#F0FDF4",
-              padding: RFValue(16),
-              borderRadius: RFValue(14),
-              marginTop: RFValue(16),
-              borderWidth: 1,
-              borderColor:
-                aiAnalysis.status === "Warning" ? "#F87171" : "#4ADE80",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              paddingVertical: RFValue(12),
+              marginBottom: RFValue(8),
             }}
           >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(4),
-              }}
-            >
-              <Ionicons
-                name={
-                  aiAnalysis.status === "Warning"
-                    ? "warning"
-                    : "shield-checkmark"
-                }
-                size={RFValue(18)}
-                color={aiAnalysis.status === "Warning" ? "#DC2626" : "#059669"}
-              />
-              <Text
-                style={{
-                  fontSize: RFValue(14),
-                  fontWeight: "800",
-                  color:
-                    aiAnalysis.status === "Warning" ? "#DC2626" : "#059669",
-                  marginLeft: 6,
-                }}
-              >
-                AI Safety Review
-              </Text>
-            </View>
+            <Ionicons name="add-circle-outline" size={22} color="#4338CA" />
             <Text
               style={{
-                fontSize: RFValue(12),
-                color: aiAnalysis.status === "Warning" ? "#991B1B" : "#065F46",
+                marginLeft: 8,
+                fontSize: RFValue(14),
+                fontWeight: "700",
+                color: "#4338CA",
               }}
             >
-              {aiAnalysis.message}
+              Add another medicine
             </Text>
-          </View>
-        )}
+          </TouchableOpacity>
+        </ScrollView>
 
         <TouchableOpacity
-          onPress={() => onConfirm(selectedMeds)}
-          disabled={selectedMeds.length === 0}
+          onPress={handleConfirm}
           style={{
-            backgroundColor: selectedMeds.length === 0 ? "#9CA3AF" : "#4338CA",
+            backgroundColor: "#4338CA",
             borderRadius: RFValue(14),
             paddingVertical: RFValue(16),
             alignItems: "center",
-            marginTop: RFValue(20),
+            marginTop: RFValue(12),
           }}
         >
           <Text
             style={{ color: "#FFF", fontWeight: "700", fontSize: RFValue(16) }}
           >
-            Confirm Prescription
+            Send to patient
           </Text>
         </TouchableOpacity>
       </View>
@@ -14830,6 +15056,7 @@ export default function App() {
   const [dataError, setDataError] = useState("");
   const [wounds, setWounds] = useState([]);
   const [medOrders, setMedOrders] = useState([]);
+  const [prescriptions, setPrescriptions] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [patients, setPatients] = useState([
@@ -14934,6 +15161,7 @@ export default function App() {
     if (!activeUser || !activeRole) {
       setWounds([]);
       setMedOrders([]);
+      setPrescriptions([]);
       setConversations([]);
       setAppointments([]);
       return;
@@ -14953,7 +15181,7 @@ export default function App() {
           pb.collection("orders").getFullList({
             requestKey: null,
             sort: "-updated,-created",
-            expand: "patient,conversation,wound",
+            expand: "patient,conversation,wound.doctor",
           }),
           pb.collection("conversations").getFullList({
             requestKey: null,
@@ -14961,6 +15189,17 @@ export default function App() {
             expand: "members,linkedWound",
           }),
         ]);
+
+      let rxRecords = [];
+      try {
+        rxRecords = await pb.collection("prescriptions").getFullList({
+          requestKey: null,
+          sort: "-created",
+          expand: "patient,doctor,wound,conversation",
+        });
+      } catch (rxFetchErr) {
+        console.log("prescriptions fetch skipped:", rxFetchErr?.message);
+      }
 
       let appointmentRecords = [];
       const appointmentExpand = PB_APPOINTMENT_DOCTOR_IS_PROFILE
@@ -14990,6 +15229,7 @@ export default function App() {
 
       const allWounds = woundRecords.map(mapWoundRecord);
       const allOrders = orderRecords.map(mapOrderRecord);
+      const allPrescriptions = (rxRecords || []).map(mapPrescriptionRecord);
       const memberConversations = conversationRecords.filter((record) =>
         safeArray(record.members).includes(activeUser.id),
       );
@@ -15007,6 +15247,9 @@ export default function App() {
         setMedOrders(
           allOrders.filter((record) => record.patientId === activeUser.id),
         );
+        setPrescriptions(
+          allPrescriptions.filter((r) => r.patientId === activeUser.id),
+        );
         setAppointments(
           appointmentRecords
             .filter((record) => record.patient === activeUser.id)
@@ -15015,6 +15258,9 @@ export default function App() {
       } else if (activeRole === "doctor") {
         setWounds(allWounds);
         setMedOrders(allOrders);
+        setPrescriptions(
+          allPrescriptions.filter((r) => r.doctorId === activeUser.id),
+        );
         setAppointments(
           appointmentRecords
             .filter((record) => record.doctor === activeUser.id)
@@ -15023,6 +15269,7 @@ export default function App() {
       } else if (activeRole === "pharmacy") {
         setWounds(allWounds.filter((record) => record.hasPharmacy));
         setMedOrders(allOrders);
+        setPrescriptions([]);
         setAppointments([]);
       }
 
@@ -15032,6 +15279,7 @@ export default function App() {
       setDataError(error?.message || "Unable to load app data");
       setWounds([]);
       setMedOrders([]);
+      setPrescriptions([]);
       setConversations([]);
       setAppointments([]);
     } finally {
@@ -15460,10 +15708,38 @@ export default function App() {
     await refreshAllData();
   };
 
-  const prescribeForWound = async (woundLike, selectedMeds = []) => {
+  const prescribeForWound = async (woundLike, prescriptionInput) => {
     const woundId = woundLike?.id || woundLike?.raw?.id;
     if (!woundId) {
       throw new Error("Wound not found");
+    }
+
+    let prescription = prescriptionInput;
+    if (Array.isArray(prescriptionInput)) {
+      prescription = {
+        disease:
+          String(woundLike?.description || "")
+            .trim()
+            .slice(0, 120) || "As documented in wound report",
+        lines: prescriptionInput.map((name) => ({
+          name: String(name || "").trim(),
+          dosage: "As directed",
+          whenToTake: "",
+          duration: "",
+        })),
+      };
+    }
+
+    const lines = safeArray(prescription?.lines)
+      .map((line) => normalizePrescriptionLineFromUnknown(line))
+      .filter(Boolean);
+    if (!lines.length) {
+      throw new Error("Add at least one medicine with a name.");
+    }
+
+    const disease = String(prescription?.disease || "").trim();
+    if (!disease) {
+      throw new Error("Enter the condition or diagnosis this prescription is for.");
     }
 
     const conversation = await ensureConversationForWound(woundLike, {
@@ -15478,20 +15754,7 @@ export default function App() {
       );
     }
 
-    await pb.collection("wounds").update(woundId, {
-      status: "medication_prescribed",
-      hasPharmacy: pharmacyUsers.length > 0,
-      conversation: conversation.id,
-    });
-
-    const orderPayload = {
-      conversation: conversation.id,
-      wound: woundId,
-      patient: woundLike?.patientId || woundLike?.patient,
-      items: selectedMeds,
-      totalAmount: sumMedicationAmount(selectedMeds),
-      status: "pending",
-    };
+    const patientId = woundLike?.patientId || woundLike?.patient;
 
     let existingOrder = null;
     try {
@@ -15504,16 +15767,105 @@ export default function App() {
       existingOrder = null;
     }
 
-    if (existingOrder) {
-      await pb.collection("orders").update(existingOrder.id, orderPayload);
-    } else {
-      await pb.collection("orders").create(orderPayload);
+    const orderPayloadBase = {
+      conversation: conversation.id,
+      wound: woundId,
+      patient: patientId,
+      totalAmount: sumMedicationAmount(lines),
+      status: "pending",
+    };
+
+    const persistOrder = async (payload) => {
+      if (existingOrder) {
+        await pb.collection("orders").update(existingOrder.id, payload);
+      } else {
+        await pb.collection("orders").create(payload);
+      }
+    };
+
+    try {
+      await persistOrder({
+        ...orderPayloadBase,
+        items: lines,
+        diagnosis: disease,
+      });
+    } catch (structuredError) {
+      console.log("prescribe structured order error:", structuredError);
+      const legacyItems = lines.map((l) =>
+        [l.name, l.dosage, l.whenToTake, l.duration].filter(Boolean).join(" | "),
+      );
+      try {
+        await persistOrder({
+          ...orderPayloadBase,
+          items: legacyItems,
+        });
+      } catch (legacyError) {
+        console.log("prescribe legacy order error:", legacyError);
+        throw legacyError;
+      }
     }
+
+    try {
+      await pb.collection("wounds").update(woundId, {
+        status: "medication_prescribed",
+        hasPharmacy: pharmacyUsers.length > 0,
+        conversation: conversation.id,
+        diagnosis: disease,
+      });
+    } catch (woundExtraError) {
+      console.log("wound diagnosis field skipped:", woundExtraError?.message);
+      await pb.collection("wounds").update(woundId, {
+        status: "medication_prescribed",
+        hasPharmacy: pharmacyUsers.length > 0,
+        conversation: conversation.id,
+      });
+    }
+
+    try {
+      let existingRx = null;
+      try {
+        const rxList = await pb.collection("prescriptions").getFullList({
+          requestKey: null,
+          filter: `wound="${woundId}"`,
+        });
+        existingRx = (rxList || [])[0] || null;
+      } catch (rxQueryErr) {
+        console.log("prescriptions query error:", rxQueryErr?.message);
+      }
+      const rxPayload = {
+        patient: patientId,
+        doctor: currentUser.id,
+        wound: woundId,
+        conversation: conversation.id,
+        items: lines,
+        notes: disease,
+      };
+      if (existingRx) {
+        await pb.collection("prescriptions").update(existingRx.id, rxPayload);
+      } else {
+        await pb.collection("prescriptions").create(rxPayload);
+      }
+    } catch (rxSaveErr) {
+      console.log("prescriptions collection save error:", rxSaveErr);
+    }
+
+    const medSummary = lines
+      .map((l) => {
+        const parts = [l.name];
+        if (l.dosage) parts.push(l.dosage);
+        if (l.whenToTake) parts.push(l.whenToTake);
+        if (l.duration) parts.push(l.duration);
+        return parts.join(", ");
+      })
+      .join("; ");
+
+    const pharmacyNote =
+      pharmacyUsers.length > 0 ? " Pharmacy order created." : "";
 
     await pb.collection("messages").create({
       conversation: conversation.id,
       kind: "system",
-      text: `Doctor prescribed: ${selectedMeds.join(", ")}. Order sent to pharmacy.`,
+      text: `Prescription sent for "${disease}": ${medSummary}.${pharmacyNote}`,
     });
     await pb.collection("conversations").update(conversation.id, {
       lastMessageAt: new Date().toISOString(),
@@ -15608,6 +15960,13 @@ export default function App() {
         await pb.collection("orders").subscribe("*", () => {
           refreshAllData(currentUser, userRole);
         });
+        try {
+          await pb.collection("prescriptions").subscribe("*", () => {
+            refreshAllData(currentUser, userRole);
+          });
+        } catch (rxSubErr) {
+          console.log("prescriptions subscribe skipped:", rxSubErr?.message);
+        }
         await pb.collection("conversations").subscribe("*", () => {
           refreshAllData(currentUser, userRole);
         });
@@ -15630,6 +15989,11 @@ export default function App() {
     return () => {
       pb.collection("wounds").unsubscribe("*");
       pb.collection("orders").unsubscribe("*");
+      try {
+        pb.collection("prescriptions").unsubscribe("*");
+      } catch (e) {
+        /* ignore */
+      }
       pb.collection("conversations").unsubscribe("*");
       try {
         pb.collection(PB_APPOINTMENTS_COLLECTION).unsubscribe("*");
@@ -15669,6 +16033,7 @@ export default function App() {
     patientProfile,
     wounds,
     medOrders,
+    prescriptions,
     conversations,
     appointments,
     dataLoading,
