@@ -9,6 +9,24 @@ import {
 } from "tweetnacl-util";
 
 const ENCRYPTED_PREFIX = "ENCv1|";
+const ENCRYPTED_IMAGE_PREFIX = "ENCIMGv1|";
+
+function normalizeMimeType(value) {
+  const candidate = String(value || "").trim().toLowerCase();
+  if (!candidate) return "image/jpeg";
+  if (!candidate.startsWith("image/")) return "image/jpeg";
+  return candidate;
+}
+
+function normalizeBase64(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (!raw.startsWith("data:")) return raw;
+
+  const separatorIndex = raw.indexOf(",");
+  if (separatorIndex === -1) return "";
+  return raw.slice(separatorIndex + 1).trim();
+}
 
 function resolveKeyB64() {
   // Best practice: inject at build time (EAS/CI) via EXPO_PUBLIC_* env var.
@@ -79,5 +97,103 @@ export function decryptChatText(maybeEncrypted) {
     return encodeUTF8(opened);
   } catch {
     return "[Encrypted message]";
+  }
+}
+
+export async function encryptChatImagePayload({
+  base64Data,
+  mimeType = "image/jpeg",
+  caption = "",
+}) {
+  const normalizedBase64 = normalizeBase64(base64Data);
+  if (!normalizedBase64) {
+    throw new Error("Missing image data");
+  }
+
+  const normalizedMime = normalizeMimeType(mimeType);
+  const plainCaption =
+    typeof caption === "string" ? caption : String(caption || "");
+
+  if (!KEY_BYTES) {
+    return `${ENCRYPTED_IMAGE_PREFIX}${JSON.stringify({
+      plain: true,
+      mimeType: normalizedMime,
+      dataB64: normalizedBase64,
+      caption: plainCaption,
+    })}`;
+  }
+
+  const nonce = await Crypto.getRandomBytesAsync(nacl.secretbox.nonceLength);
+  const imageBytes = decodeBase64(normalizedBase64);
+  const boxed = nacl.secretbox(imageBytes, nonce, KEY_BYTES);
+  const encryptedCaption = plainCaption
+    ? await encryptChatText(plainCaption)
+    : "";
+
+  return `${ENCRYPTED_IMAGE_PREFIX}${JSON.stringify({
+    plain: false,
+    mimeType: normalizedMime,
+    nonceB64: encodeBase64(nonce),
+    boxedB64: encodeBase64(boxed),
+    caption: encryptedCaption,
+  })}`;
+}
+
+export function decryptChatImagePayload(maybePayload) {
+  if (typeof maybePayload !== "string") return null;
+  if (!maybePayload.startsWith(ENCRYPTED_IMAGE_PREFIX)) return null;
+
+  const rawPayload = maybePayload.slice(ENCRYPTED_IMAGE_PREFIX.length);
+  if (!rawPayload) return null;
+
+  try {
+    const parsed = JSON.parse(rawPayload);
+    const mimeType = normalizeMimeType(parsed?.mimeType);
+    const caption =
+      typeof parsed?.caption === "string"
+        ? decryptChatText(parsed.caption)
+        : "";
+
+    if (parsed?.plain) {
+      const plainB64 = normalizeBase64(parsed?.dataB64);
+      if (!plainB64) {
+        return { dataUri: null, caption, error: "[Image unavailable]" };
+      }
+      return {
+        dataUri: `data:${mimeType};base64,${plainB64}`,
+        caption,
+      };
+    }
+
+    if (!KEY_BYTES) {
+      return {
+        dataUri: null,
+        caption,
+        error: "[Encrypted image]",
+      };
+    }
+
+    const nonce = decodeBase64(parsed?.nonceB64 || "");
+    const boxed = decodeBase64(parsed?.boxedB64 || "");
+    const opened = nacl.secretbox.open(boxed, nonce, KEY_BYTES);
+
+    if (!opened) {
+      return {
+        dataUri: null,
+        caption,
+        error: "[Encrypted image]",
+      };
+    }
+
+    return {
+      dataUri: `data:${mimeType};base64,${encodeBase64(opened)}`,
+      caption,
+    };
+  } catch {
+    return {
+      dataUri: null,
+      caption: "",
+      error: "[Encrypted image]",
+    };
   }
 }

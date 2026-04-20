@@ -41,7 +41,12 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import { decryptChatText, encryptChatText } from "./chatCrypto";
+import {
+  decryptChatImagePayload,
+  decryptChatText,
+  encryptChatImagePayload,
+  encryptChatText,
+} from "./chatCrypto";
 import {
   pb,
   restoreAuth,
@@ -260,6 +265,8 @@ const MEDICINE_PRICE_MAP = {
   Neosporin: 150,
 };
 
+const CALL_DIRECTORY_ALLOWED_ROLES = ["doctor", "pharmacy", "staff", "admin"];
+
 const DEFAULT_WOUND_SYSTEM_MESSAGE =
   "Wound report submitted. Doctor will review shortly.";
 
@@ -438,16 +445,32 @@ const resolveMessageImageFiles = (record) => {
 const mapMessageRecord = (record) => {
   const senderRecord = record?.expand?.sender;
   const isSystem = record?.kind === "system";
+  const rawText = resolveMessageText(record);
+  const imagePayload = decryptChatImagePayload(rawText);
+  const imagePayloadUrl = imagePayload?.dataUri || null;
   const imageFiles = resolveMessageImageFiles(record);
-  const imageUrls = imageFiles.filter(Boolean).map((fileName) => {
-    const token = pb?.authStore?.token;
-    const options = token ? { token } : undefined;
-    return pb.files.getUrl(record, fileName, options);
-  });
+  const imageUrls = imageFiles
+    .filter(Boolean)
+    .map((fileName) => {
+      const token = pb?.authStore?.token;
+      const options = token ? { token } : undefined;
+      return pb.files.getUrl(record, fileName, options);
+    });
+
+  if (imagePayloadUrl) {
+    imageUrls.unshift(imagePayloadUrl);
+  }
+
+  const mappedKind =
+    record.kind || (imagePayloadUrl || imagePayload?.error ? "image" : "text");
+  const mappedText = imagePayload
+    ? imagePayload.caption || imagePayload.error || ""
+    : decryptChatText(rawText);
+
   return {
     id: record.id,
-    text: decryptChatText(resolveMessageText(record)),
-    kind: record.kind || "text",
+    text: mappedText,
+    kind: mappedKind,
     imageUrls,
     imageUrl: imageUrls[0] || null,
     senderId: record.sender || null,
@@ -2470,19 +2493,41 @@ const CallScreen = ({
   const [status, setStatus] = useState("Connecting...");
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(callType === "video");
+  const localStreamRef = useRef(null);
+  const pendingIceCandidatesRef = useRef([]);
   const pcRef = useRef(null);
   const wsRef = useRef(null);
   const roleRef = useRef("receiver");
 
-  const cleanupStreams = () => {
-    if (localStream) {
-      localStream.getTracks().forEach((track) => track.stop());
+  const cleanupStreams = (resetState = true) => {
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
     }
-    setLocalStream(null);
-    setRemoteStream(null);
+    localStreamRef.current = null;
+    pendingIceCandidatesRef.current = [];
+    if (resetState) {
+      setLocalStream(null);
+      setRemoteStream(null);
+    }
   };
 
-  const closeConnection = () => {
+  const flushPendingIceCandidates = async (peerConnection) => {
+    if (!peerConnection?.remoteDescription) return;
+    const pendingCandidates = pendingIceCandidatesRef.current;
+    if (!pendingCandidates.length) return;
+
+    pendingIceCandidatesRef.current = [];
+    for (const candidate of pendingCandidates) {
+      try {
+        await peerConnection.addIceCandidate(candidate);
+      } catch (error) {
+        console.log("flushPendingIceCandidates error:", error);
+      }
+    }
+  };
+
+  const closeConnection = (resetState = true) => {
     if (wsRef.current) {
       try {
         wsRef.current.send(JSON.stringify({ type: "leave" }));
@@ -2496,7 +2541,7 @@ const CallScreen = ({
       pcRef.current.close();
       pcRef.current = null;
     }
-    cleanupStreams();
+    cleanupStreams(resetState);
   };
 
   const handleClose = () => {
@@ -2511,10 +2556,12 @@ const CallScreen = ({
       try {
         const stream = await mediaDevices.getUserMedia({
           audio: true,
-          video: isVideoEnabled,
+          video: callType === "video",
         });
         if (!mounted) return;
+        localStreamRef.current = stream;
         setLocalStream(stream);
+        setIsVideoEnabled(callType === "video");
 
         const peerConnection = new RTCPeerConnection({
           iceServers: ICE_SERVERS,
@@ -2535,7 +2582,11 @@ const CallScreen = ({
         };
 
         peerConnection.onicecandidate = (event) => {
-          if (event.candidate && wsRef.current) {
+          if (
+            event.candidate &&
+            wsRef.current &&
+            wsRef.current.readyState === WebSocket.OPEN
+          ) {
             wsRef.current.send(
               JSON.stringify({ type: "ice", candidate: event.candidate }),
             );
@@ -2574,35 +2625,56 @@ const CallScreen = ({
           }
 
           if (payload.type === "ready" && roleRef.current === "initiator") {
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            ws.send(JSON.stringify({ type: "offer", sdp: offer }));
-            setStatus("Calling...");
+            try {
+              const offer = await peerConnection.createOffer();
+              await peerConnection.setLocalDescription(offer);
+              ws.send(JSON.stringify({ type: "offer", sdp: offer }));
+              setStatus("Calling...");
+            } catch (error) {
+              console.log("Call offer error:", error);
+            }
             return;
           }
 
           if (payload.type === "offer") {
-            await peerConnection.setRemoteDescription(
-              new RTCSessionDescription(payload.sdp),
-            );
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            ws.send(JSON.stringify({ type: "answer", sdp: answer }));
-            setStatus("Connecting...");
+            try {
+              await peerConnection.setRemoteDescription(
+                new RTCSessionDescription(payload.sdp),
+              );
+              await flushPendingIceCandidates(peerConnection);
+              const answer = await peerConnection.createAnswer();
+              await peerConnection.setLocalDescription(answer);
+              ws.send(JSON.stringify({ type: "answer", sdp: answer }));
+              setStatus("Connecting...");
+            } catch (error) {
+              console.log("Call answer generation error:", error);
+            }
             return;
           }
 
           if (payload.type === "answer") {
-            await peerConnection.setRemoteDescription(
-              new RTCSessionDescription(payload.sdp),
-            );
+            try {
+              await peerConnection.setRemoteDescription(
+                new RTCSessionDescription(payload.sdp),
+              );
+              await flushPendingIceCandidates(peerConnection);
+            } catch (error) {
+              console.log("Call remote answer error:", error);
+            }
             return;
           }
 
           if (payload.type === "ice" && payload.candidate) {
-            await peerConnection.addIceCandidate(
-              new RTCIceCandidate(payload.candidate),
-            );
+            try {
+              const candidate = new RTCIceCandidate(payload.candidate);
+              if (peerConnection.remoteDescription) {
+                await peerConnection.addIceCandidate(candidate);
+              } else {
+                pendingIceCandidatesRef.current.push(candidate);
+              }
+            } catch (error) {
+              console.log("Call ICE candidate error:", error);
+            }
             return;
           }
 
@@ -2628,9 +2700,9 @@ const CallScreen = ({
 
     return () => {
       mounted = false;
-      closeConnection();
+      closeConnection(false);
     };
-  }, [conversationId]);
+  }, [callType, conversationId, currentUserId]);
 
   const toggleMute = () => {
     if (!localStream) return;
@@ -2844,9 +2916,10 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
   const [directoryError, setDirectoryError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState(() => {
-    if (userRole === "doctor") return "patient";
-    if (userRole === "patient") return "doctor";
-    return "all";
+    if (CALL_DIRECTORY_ALLOWED_ROLES.includes(userRole)) {
+      return userRole;
+    }
+    return "doctor";
   });
   const [activeCall, setActiveCall] = useState(null);
   const [startingCallId, setStartingCallId] = useState(null);
@@ -2859,7 +2932,9 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
       try {
         setDirectoryLoading(true);
         setDirectoryError("");
-        const records = await loadDirectoryContacts();
+        const records = await loadDirectoryContacts({
+          roles: CALL_DIRECTORY_ALLOWED_ROLES,
+        });
         if (mounted) {
           setDirectoryContacts(records);
         }
@@ -2898,6 +2973,9 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
       };
     })
     .filter((contact) => {
+      if (!CALL_DIRECTORY_ALLOWED_ROLES.includes(contact.role)) {
+        return false;
+      }
       if (roleFilter && roleFilter !== "all" && contact.role !== roleFilter) {
         return false;
       }
@@ -3072,8 +3150,9 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
             {[
               filterChip("all", "All"),
               filterChip("doctor", "Doctors"),
-              filterChip("patient", "Patients"),
               filterChip("pharmacy", "Pharmacies"),
+              filterChip("staff", "Staff"),
+              filterChip("admin", "Admins"),
             ]}
           </ScrollView>
         </View>
@@ -3321,7 +3400,7 @@ const PatientChatScreen = () => {
     return () => {
       mounted = false;
     };
-  }, [currentUserId]);
+  }, [currentUserId, loadDirectoryContacts]);
 
   const loadSelectedMessages = async (conversationId) => {
     if (!conversationId) return;
@@ -3424,6 +3503,7 @@ const PatientChatScreen = () => {
       const pickerOptions = {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.85,
+        base64: true,
       };
 
       const result =
@@ -13817,49 +13897,50 @@ export default function App() {
       }
       return "image/jpeg";
     })();
-    const extFromMime = mimeType.split("/")[1] || "jpg";
-    const normalizedExtFromMime = String(extFromMime).toLowerCase();
-    const safeExt =
-      normalizedExtFromMime === "png" ||
-      normalizedExtFromMime === "webp" ||
-      normalizedExtFromMime === "heic" ||
-      normalizedExtFromMime === "heif"
-        ? normalizedExtFromMime
-        : "jpg";
-    const name = asset.fileName || `photo_${Date.now()}.${safeExt}`;
+
+    const base64Data =
+      typeof asset?.base64 === "string" && asset.base64.trim().length > 0
+        ? asset.base64.trim()
+        : "";
+
+    if (!base64Data) {
+      throw new Error(
+        "Could not process the image securely. Please try selecting it again.",
+      );
+    }
+
+    const encryptedImagePayload = await encryptChatImagePayload({
+      base64Data,
+      mimeType,
+      caption,
+    });
 
     let createdMessage = null;
-    const encryptedCaption = caption ? await encryptChatText(caption) : "";
     try {
-      const formData = new FormData();
-      formData.append("conversation", conversationId);
-      formData.append("sender", currentUser.id);
-      formData.append("kind", "image");
-      formData.append("text", encryptedCaption || "");
-      // PocketBase schema uses a multiple file field named `file`.
-      // (Older schemas may use `image`, so we fallback below.)
-      formData.append("file", { uri, name, type: mimeType });
-      createdMessage = await pb.collection("messages").create(formData);
+      createdMessage = await pb.collection("messages").create({
+        conversation: conversationId,
+        sender: currentUser.id,
+        kind: "image",
+        text: encryptedImagePayload,
+      });
     } catch (error) {
-      // Fallback if the PocketBase `kind` field is a Select that does not include "image".
+      // Fallback for schemas that use `message` instead of `text`.
       try {
-        const formData = new FormData();
-        formData.append("conversation", conversationId);
-        formData.append("sender", currentUser.id);
-        formData.append("kind", "text");
-        formData.append("text", encryptedCaption || "");
-        formData.append("file", { uri, name, type: mimeType });
-        createdMessage = await pb.collection("messages").create(formData);
+        createdMessage = await pb.collection("messages").create({
+          conversation: conversationId,
+          sender: currentUser.id,
+          kind: "image",
+          message: encryptedImagePayload,
+        });
       } catch (fallbackError) {
-        // Backwards-compatibility fallback for older PocketBase schemas.
+        // Fallback if the `kind` field does not include "image".
         try {
-          const formData = new FormData();
-          formData.append("conversation", conversationId);
-          formData.append("sender", currentUser.id);
-          formData.append("kind", "text");
-          formData.append("text", encryptedCaption || "");
-          formData.append("image", { uri, name, type: mimeType });
-          createdMessage = await pb.collection("messages").create(formData);
+          createdMessage = await pb.collection("messages").create({
+            conversation: conversationId,
+            sender: currentUser.id,
+            kind: "text",
+            text: encryptedImagePayload,
+          });
         } catch (legacyError) {
           console.log("sendConversationImage error:", error);
           console.log("sendConversationImage fallback error:", fallbackError);
