@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nvoisys health - Revolutionizing Healthcare</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Navbar -->
+    <nav class="navbar hidden" id="navbar">
+        <div class="container nav-content">
+            <div class="logo">
+                <img src="assests/logo.png" alt="Nvoisys health"
+                    style="height: 48px; width: auto; max-width: 100%;">
+            </div>
+            <ul class="nav-links">
+                <li><a href="#problem">The Problem</a></li>
+                <li><a href="#solution">What We Do</a></li>
+                <li><a href="#features">How It Works</a></li>
+                <li><a href="#moat">Why Us</a></li>
+            </ul>
+            <div class="nav-actions">
+                <button class="icon-btn" id="theme-toggle" aria-label="Toggle Theme">
+                    <i class="fa-solid fa-moon"></i>
+                </button>
+                <a href="auth.html" class="nav-signin">Sign In</a>
+                <a href="#beta" class="btn btn-primary">Join Beta</a>
+                <button class="mobile-menu-btn" id="mobile-menu-btn">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
+            </div>
+        </div>
+        <div class="mobile-menu" id="mobile-menu">
+            <ul>
+                <li><a href="auth.html" class="mobile-signin">Sign In</a></li>
+                <li><a href="#problem">The Problem</a></li>
+                <li><a href="#solution">What We Do</a></li>
+                <li><a href="#features">How It Works</a></li>
+                <li><a href="#moat">Why Us</a></li>
+                <li><a href="#beta" class="btn btn-primary w-full">Join Beta</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <header class="hero" id="home">
+        <div class="container hero-container">
+            <div class="hero-content">
+                <div class="badge animate-fade-in-up">
+                    <span class="pulse-dot"></span>
+                    <span>Dedicated Doctor + 24/7 AI Lifesaving Protection</span>
+                </div>
+                <h1 class="animate-fade-in-up stagger-1">
+                    Healthcare Should Protect Lives — <br>
+                    <span class="gradient-text">Not Make People Wait For Help.</span>
+                </h1>
+                <p class="animate-fade-in-up stagger-2">
+                    Nvoisys health is building a new healthcare system where families are protected 24/7 by AI and a dedicated doctor. We don’t just build technology — we solve real healthcare problems before they become emergencies.
+                </p>
+                <p class="animate-fade-in-up stagger-2 mt-2" style="font-size: 0.95rem; opacity: 0.9;">
+                    Millions of people suffer because healthcare systems are slow, fragmented, and reactive. Nvoisys health changes that by combining continuous AI monitoring, lifelong doctor relationships, and instant emergency response into a single platform designed to keep families safe.
+                </p>
+                <div class="hero-buttons animate-fade-in-up stagger-3">
+                    <a href="#beta" class="btn btn-primary btn-lg">Activate AI Protection</a>
+                    <a href="#video" class="btn btn-outline btn-lg"><i class="fa-solid fa-play"></i> Watch AI Demo</a>
+                </div>
+
+                <div class="stats-row animate-fade-in-up stagger-4">
+                    <div class="stat-item">
+                        <div class="stat-icon"><i class="fa-solid fa-bolt"></i></div>
+                        <div class="stat-text">
+                            <strong>Instant</strong>
+                            <span>Emergency Response</span>
+                        </div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-icon"><i class="fa-solid fa-user-doctor"></i></div>
+                        <div class="stat-text">
+                            <strong>Lifelong</strong>
+                            <span>Dedicated Doctor</span>
+                        </div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-icon"><i class="fa-solid fa-microchip"></i></div>
+                        <div class="stat-text">
+                            <strong>24/7</strong>
+                            <span>Continuous AI Monitoring</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="hero-visual animate-float">
+                <div class="glass-card main-dashboard">
+                    <div class="dash-header">
+                        <div class="user-info">
+                            <div class="avatar">👨🏽</div>
+                            <div>
+                                <h4>Rahul Kumar</h4>
+                                <span>Protection Active <i class="fa-solid fa-shield-halved text-green"></i></span>
+                            </div>
+                        </div>
+                        <div class="risk-score">
+                            <svg viewBox="0 0 36 36" class="circular-chart green">
+                                <path class="circle-bg"
+                                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                <path class="circle" stroke-dasharray="95, 100"
+                                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                <text x="18" y="20.35" class="percentage">95%</text>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <div class="dash-alert warning pulse">
+                        <div class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <div class="alert-content">
+                            <strong>AI Prediction Alert</strong>
+                            <p>80% probability of blood sugar spike in 48 hours. Pre-emptive protocol initiated by AI. Dr. Sharma notified.</p>
+                        </div>
+                    </div>
+
+                    <div class="dash-doctor">
+                        <h4>Your Dedicated Doctor</h4>
+                        <div class="doc-card">
+                            <img src="https://i.pravatar.cc/150?img=47" alt="Doctor" class="doc-img">
+                            <div class="doc-info">
+                                <strong>Dr. Meera Sharma</strong>
+                                <span>Cardiologist & General Phys.</span>
+                            </div>
+                            <button class="icon-btn call-btn"><i class="fa-solid fa-video"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="dash-vitals">
+                        <div class="vital-box">
+                            <i class="fa-solid fa-heart-pulse text-red"></i>
+                            <strong>72 bpm</strong>
+                            <span>Heart Rate</span>
+                        </div>
+                        <div class="vital-box">
+                            <i class="fa-solid fa-droplet text-blue"></i>
+                            <strong>98 mg/dL</strong>
+                            <span>Blood Sugar</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floating Elements -->
+                <div class="floating-badge badge-1 animate-float-delayed">
+                    <i class="fa-solid fa-helicopter"></i>
+                    <span>Emergency Services Connected</span>
+                </div>
+                <div class="floating-badge badge-2 animate-float-slow">
+                    <i class="fa-solid fa-shield-heart"></i>
+                    <span>Family Monitored</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Animated Background Elements -->
+        <div class="bg-blur shape-1"></div>
+        <div class="bg-blur shape-2"></div>
+        <div class="bg-blur shape-3"></div>
+    </header>
+
+    <!-- The Problem Section (With Integrated 3D Earth) -->
+    <section class="section dark-section" id="problem" style="overflow: hidden;">
+        <!-- 3D Earth Background Specific to this section -->
+        <div id="earth-container"></div>
+        
+        <!-- Section Title -->
+        <div class="problem-title-bar">
+            <h2 style="color: white; text-shadow: 0 2px 20px rgba(0,0,0,0.5); font-family: 'Outfit', sans-serif; font-size: clamp(2rem, 4vw, 3.5rem);">The Problem We Are Solving</h2>
+            <p style="color: rgba(255,255,255,0.7); margin-top: 8px;">Healthcare today is broken for millions of families.</p>
+        </div>
+
+        <!-- SVG Overlay for connecting lines -->
+        <svg id="card-lines-svg" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none;"></svg>
+
+        <!-- Floating cards positioned around the globe -->
+        <div id="card-wait-times" class="floating-card fc-top-left">
+            <div class="fc-icon red"><i class="fa-regular fa-clock"></i></div>
+            <h4>Wait Times</h4>
+            <p>People wait hours to see a doctor.</p>
+        </div>
+
+        <div id="card-cost" class="floating-card fc-top-right">
+            <div class="fc-icon orange"><i class="fa-solid fa-indian-rupee-sign"></i></div>
+            <h4>Cost Crisis</h4>
+            <p>Medical costs are unpredictable.</p>
+        </div>
+
+        <div id="card-fragmented" class="floating-card fc-bottom-left">
+            <div class="fc-icon yellow"><i class="fa-solid fa-arrows-rotate"></i></div>
+            <h4>Fragmented Care</h4>
+            <p>Patients repeat tests because doctors change every visit.</p>
+        </div>
+
+        <div id="card-emergency" class="floating-card fc-bottom-right">
+            <div class="fc-icon red"><i class="fa-solid fa-truck-medical"></i></div>
+            <h4>Emergency Failures</h4>
+            <p>Emergencies often become fatal simply because help arrives too late.</p>
+        </div>
+
+        <div class="problem-footer-bar text-center" style="position: absolute; bottom: 5%; left: 0; width: 100%; z-index: 4; padding: 0 1rem;">
+            <p style="color: white; opacity: 0.9; max-width: 600px; margin: 0 auto;">For families with elderly parents or chronic diseases, the system is even harder. Healthcare today is built to treat sickness after it happens. But what people actually need is continuous protection and prevention. Nvoisys health exists to solve this problem.</p>
+            <h3 style="color: white; margin-top: 15px;">Our mission is simple: Protect lives before problems become emergencies.</h3>
+        </div>
+    </section>
+
+    <!-- What We Do -->
+    <section class="section" id="solution">
+        <div class="container">
+            <div class="split-layout align-center">
+                <div class="split-content reveal left">
+                    <h2>What Nvoisys health Does.</h2>
+                    <p>Nvoisys health is not just another healthcare app. It is a complete health protection system designed to support people every day, not only when they are sick. The platform combines three powerful elements:</p>
+
+                    <ul class="feature-list mt-3">
+                        <li>
+                            <div class="list-icon"><i class="fa-solid fa-user-doctor"></i></div>
+                            <div>
+                                <strong>Dedicated Doctor</strong>
+                                <span>Every user is connected with a doctor who understands their health history and provides consistent, personalized care.</span>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="list-icon"><i class="fa-solid fa-microchip"></i></div>
+                            <div>
+                                <strong>AI Health Guardian</strong>
+                                <span>Our AI system continuously monitors health data, activity, diet, and risk factors to detect problems early and warn users before they become serious.</span>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="list-icon"><i class="fa-solid fa-truck-medical"></i></div>
+                            <div>
+                                <strong>Instant Emergency Support</strong>
+                                <span>When a critical situation is detected, Nvoisys health instantly alerts doctors, family members, and emergency services so help arrives as quickly as possible.</span>
+                            </div>
+                        </li>
+                    </ul>
+                    <p class="mt-3" style="font-weight: 500;">Together, these elements create a system that moves healthcare from reactive treatment to proactive protection.</p>
+                </div>
+                <div class="split-image reveal right">
+                    <div class="solution-visual">
+                        <div class="core-node center pulse-glow"
+                            style="background: white; border: 4px solid var(--primary);">
+                            <img src="assests/logo.png" alt="Nvoisys health"
+                                style="width: 80%; height: auto; border-radius: 50%;">
+                        </div>
+                        <div class="orbit-container">
+                            <div class="orbit-node node-1"><i class="fa-solid fa-user-doctor"></i></div>
+                            <div class="orbit-node node-2"><i class="fa-solid fa-brain"></i></div>
+                            <div class="orbit-node node-3"><i class="fa-solid fa-truck-medical"></i></div>
+                        </div>
+                        <div class="orbit-ring"></div>
+                        <div class="orbit-ring large"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section / How It Works -->
+    <section class="section bg-light" id="features">
+        <div class="container">
+            <div class="section-header text-center reveal">
+                <h2 class="section-title">How Nvoisys health Works</h2>
+                <p class="section-subtitle">Nvoisys health is designed to be simple for anyone to use. Instead of waiting for illness, the system works every day to prevent health problems before they escalate.</p>
+            </div>
+
+            <div class="grid feature-grid">
+                <!-- Feature 1 -->
+                <div class="feature-card reveal delay-1 hover-lift">
+                    <div class="fc-icon"><i class="fa-solid fa-mobile-screen"></i></div>
+                    <h3>1. App & Connection</h3>
+                    <p>The user downloads the Nvoisys health app. A dedicated doctor is assigned to them.</p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="feature-card reveal delay-2 hover-lift">
+                    <div class="fc-icon"><i class="fa-solid fa-chart-line"></i></div>
+                    <h3>2. Continuous Monitoring</h3>
+                    <p>AI begins monitoring health patterns and lifestyle data, continuously analyzing risks and health changes.</p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="feature-card reveal delay-3 hover-lift">
+                    <div class="fc-icon"><i class="fa-solid fa-bell"></i></div>
+                    <h3>3. Problem Detection</h3>
+                    <p>If a problem is detected, alerts are instantly sent to the dedicated doctor and family members.</p>
+                </div>
+
+                <!-- Feature 4 -->
+                <div class="feature-card reveal delay-4 hover-lift">
+                    <div class="fc-icon"><i class="fa-solid fa-video"></i></div>
+                    <h3>4. Instant Consultation</h3>
+                    <p>The doctor can instantly begin a consultation to address the detected issue immediately.</p>
+                </div>
+
+                <!-- Feature 5 -->
+                <div class="feature-card reveal delay-5 hover-lift">
+                    <div class="fc-icon"><i class="fa-solid fa-handshake-angle"></i></div>
+                    <h3>5. Coordinated Care</h3>
+                    <p>Medicines, tests, and future care are seamlessly coordinated directly through the platform.</p>
+                </div>
+
+                <!-- Feature 6 -->
+                <div class="feature-card reveal delay-6 hover-lift">
+                    <div class="fc-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                    <h3>6. Secure Health Records</h3>
+                    <p>All health records remain safely stored and continuously monitored for a comprehensive health history.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why Us -->
+    <section class="section" id="moat">
+        <div class="container">
+            <div class="section-header reveal">
+                <span class="eyebrow text-primary">Our Advantage</span>
+                <h2>Why Nvoisys health Is Different</h2>
+                <p class="section-subtitle lg">Most health platforms focus on booking appointments. Nvoisys health focuses on protecting lives.</p>
+            </div>
+
+            <div class="moat-container">
+                <div class="moat-item reveal left">
+                    <div class="moat-number">01</div>
+                    <div class="moat-content">
+                        <h3>Lifelong Doctor Relationships</h3>
+                        <p>Users are connected with a doctor who follows their health journey continuously instead of seeing a new doctor every visit.</p>
+                    </div>
+                </div>
+                <div class="moat-item reveal right delay-1">
+                    <div class="moat-number">02</div>
+                    <div class="moat-content">
+                        <h3>Proactive AI Monitoring</h3>
+                        <p>Our AI analyzes health trends and predicts risks so issues can be prevented early.</p>
+                    </div>
+                </div>
+                <div class="moat-item reveal left delay-2">
+                    <div class="moat-number">03</div>
+                    <div class="moat-content">
+                        <h3>Family Health Collaboration</h3>
+                        <p>Families can monitor the health of parents, children, or elderly relatives together seamlessly.</p>
+                    </div>
+                </div>
+                <div class="moat-item highlight reveal right delay-3">
+                    <div class="moat-number">04</div>
+                    <div class="moat-content">
+                        <h3>Integrated Ecosystem & Accessibility</h3>
+                        <ul class="moat-list">
+                            <li><i class="fa-solid fa-network-wired"></i> From consultations to lab tests and medicine delivery, everything is connected in one platform.</li>
+                            <li><i class="fa-solid fa-mobile-retro"></i> Nvoisys health technology works even on older smartphones so healthcare protection is available to everyone.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Vision & Mission -->
+    <section class="section dark-section" id="vision">
+        <div class="container">
+            <div class="section-header text-center reveal">
+                <h2 class="section-title">Our Vision & Mission</h2>
+                <p class="section-subtitle text-light">Nvoisys health aims to transform healthcare from a system that reacts to illness into one that prevents it entirely.</p>
+            </div>
+
+            <div class="grid feature-grid mt-4">
+                <div class="glass-panel p-4 reveal left">
+                    <h3 class="mb-3">The Long-Term Vision</h3>
+                    <ul class="moat-list" style="margin-left: 0;">
+                        <li><i class="fa-solid fa-check text-green"></i> Every person has continuous health monitoring</li>
+                        <li><i class="fa-solid fa-check text-green"></i> Every family has instant medical support</li>
+                        <li><i class="fa-solid fa-check text-green"></i> Every doctor can deliver proactive care</li>
+                        <li><i class="fa-solid fa-check text-green"></i> Every emergency is detected earlier</li>
+                        <li><i class="fa-solid fa-check text-green"></i> Every life has a better chance of being protected</li>
+                    </ul>
+                    <p class="mt-3">We believe technology should not just make healthcare faster. It should make it safer, smarter, and accessible to everyone.</p>
+                </div>
+                <div class="glass-panel p-4 reveal right delay-1">
+                    <h3 class="mb-3">Who We Are Building This For</h3>
+                    <p>Nvoisys health is built for people who want peace of mind about their health and their family’s safety. It is especially valuable for:</p>
+                    <ul class="moat-list" style="margin-left: 0;">
+                        <li><i class="fa-solid fa-users"></i> Families caring for elderly parents</li>
+                        <li><i class="fa-solid fa-heart-crack"></i> People living with chronic diseases</li>
+                        <li><i class="fa-solid fa-user-shield"></i> Individuals who want proactive health monitoring</li>
+                        <li><i class="fa-solid fa-house-medical"></i> Communities with limited access to healthcare services</li>
+                        <li><i class="fa-solid fa-stethoscope"></i> Anyone who wants a doctor who truly understands their health history</li>
+                    </ul>
+                    <p class="mt-3 font-weight-bold">Our goal is to make sure no one faces a health emergency alone.</p>
+                </div>
+            </div>
+            
+            <div class="text-center mt-5 reveal slide-up delay-2">
+                <h3 class="gradient-text mb-2" style="font-size: 2rem;">Our Mission</h3>
+                <p class="lg" style="max-width: 800px; margin: 0 auto; line-height: 1.6;">
+                    Nvoisys health exists for one reason: To protect human lives using technology, intelligence, and compassionate care. 
+                    <br><br>
+                    <strong>We are not just building a company. We are building a healthcare system that ensures people receive help before it is too late.</strong>
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Call to Action -->
+    <section class="section cta-section" id="beta">
+        <div class="container">
+            <div class="cta-box glass-panel reveal">
+                <div class="cta-content">
+                    <h2>Healthcare Should Not Be Reactive. It Should Be Protective.</h2>
+                    <p>Join us in building the future of healthcare where prevention, intelligence, and human care work together to protect every life.</p>
+                    <form class="beta-form" onsubmit="event.preventDefault(); alert('Subscribed to beta!');">
+                        <input type="email" placeholder="Enter your email address" required>
+                        <button type="submit" class="btn btn-primary btn-lg">Secure Early Access</button>
+                    </form>
+                    <p class="small-text mt-2"><i class="fa-solid fa-shield-heart text-green"></i> <strong>Nvoisys health — Healthcare That Never Sleeps.</strong></p>
+                </div>
+                <div class="cta-decoration">
+                    <i class="fa-solid fa-heart-pulse pulse-glow"></i>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <div class="logo">
+                        <img src="assests/logo.png" alt="Nvoisys health"
+                            style="height: 56px; width: auto; max-width: 100%;">
+                    </div>
+                    <p class="mt-2 text-light">Nvoisys health — Healthcare That Never Sleeps.<br> Dedicated Doctor + 24/7 AI Lifesaving Protection.</p>
+                    <div class="social-links mt-3">
+                        <a href="#"><i class="fa-brands fa-twitter"></i></a>
+                        <a href="#"><i class="fa-brands fa-linkedin"></i></a>
+                        <a href="#"><i class="fa-brands fa-instagram"></i></a>
+                    </div>
+                </div>
+
+                <div class="footer-links">
+                    <h4>Company</h4>
+                    <ul>
+                        <li><a href="#vision">Our Vision</a></li>
+                        <li><a href="#moat">Our Advantage</a></li>
+                        <li><a href="#">Careers</a></li>
+                    </ul>
+                </div>
+
+                <div class="footer-links">
+                    <h4>Product</h4>
+                    <ul>
+                        <li><a href="#solution">What We Do</a></li>
+                        <li><a href="#features">How It Works</a></li>
+                        <li><a href="#beta">Join Beta</a></li>
+                    </ul>
+                </div>
+
+                <div class="footer-contact">
+                    <h4>Founder Contact</h4>
+                    <p><strong>Yerramreddy Satya Rohith Reddy</strong></p>
+                    <p>Hyderabad, India</p>
+                    <a href="tel:+919704075688"><i class="fa-solid fa-phone"></i> +91 9704075688</a>
+                    <a href="mailto:rohith1254pan@gmail.com"><i class="fa-solid fa-envelope"></i> rohith1254pan@...</a>
+                </div>
+            </div>
+
+            <div class="footer-bottom">
+                <p>&copy; 2026 Nvoisys health. All rights reserved.</p>
+                <div class="legal-links">
+                    <a href="#">Privacy Policy</a>
+                    <a href="#">Terms of Service</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Background Graphics -->
+    <div class="bg-grid"></div>
+
+    <!-- Scripts -->
+    <!-- Load Three.js and Globe.gl from CDN -->
+    <script src="https://unpkg.com/three"></script>
+    <script src="https://unpkg.com/globe.gl"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
