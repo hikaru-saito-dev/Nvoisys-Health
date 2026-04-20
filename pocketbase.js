@@ -12,19 +12,8 @@ if (!global.EventSource) {
   global.EventSource = EventSource;
 }
 
-const PB_URL = "https://pb.jpoop.in";
-
-// Mobile OAuth2 note:
-// PocketBase's "all-in-one" authWithOAuth2 flow depends on a realtime (SSE)
-// connection staying alive while the user is in the browser. On Android this
-// is often not reliable because the app is backgrounded while Chrome Custom
-// Tabs is open.
-//
-// For Google we use a "manual code exchange" flow with a small HTTPS redirect
-// helper page hosted on the PocketBase domain:
-// - https://vpn.jpoop.in/oauth2.html (served from PocketBase pb_public)
-// That page bounces back into the app via deep link: myapp://oauth2
-const OAUTH2_REDIRECT_URL = `https://vpn.jpoop.in/oauth2.html`;
+const PB_URL = "https://pbs.nvoisyshealth.com";
+const OAUTH2_REDIRECT_URL = `https://nvoisyshealth.com/authredirect`;
 const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
 
 const authStore = new AsyncAuthStore({
@@ -49,10 +38,35 @@ function normalizeRole(role) {
   return role;
 }
 
+function isEmailVerified(user) {
+  return Boolean(user?.verified);
+}
+
+function buildEmailVerificationRequiredError(email = "") {
+  const normalizedEmail = String(email || "").trim();
+  const targetSuffix = normalizedEmail ? ` for ${normalizedEmail}` : "";
+
+  return new Error(
+    `Please verify your email${targetSuffix} before logging in. Use the link sent to your inbox.`,
+  );
+}
+
+function ensureVerifiedAuthUser(email = "") {
+  const user = getAuthUser();
+
+  if (user && !isEmailVerified(user)) {
+    pb.authStore.clear();
+    throw buildEmailVerificationRequiredError(email || user.email || "");
+  }
+
+  return user;
+}
+
 export async function restoreAuth() {
   try {
     if (pb.authStore.isValid) {
       await pb.collection("UsersAuth").authRefresh();
+      ensureVerifiedAuthUser();
     }
   } catch (error) {
     pb.authStore.clear();
@@ -109,37 +123,74 @@ export async function ensureRoleProfile(roleOverride = null) {
   }
 }
 
-export async function signUpWithEmail({ name, email, password, role }) {
+export async function signUpWithEmail({
+  name,
+  email,
+  password,
+  passwordConfirm,
+  role,
+}) {
   normalizeRole(role);
+
+  const normalizedEmail = (email || "").trim().toLowerCase();
+  const normalizedPassword = String(password || "");
+  const normalizedPasswordConfirm = String(
+    passwordConfirm == null ? normalizedPassword : passwordConfirm,
+  );
 
   await pb.collection("UsersAuth").create({
     name: name?.trim() || "",
-    email: email.trim(),
-    password,
-    passwordConfirm: password,
+    email: normalizedEmail,
+    password: normalizedPassword,
+    passwordConfirm: normalizedPasswordConfirm,
     role,
   });
 
+  try {
+    await pb
+      .collection("UsersAuth")
+      .requestVerification(normalizedEmail, { requestKey: null });
+  } catch {
+    throw new Error(
+      "Account created, but we could not send the verification email. Please try logging in to request a new verification link.",
+    );
+  }
+
+  pb.authStore.clear();
+
+  return {
+    email: normalizedEmail,
+    verificationEmailSent: true,
+  };
+}
+
+export async function loginWithEmail({ email, password }) {
+  const normalizedEmail = (email || "").trim().toLowerCase();
+
   const authData = await pb
     .collection("UsersAuth")
-    .authWithPassword(email.trim(), password);
+    .authWithPassword(normalizedEmail, password);
 
-  // defensive fallback for older SDK behavior
   if (!getAuthUser() && authData?.token && authData?.record) {
     pb.authStore.save(authData.token, authData.record);
   }
 
-  const profile = await ensureRoleProfile(role);
-  return getSessionPayload(profile);
-}
+  const user = getAuthUser() || authData?.record || null;
 
-export async function loginWithEmail({ email, password }) {
-  const authData = await pb
-    .collection("UsersAuth")
-    .authWithPassword(email.trim(), password);
+  if (user && !isEmailVerified(user)) {
+    pb.authStore.clear();
 
-  if (!getAuthUser() && authData?.token && authData?.record) {
-    pb.authStore.save(authData.token, authData.record);
+    if (normalizedEmail) {
+      try {
+        await pb
+          .collection("UsersAuth")
+          .requestVerification(normalizedEmail, { requestKey: null });
+      } catch (resendError) {
+        console.log("Verification email resend error:", resendError);
+      }
+    }
+
+    throw buildEmailVerificationRequiredError(normalizedEmail);
   }
 
   const profile = await ensureRoleProfile();
@@ -147,13 +198,14 @@ export async function loginWithEmail({ email, password }) {
 }
 
 export async function requestPasswordReset(email) {
-  const normalizedEmail = (email || "").trim();
+  const normalizedEmail = (email || "").trim().toLowerCase();
 
   if (!normalizedEmail) {
     throw new Error("Please enter your email");
   }
 
-  // Note: PocketBase needs SMTP configured to send the email.
+  // PocketBase needs SMTP configured and template action URL set.
+  // Example action URL: https://nvoisyshealth.com/reset-password?token={TOKEN}
   await pb
     .collection("UsersAuth")
     .requestPasswordReset(normalizedEmail, { requestKey: null });
@@ -185,15 +237,6 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
     let authData;
 
     if (providerName === "google") {
-      // Manual code exchange (recommended on mobile):
-      // 1) Open Google's consent screen with redirect_uri pointing to an HTTPS page.
-      // 2) That page redirects back into the app via deep link (myapp://oauth2).
-      // 3) Exchange the received code via PocketBase authWithOAuth2Code.
-
-      // IMPORTANT:
-      // - Add `https://vpn.jpoop.in/oauth2.html` to Google Console redirect URIs
-      // - Upload `pb_public/oauth2.html` next to your PocketBase executable.
-
       const authUrl = `${provider.authUrl}${OAUTH2_REDIRECT_URL}`;
       console.log("OAuth vendor URL:", authUrl);
 
@@ -263,6 +306,13 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
     }
 
     console.log("OAuth authData:", JSON.stringify(authData, null, 2));
+
+    const user = getAuthUser() || authData?.record || null;
+
+    if (user && !isEmailVerified(user)) {
+      pb.authStore.clear();
+      throw buildEmailVerificationRequiredError(user.email || "");
+    }
 
     const profile = await ensureRoleProfile();
     return getSessionPayload(profile);

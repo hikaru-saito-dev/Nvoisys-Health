@@ -37,7 +37,10 @@ import {
   MaterialCommunityIcons,
   FontAwesome5,
 } from "@expo/vector-icons";
-import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { decryptChatText, encryptChatText } from "./chatCrypto";
 import {
   pb,
@@ -820,7 +823,8 @@ const ResponsiveText = ({
         {
           fontSize,
           lineHeight,
-          fontWeight: weight === "bold" ? "700" : weight === "semi" ? "600" : weight,
+          fontWeight:
+            weight === "bold" ? "700" : weight === "semi" ? "600" : weight,
         },
         style,
       ]}
@@ -832,13 +836,7 @@ const ResponsiveText = ({
 };
 
 // Auto-adjusting button with minimum touch target
-const ResponsiveButton = ({
-  children,
-  onPress,
-  style,
-  disabled,
-  ...props
-}) => {
+const ResponsiveButton = ({ children, onPress, style, disabled, ...props }) => {
   const minTouchTarget = 44;
   const buttonHeight = Math.max(rs(48), minTouchTarget);
 
@@ -1589,7 +1587,9 @@ const PatientHomeScreen = () => {
                   justifyContent: "flex-start",
                 }}
               >
-                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
+                <TouchableOpacity
+                  style={{ alignItems: "center", width: "25%" }}
+                >
                   <View
                     style={{
                       width: RFValue(48),
@@ -1618,7 +1618,9 @@ const PatientHomeScreen = () => {
                     Symptoms
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
+                <TouchableOpacity
+                  style={{ alignItems: "center", width: "25%" }}
+                >
                   <View
                     style={{
                       width: RFValue(48),
@@ -1647,7 +1649,9 @@ const PatientHomeScreen = () => {
                     Medicines
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
+                <TouchableOpacity
+                  style={{ alignItems: "center", width: "25%" }}
+                >
                   <View
                     style={{
                       width: RFValue(48),
@@ -1676,7 +1680,9 @@ const PatientHomeScreen = () => {
                     Book Appt
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ alignItems: "center", width: "25%" }}>
+                <TouchableOpacity
+                  style={{ alignItems: "center", width: "25%" }}
+                >
                   <View
                     style={{
                       width: RFValue(48),
@@ -7330,8 +7336,12 @@ const AuthScreen = ({ onLogin }) => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [authSuccess, setAuthSuccess] = useState("");
 
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
@@ -7375,16 +7385,6 @@ const AuthScreen = ({ onLogin }) => {
     return () => subscription.remove();
   }, [step]);
 
-  const showPasswordSafetyNotice = () =>
-    new Promise((resolve) => {
-      Alert.alert(
-        "Save your password",
-        "Please keep your password safe. Password recovery is not available right now, so you may not be able to log in if you lose it.",
-        [{ text: "I understand", onPress: () => resolve() }],
-        { cancelable: false },
-      );
-    });
-
   const handleRequestPasswordReset = async () => {
     try {
       setForgotLoading(true);
@@ -7396,7 +7396,7 @@ const AuthScreen = ({ onLogin }) => {
 
       // Keep the message generic (privacy) even if the email isn't registered.
       setForgotSuccess(
-        "If an account exists for this email, you'll receive a password reset link shortly.",
+        "If an account exists for this email, you'll receive a reset link to continue on nvoisyshealth.com.",
       );
     } catch (error) {
       console.log("Password reset request error:", error);
@@ -7410,8 +7410,7 @@ const AuthScreen = ({ onLogin }) => {
     try {
       setAuthLoading(true);
       setAuthError("");
-
-      let result;
+      setAuthSuccess("");
 
       if (authMode === "signup") {
         if (!name.trim()) {
@@ -7422,20 +7421,33 @@ const AuthScreen = ({ onLogin }) => {
           throw new Error("Password must be at least 8 characters.");
         }
 
-        result = await signUpWithEmail({
+        if (password.trim() !== passwordConfirm.trim()) {
+          throw new Error("Passwords do not match.");
+        }
+
+        await signUpWithEmail({
           name: name.trim(),
           email: email.trim(),
           password: password.trim(),
+          passwordConfirm: passwordConfirm.trim(),
           role,
         });
 
-        await showPasswordSafetyNotice();
-      } else {
-        result = await loginWithEmail({
-          email: email.trim(),
-          password: password.trim(),
-        });
+        setAuthSuccess(
+          "Account created. Please verify your email using the link we sent, then log in.",
+        );
+        setAuthMode("login");
+        setPassword("");
+        setPasswordConfirm("");
+        setShowPassword(false);
+        setShowPasswordConfirm(false);
+        return;
       }
+
+      const result = await loginWithEmail({
+        email: email.trim(),
+        password: password.trim(),
+      });
 
       onLogin({
         user: result.user,
@@ -7446,9 +7458,17 @@ const AuthScreen = ({ onLogin }) => {
       const pbFieldErrors =
         error?.data?.data || error?.response?.data?.data || null;
       const passwordError = pbFieldErrors?.password?.message;
+      const passwordConfirmError = pbFieldErrors?.passwordConfirm?.message;
 
       if (authMode === "signup" && password.trim().length < 8) {
         setAuthError("Password must be at least 8 characters.");
+      } else if (
+        authMode === "signup" &&
+        password.trim() !== passwordConfirm.trim()
+      ) {
+        setAuthError("Passwords do not match.");
+      } else if (passwordConfirmError) {
+        setAuthError(passwordConfirmError);
       } else if (passwordError) {
         setAuthError(passwordError);
       } else {
@@ -7463,6 +7483,7 @@ const AuthScreen = ({ onLogin }) => {
     try {
       setAuthLoading(true);
       setAuthError("");
+      setAuthSuccess("");
 
       const result = await signInWithOAuth({
         providerName: "google",
@@ -7485,6 +7506,7 @@ const AuthScreen = ({ onLogin }) => {
     try {
       setAuthLoading(true);
       setAuthError("");
+      setAuthSuccess("");
 
       const result = await signInWithOAuth({
         providerName: "apple",
@@ -7696,7 +7718,11 @@ const AuthScreen = ({ onLogin }) => {
             <TextInput
               placeholder="Full name"
               value={name}
-              onChangeText={setName}
+              onChangeText={(value) => {
+                setName(value);
+                if (authError) setAuthError("");
+                if (authSuccess) setAuthSuccess("");
+              }}
               style={{
                 backgroundColor: "#FFFFFF",
                 borderRadius: RFValue(14),
@@ -7715,7 +7741,11 @@ const AuthScreen = ({ onLogin }) => {
           <TextInput
             placeholder="Email"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(value) => {
+              setEmail(value);
+              if (authError) setAuthError("");
+              if (authSuccess) setAuthSuccess("");
+            }}
             keyboardType="email-address"
             autoCapitalize="none"
             style={{
@@ -7732,24 +7762,103 @@ const AuthScreen = ({ onLogin }) => {
             placeholderTextColor="#9CA3AF"
           />
 
-          <TextInput
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
+          <View
             style={{
               backgroundColor: "#FFFFFF",
               borderRadius: RFValue(14),
-              paddingHorizontal: RFValue(16),
-              paddingVertical: RFValue(16),
+              paddingLeft: RFValue(16),
+              paddingRight: RFValue(12),
               marginBottom: RFValue(14),
               borderWidth: 1,
               borderColor: "#E5E7EB",
-              fontSize: RFValue(15),
-              color: "#1E1B4B",
+              flexDirection: "row",
+              alignItems: "center",
             }}
-            placeholderTextColor="#9CA3AF"
-          />
+          >
+            <TextInput
+              placeholder="Password"
+              value={password}
+              onChangeText={(value) => {
+                setPassword(value);
+                if (authError) setAuthError("");
+                if (authSuccess) setAuthSuccess("");
+              }}
+              secureTextEntry={!showPassword}
+              style={{
+                flex: 1,
+                paddingVertical: RFValue(16),
+                fontSize: RFValue(15),
+                color: "#1E1B4B",
+              }}
+              placeholderTextColor="#9CA3AF"
+            />
+
+            <TouchableOpacity
+              onPress={() => setShowPassword((prev) => !prev)}
+              disabled={authLoading}
+            >
+              <Text
+                style={{
+                  color: "#4338CA",
+                  fontWeight: "700",
+                  fontSize: RFValue(12),
+                  opacity: authLoading ? 0.6 : 1,
+                }}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {authMode === "signup" && (
+            <View
+              style={{
+                backgroundColor: "#FFFFFF",
+                borderRadius: RFValue(14),
+                paddingLeft: RFValue(16),
+                paddingRight: RFValue(12),
+                marginBottom: RFValue(14),
+                borderWidth: 1,
+                borderColor: "#E5E7EB",
+                flexDirection: "row",
+                alignItems: "center",
+              }}
+            >
+              <TextInput
+                placeholder="Confirm password"
+                value={passwordConfirm}
+                onChangeText={(value) => {
+                  setPasswordConfirm(value);
+                  if (authError) setAuthError("");
+                  if (authSuccess) setAuthSuccess("");
+                }}
+                secureTextEntry={!showPasswordConfirm}
+                style={{
+                  flex: 1,
+                  paddingVertical: RFValue(16),
+                  fontSize: RFValue(15),
+                  color: "#1E1B4B",
+                }}
+                placeholderTextColor="#9CA3AF"
+              />
+
+              <TouchableOpacity
+                onPress={() => setShowPasswordConfirm((prev) => !prev)}
+                disabled={authLoading}
+              >
+                <Text
+                  style={{
+                    color: "#4338CA",
+                    fontWeight: "700",
+                    fontSize: RFValue(12),
+                    opacity: authLoading ? 0.6 : 1,
+                  }}
+                >
+                  {showPasswordConfirm ? "Hide" : "Show"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {authMode === "login" && (
             <TouchableOpacity
@@ -7757,6 +7866,7 @@ const AuthScreen = ({ onLogin }) => {
                 setForgotEmail(email.trim());
                 setForgotError("");
                 setForgotSuccess("");
+                setAuthSuccess("");
                 setStep("FORGOT");
               }}
               style={{ alignSelf: "flex-end", marginBottom: RFValue(10) }}
@@ -7773,6 +7883,18 @@ const AuthScreen = ({ onLogin }) => {
                 Forgot password?
               </Text>
             </TouchableOpacity>
+          )}
+
+          {!!authSuccess && (
+            <Text
+              style={{
+                color: "#059669",
+                marginBottom: RFValue(14),
+                fontSize: RFValue(14),
+              }}
+            >
+              {authSuccess}
+            </Text>
           )}
 
           {!!authError && (
@@ -7867,6 +7989,11 @@ const AuthScreen = ({ onLogin }) => {
             onPress={() => {
               setAuthMode(authMode === "signup" ? "login" : "signup");
               setAuthError("");
+              setAuthSuccess("");
+              setPassword("");
+              setPasswordConfirm("");
+              setShowPassword(false);
+              setShowPasswordConfirm(false);
             }}
             style={{ alignItems: "center", marginTop: RFValue(18) }}
           >
@@ -11446,8 +11573,7 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
         backgroundColor: "#FFFFFF",
         borderTopWidth: 1,
         borderTopColor: "#F3F4F6",
-        paddingBottom:
-          Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 8,
+        paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 8,
         paddingTop: RFValue(8),
         shadowColor: "#000",
         shadowOpacity: 0.08,
@@ -11469,7 +11595,10 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
           : null;
 
         const onPress = () => {
-          const event = navigation.emit({ type: "tabPress", target: route.key });
+          const event = navigation.emit({
+            type: "tabPress",
+            target: route.key,
+          });
           if (!isFocused && !event.defaultPrevented) {
             navigation.navigate(route.name);
           }
