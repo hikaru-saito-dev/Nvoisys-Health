@@ -24,6 +24,7 @@ import {
   BackHandler,
   Dimensions,
   Image,
+  InteractionManager,
   KeyboardAvoidingView,
   PixelRatio,
   Platform,
@@ -14366,7 +14367,7 @@ const WoundDetailScreen = ({
                 err?.message ||
                   "Unable to save the prescription. Try again or check PocketBase rules.",
               );
-              return;
+              throw err;
             }
             setShowPrescriptionModal(false);
             try {
@@ -14410,6 +14411,15 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
   const [disease, setDisease] = useState("");
   const [lines, setLines] = useState(() => [newPrescriptionLine()]);
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const updateLine = (key, field, value) => {
     setLines((prev) =>
@@ -14449,14 +14459,22 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
       );
       return;
     }
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
+    await new Promise((resolve) => {
+      InteractionManager.runAfterInteractions(() => resolve());
+    });
     try {
       const result = onConfirm({ disease: d, lines: normalized });
       if (result && typeof result.then === "function") {
         await result;
       }
+    } catch {
+      /* failure: parent already alerted; re-enable send */
     } finally {
-      setSending(false);
+      sendingRef.current = false;
+      if (mountedRef.current) setSending(false);
     }
   };
 
@@ -14529,6 +14547,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           style={{ maxHeight: RFValue(440) }}
+          scrollEnabled={!sending}
         >
           <Text style={labelStyle}>Condition / diagnosis (required)</Text>
           <TextInput
@@ -14537,6 +14556,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
             placeholderTextColor="#9CA3AF"
             value={disease}
             onChangeText={setDisease}
+            editable={!sending}
           />
 
           {lines.map((line, index) => (
@@ -14569,8 +14589,16 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
                   Medicine {index + 1}
                 </Text>
                 {lines.length > 1 ? (
-                  <TouchableOpacity onPress={() => removeLine(line.key)}>
-                    <Text style={{ fontSize: RFValue(12), color: "#DC2626" }}>
+                  <TouchableOpacity
+                    onPress={() => removeLine(line.key)}
+                    disabled={sending}
+                  >
+                    <Text
+                      style={{
+                        fontSize: RFValue(12),
+                        color: sending ? "#D1D5DB" : "#DC2626",
+                      }}
+                    >
                       Remove
                     </Text>
                   </TouchableOpacity>
@@ -14584,6 +14612,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
                 placeholderTextColor="#9CA3AF"
                 value={line.name}
                 onChangeText={(t) => updateLine(line.key, "name", t)}
+                editable={!sending}
               />
 
               <Text style={labelStyle}>How much to take</Text>
@@ -14593,6 +14622,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
                 placeholderTextColor="#9CA3AF"
                 value={line.dosage}
                 onChangeText={(t) => updateLine(line.key, "dosage", t)}
+                editable={!sending}
               />
 
               <Text style={labelStyle}>When to take</Text>
@@ -14602,6 +14632,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
                 placeholderTextColor="#9CA3AF"
                 value={line.whenToTake}
                 onChangeText={(t) => updateLine(line.key, "whenToTake", t)}
+                editable={!sending}
               />
 
               <Text style={labelStyle}>How long to take</Text>
@@ -14611,18 +14642,21 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
                 placeholderTextColor="#9CA3AF"
                 value={line.duration}
                 onChangeText={(t) => updateLine(line.key, "duration", t)}
+                editable={!sending}
               />
             </View>
           ))}
 
           <TouchableOpacity
             onPress={addLine}
+            disabled={sending}
             style={{
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
               paddingVertical: RFValue(12),
               marginBottom: RFValue(8),
+              opacity: sending ? 0.45 : 1,
             }}
           >
             <Ionicons name="add-circle-outline" size={22} color="#4338CA" />
@@ -14647,10 +14681,15 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
             borderRadius: RFValue(14),
             paddingVertical: RFValue(16),
             alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "row",
             marginTop: RFValue(12),
-            opacity: sending ? 0.85 : 1,
+            opacity: sending ? 0.92 : 1,
           }}
         >
+          {sending ? (
+            <ActivityIndicator color="#FFF" style={{ marginRight: 10 }} />
+          ) : null}
           <Text
             style={{ color: "#FFF", fontWeight: "700", fontSize: RFValue(16) }}
           >
