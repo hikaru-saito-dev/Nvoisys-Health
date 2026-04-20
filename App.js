@@ -8812,8 +8812,9 @@ const AuthScreen = ({ onLogin }) => {
 };
 
 // --- DOCTOR DASHBOARD COMPONENTS ---
-const DoctorDashboard = ({ wounds, patients }) => {
+const DoctorDashboard = () => {
   const { theme } = useTheme();
+  const { wounds, patients } = useAppData();
 
   const pendingWounds = (wounds || []).filter(
     (w) => w.status === "Review Pending",
@@ -9285,8 +9286,9 @@ const DoctorDashboard = ({ wounds, patients }) => {
   );
 };
 
-const DoctorPatientsScreen = ({ patients }) => {
+const DoctorPatientsScreen = () => {
   const { theme } = useTheme();
+  const { patients } = useAppData();
 
   const riskColor = (level) =>
     level === "High" ? "#DC2626" : level === "Medium" ? "#D97706" : "#059669";
@@ -13532,17 +13534,26 @@ const ModernHeader = ({ title, subtitle }) => (
   </View>
 );
 
-const PatientWoundScreen = ({ navigation, wounds, setWounds }) => {
-  const [showNewWound, setShowNewWound] = useState(false);
-  const [selectedWoundId, setSelectedWoundId] = useState(null);
+const PatientWoundScreen = () => {
+  const {
+    wounds,
+    setWounds,
+    patientSelectedWoundId,
+    setPatientSelectedWoundId,
+    patientShowNewWound,
+    setPatientShowNewWound,
+  } = useAppData();
   const selectedWound = (wounds || []).find(
-    (item) => item.id === selectedWoundId,
+    (item) => item.id === patientSelectedWoundId,
   );
+  const onSelectWound = setPatientSelectedWoundId;
+  const onClearWoundSelection = () => setPatientSelectedWoundId(null);
+  const onSetShowNewWound = setPatientShowNewWound;
 
-  if (showNewWound)
+  if (patientShowNewWound)
     return (
       <NewWoundScreen
-        onBack={() => setShowNewWound(false)}
+        onBack={() => onSetShowNewWound(false)}
         setWounds={setWounds}
         wounds={wounds}
       />
@@ -13550,8 +13561,9 @@ const PatientWoundScreen = ({ navigation, wounds, setWounds }) => {
   if (selectedWound)
     return (
       <WoundDetailScreen
+        key={selectedWound.id}
         wound={selectedWound}
-        onBack={() => setSelectedWoundId(null)}
+        onBack={() => onClearWoundSelection()}
         userRole="patient"
         setWounds={setWounds}
       />
@@ -13569,7 +13581,7 @@ const PatientWoundScreen = ({ navigation, wounds, setWounds }) => {
         }}
       >
         <TouchableOpacity
-          onPress={() => setShowNewWound(true)}
+          onPress={() => onSetShowNewWound(true)}
           style={{
             backgroundColor: "#EEF2FF",
             borderStyle: "dashed",
@@ -13608,7 +13620,7 @@ const PatientWoundScreen = ({ navigation, wounds, setWounds }) => {
           wounds.map((w) => (
             <TouchableOpacity
               key={w.id}
-              onPress={() => setSelectedWoundId(w.id)}
+              onPress={() => onSelectWound(w.id)}
               style={{
                 backgroundColor: "#FFF",
                 borderRadius: RFValue(16),
@@ -13929,6 +13941,7 @@ const WoundDetailScreen = ({
   const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
   const [loadingChat, setLoadingChat] = useState(true);
   const [localWound, setLocalWound] = useState(wound);
+  const conversationIdRef = useRef(wound?.conversation || null);
   const {
     currentUserId,
     currentUser,
@@ -13942,8 +13955,15 @@ const WoundDetailScreen = ({
   } = useAppData();
 
   useEffect(() => {
-    setLocalWound(wound);
-  }, [wound]);
+    conversationIdRef.current = localWound?.conversation || null;
+  }, [localWound?.conversation]);
+
+  // Only replace local wound when opening a different case — avoids wiping
+  // conversation / UI state on every parent `wounds` refresh (same wound id).
+  useEffect(() => {
+    if (!wound?.id) return;
+    setLocalWound((prev) => (prev?.id === wound.id ? prev : wound));
+  }, [wound?.id]);
 
   const hydrateConversation = async () => {
     try {
@@ -13967,20 +13987,14 @@ const WoundDetailScreen = ({
 
     hydrateConversation();
 
+    const woundIdForCleanup = localWound.id;
+
     const subscribe = async () => {
       try {
         await pb.collection("messages").subscribe("*", async ({ record }) => {
           if (!mounted) return;
-          if (
-            !localWound?.conversation &&
-            record?.conversation !== localWound?.conversation
-          ) {
-            return;
-          }
-          const conversationId =
-            localWound?.conversation || record?.conversation;
-          if (!conversationId || record?.conversation !== conversationId)
-            return;
+          const conversationId = conversationIdRef.current;
+          if (!conversationId || record?.conversation !== conversationId) return;
           const messages = await loadConversationMessages(conversationId);
           if (mounted) {
             setChat(messages);
@@ -13988,7 +14002,7 @@ const WoundDetailScreen = ({
         });
         await pb
           .collection("wounds")
-          .subscribe(localWound.id, async ({ record }) => {
+          .subscribe(woundIdForCleanup, async ({ record }) => {
             if (!mounted) return;
             const refreshedWound = mapWoundRecord({
               ...record,
@@ -14012,9 +14026,9 @@ const WoundDetailScreen = ({
     return () => {
       mounted = false;
       pb.collection("messages").unsubscribe("*");
-      pb.collection("wounds").unsubscribe(localWound?.id);
+      pb.collection("wounds").unsubscribe(woundIdForCleanup);
     };
-  }, [localWound?.id, localWound?.conversation]);
+  }, [localWound?.id]);
 
   const sendMessage = async () => {
     if (!message.trim()) return;
@@ -14346,6 +14360,16 @@ const WoundDetailScreen = ({
           onConfirm={async (prescription) => {
             try {
               await prescribeForWound(localWound, prescription);
+            } catch (err) {
+              Alert.alert(
+                "Prescription not sent",
+                err?.message ||
+                  "Unable to save the prescription. Try again or check PocketBase rules.",
+              );
+              return;
+            }
+            setShowPrescriptionModal(false);
+            try {
               const conversation = await ensureConversationForWound(
                 localWound,
                 {
@@ -14359,13 +14383,13 @@ const WoundDetailScreen = ({
                 status: "Medication Prescribed",
                 conversation: conversation.id,
               }));
-              setShowPrescriptionModal(false);
-            } catch (err) {
-              Alert.alert(
-                "Prescription not sent",
-                err?.message ||
-                  "Unable to save the prescription. Try again or check PocketBase rules.",
-              );
+            } catch (postErr) {
+              console.log("Post-prescription UI refresh error:", postErr);
+              setLocalWound((prev) => ({
+                ...prev,
+                status: "Medication Prescribed",
+              }));
+              await refreshAllData();
             }
           }}
         />
@@ -14385,6 +14409,7 @@ const newPrescriptionLine = () => ({
 const PrescriptionModal = ({ onBack, onConfirm }) => {
   const [disease, setDisease] = useState("");
   const [lines, setLines] = useState(() => [newPrescriptionLine()]);
+  const [sending, setSending] = useState(false);
 
   const updateLine = (key, field, value) => {
     setLines((prev) =>
@@ -14400,7 +14425,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
     );
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     const d = disease.trim();
     if (!d) {
       Alert.alert(
@@ -14424,7 +14449,15 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
       );
       return;
     }
-    onConfirm({ disease: d, lines: normalized });
+    setSending(true);
+    try {
+      const result = onConfirm({ disease: d, lines: normalized });
+      if (result && typeof result.then === "function") {
+        await result;
+      }
+    } finally {
+      setSending(false);
+    }
   };
 
   const inputStyle = {
@@ -14483,8 +14516,12 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
           >
             Send prescription
           </Text>
-          <TouchableOpacity onPress={onBack}>
-            <Ionicons name="close" size={RFValue(28)} color="#1E1B4B" />
+          <TouchableOpacity onPress={onBack} disabled={sending}>
+            <Ionicons
+              name="close"
+              size={RFValue(28)}
+              color={sending ? "#D1D5DB" : "#1E1B4B"}
+            />
           </TouchableOpacity>
         </View>
 
@@ -14604,18 +14641,20 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
 
         <TouchableOpacity
           onPress={handleConfirm}
+          disabled={sending}
           style={{
-            backgroundColor: "#4338CA",
+            backgroundColor: sending ? "#9CA3AF" : "#4338CA",
             borderRadius: RFValue(14),
             paddingVertical: RFValue(16),
             alignItems: "center",
             marginTop: RFValue(12),
+            opacity: sending ? 0.85 : 1,
           }}
         >
           <Text
             style={{ color: "#FFF", fontWeight: "700", fontSize: RFValue(16) }}
           >
-            Send to patient
+            {sending ? "Sending…" : "Send to patient"}
           </Text>
         </TouchableOpacity>
       </View>
@@ -14623,17 +14662,26 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
   );
 };
 
-const DoctorWoundsScreen = ({ wounds, setWounds, setMedOrders }) => {
-  const [selectedWoundId, setSelectedWoundId] = useState(null);
+const DoctorWoundsScreen = () => {
+  const {
+    wounds,
+    setWounds,
+    setMedOrders,
+    doctorSelectedWoundId,
+    setDoctorSelectedWoundId,
+  } = useAppData();
   const selectedWound = (wounds || []).find(
-    (item) => item.id === selectedWoundId,
+    (item) => item.id === doctorSelectedWoundId,
   );
+  const onSelectWound = setDoctorSelectedWoundId;
+  const onClearWoundSelection = () => setDoctorSelectedWoundId(null);
 
   if (selectedWound)
     return (
       <WoundDetailScreen
+        key={selectedWound.id}
         wound={selectedWound}
-        onBack={() => setSelectedWoundId(null)}
+        onBack={() => onClearWoundSelection()}
         userRole="doctor"
         setWounds={setWounds}
         setMedOrders={setMedOrders}
@@ -14669,7 +14717,7 @@ const DoctorWoundsScreen = ({ wounds, setWounds, setMedOrders }) => {
           wounds.map((w) => (
             <TouchableOpacity
               key={w.id}
-              onPress={() => setSelectedWoundId(w.id)}
+              onPress={() => onSelectWound(w.id)}
               style={{
                 backgroundColor: "#FFF",
                 borderRadius: RFValue(16),
@@ -14746,10 +14794,10 @@ const DoctorWoundsScreen = ({ wounds, setWounds, setMedOrders }) => {
   );
 };
 
-const PharmacyDashboard = ({ orders }) => {
+const PharmacyDashboard = () => {
   const [activeTab, setActiveTab] = useState("Pending");
-  const { updateOrderStatus } = useAppData();
-  const filteredOrders = (orders || []).filter(
+  const { medOrders, updateOrderStatus } = useAppData();
+  const filteredOrders = (medOrders || []).filter(
     (o) =>
       o.status === activeTab ||
       (activeTab === "History" && o.status !== "Pending"),
@@ -14937,7 +14985,9 @@ const PharmacyDashboard = ({ orders }) => {
   );
 };
 
-const PharmacyOrdersScreen = ({ orders }) => {
+const PharmacyOrdersScreen = () => {
+  const { medOrders } = useAppData();
+  const orders = medOrders;
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -15059,6 +15109,10 @@ export default function App() {
   const [prescriptions, setPrescriptions] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  const [doctorSelectedWoundId, setDoctorSelectedWoundId] = useState(null);
+  const [patientSelectedWoundId, setPatientSelectedWoundId] = useState(null);
+  const [patientShowNewWound, setPatientShowNewWound] = useState(false);
+
   const [patients, setPatients] = useState([
     {
       id: 1,
@@ -15097,6 +15151,28 @@ export default function App() {
 
   const theme = THEMES[themeKey];
   const changeTheme = (key) => setThemeKey(key);
+
+  useEffect(() => {
+    if (!userRole) {
+      setDoctorSelectedWoundId(null);
+      setPatientSelectedWoundId(null);
+      setPatientShowNewWound(false);
+    }
+  }, [userRole]);
+
+  useEffect(() => {
+    if (userRole !== "doctor" || !doctorSelectedWoundId) return;
+    if (!(wounds || []).some((w) => w.id === doctorSelectedWoundId)) {
+      setDoctorSelectedWoundId(null);
+    }
+  }, [wounds, doctorSelectedWoundId, userRole]);
+
+  useEffect(() => {
+    if (userRole !== "patient" || !patientSelectedWoundId) return;
+    if (!(wounds || []).some((w) => w.id === patientSelectedWoundId)) {
+      setPatientSelectedWoundId(null);
+    }
+  }, [wounds, patientSelectedWoundId, userRole]);
 
   const fetchUsersByRole = async (role) => {
     try {
@@ -16032,10 +16108,20 @@ export default function App() {
     currentUserId: currentUser?.id || null,
     patientProfile,
     wounds,
+    setWounds,
     medOrders,
+    setMedOrders,
     prescriptions,
     conversations,
     appointments,
+    patients,
+    setPatients,
+    doctorSelectedWoundId,
+    setDoctorSelectedWoundId,
+    patientSelectedWoundId,
+    setPatientSelectedWoundId,
+    patientShowNewWound,
+    setPatientShowNewWound,
     dataLoading,
     dataError,
     refreshAllData,
@@ -16090,6 +16176,12 @@ const AppContent = ({
   patients,
   setPatients,
 }) => {
+  const {
+    setDoctorSelectedWoundId,
+    setPatientSelectedWoundId,
+    setPatientShowNewWound,
+  } = useAppData();
+
   const handleAuthSuccess = ({ user, profile }) => {
     setCurrentUser(user);
     setUserRole(user.role || "patient");
@@ -16101,6 +16193,9 @@ const AppContent = ({
     setCurrentUser(null);
     setPatientProfile(null);
     setUserRole(null);
+    setDoctorSelectedWoundId(null);
+    setPatientSelectedWoundId(null);
+    setPatientShowNewWound(false);
   };
 
   const refreshDoctorStatus = async () => {
@@ -16149,13 +16244,7 @@ const AppContent = ({
             {
               name: "Home",
               label: "Home",
-              component: (props) => (
-                <DoctorDashboard
-                  {...props}
-                  wounds={wounds}
-                  patients={patients}
-                />
-              ),
+              component: DoctorDashboard,
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "home" : "home-outline"}
@@ -16167,9 +16256,7 @@ const AppContent = ({
             {
               name: "Patients",
               label: "Patients",
-              component: (props) => (
-                <DoctorPatientsScreen {...props} patients={patients} />
-              ),
+              component: DoctorPatientsScreen,
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "people" : "people-outline"}
@@ -16181,14 +16268,7 @@ const AppContent = ({
             {
               name: "Wounds",
               label: "Wounds",
-              component: (props) => (
-                <DoctorWoundsScreen
-                  {...props}
-                  wounds={wounds}
-                  setWounds={setWounds}
-                  setMedOrders={setMedOrders}
-                />
-              ),
+              component: DoctorWoundsScreen,
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "bandage" : "bandage-outline"}
@@ -16254,9 +16334,7 @@ const AppContent = ({
             {
               name: "Home",
               label: "Dashboard",
-              component: (props) => (
-                <PharmacyDashboard {...props} orders={medOrders} />
-              ),
+              component: PharmacyDashboard,
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "home" : "home-outline"}
@@ -16333,13 +16411,7 @@ const AppContent = ({
           {
             name: "Wound",
             label: "Wound",
-            component: (props) => (
-              <PatientWoundScreen
-                {...props}
-                wounds={wounds}
-                setWounds={setWounds}
-              />
-            ),
+            component: PatientWoundScreen,
             icon: ({ color, focused }) => (
               <Ionicons
                 name={focused ? "bandage" : "bandage-outline"}
@@ -16351,9 +16423,7 @@ const AppContent = ({
           {
             name: "Pharmacy",
             label: "Orders",
-            component: (props) => (
-              <PharmacyOrdersScreen {...props} orders={medOrders} />
-            ),
+            component: PharmacyOrdersScreen,
             icon: ({ color, focused }) => (
               <Ionicons
                 name={focused ? "cart" : "cart-outline"}
