@@ -92,7 +92,95 @@ function getSessionPayload(profile) {
   };
 }
 
-export async function ensureRoleProfile(roleOverride = null) {
+function compactProfileFields(fields) {
+  if (!fields || typeof fields !== "object") return {};
+  const { avatarAsset: _a, ...rest } = fields;
+  return Object.fromEntries(
+    Object.entries(rest).filter(
+      ([, v]) => v !== undefined && v !== null && String(v).trim() !== "",
+    ),
+  );
+}
+
+/**
+ * Matches PocketBase `patient_profile`: user, primary_condition, gender, phone (optional).
+ * Avatar is uploaded after create in signUpWithEmail (file field).
+ */
+async function createPatientProfileRecord(userId, merged) {
+  const primary_condition = String(merged.primary_condition || "").trim();
+  const gender = String(merged.gender || "").trim();
+  const phone = String(merged.phone || "").trim();
+
+  const payload = {
+    user: userId,
+    primary_condition,
+    gender,
+  };
+  if (phone) {
+    payload.phone = phone;
+  }
+
+  return await pb.collection("patient_profile").create(payload);
+}
+
+/**
+ * Matches PocketBase `doctor_profile`: user, status, specialty, clinic_or_hospital.
+ * Status select: pending | approved | rejection
+ */
+async function createDoctorProfileRecord(userId, merged) {
+  const specialty = String(merged.specialty || "").trim();
+  const clinic_or_hospital = String(merged.clinic_or_hospital || "").trim();
+
+  return await pb.collection("doctor_profile").create({
+    user: userId,
+    status: "pending",
+    specialty,
+    clinic_or_hospital,
+  });
+}
+
+export function formatPocketBaseClientError(error) {
+  const fieldBlock = error?.response?.data?.data || error?.data?.data || null;
+  if (fieldBlock && typeof fieldBlock === "object") {
+    for (const v of Object.values(fieldBlock)) {
+      if (v && typeof v === "object" && v.message) {
+        return String(v.message);
+      }
+    }
+  }
+  return (
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    ""
+  );
+}
+
+function uploadPartFromImageAsset(asset) {
+  const uri = asset?.uri;
+  if (!uri) return null;
+  let mimeType =
+    (asset.mimeType && String(asset.mimeType)) ||
+    (typeof asset.type === "string" && asset.type.includes("/")
+      ? asset.type
+      : null) ||
+    "image/jpeg";
+  const ext = String(uri).split("?")[0].split("#")[0].split(".").pop();
+  const low = String(ext || "").toLowerCase();
+  if (low === "png") mimeType = "image/png";
+  else if (low === "webp") mimeType = "image/webp";
+  else if (low === "heic" || low === "heif") mimeType = "image/heic";
+  const extFromMime = mimeType.split("/")[1] || "jpg";
+  const safeExt = ["png", "webp", "heic", "heif"].includes(
+    String(extFromMime).toLowerCase(),
+  )
+    ? String(extFromMime).toLowerCase()
+    : "jpg";
+  const name = asset.fileName || `avatar_${Date.now()}.${safeExt}`;
+  return { uri, name, type: mimeType };
+}
+
+export async function ensureRoleProfile(roleOverride = null, extraFields = {}) {
   const user = getAuthUser();
 
   if (!user) {
@@ -101,6 +189,7 @@ export async function ensureRoleProfile(roleOverride = null) {
 
   const role = normalizeRole(roleOverride || user.role);
   const collection = ROLE_TO_PROFILE_COLLECTION[role];
+  const merged = compactProfileFields(extraFields);
 
   try {
     return await pb
@@ -108,16 +197,16 @@ export async function ensureRoleProfile(roleOverride = null) {
       .getFirstListItem(`user="${user.id}"`, { requestKey: null });
   } catch (error) {
     if (error?.status === 404) {
-      // For doctors, start in "pending" until manually approved in PocketBase.
-      const payload =
-        role === "doctor"
-          ? {
-              user: user.id,
-              status: "pending",
-            }
-          : { user: user.id };
-
-      return await pb.collection(collection).create(payload);
+      if (role === "doctor") {
+        return await createDoctorProfileRecord(user.id, merged);
+      }
+      if (role === "patient") {
+        return await createPatientProfileRecord(user.id, merged);
+      }
+      return await pb.collection(collection).create({
+        user: user.id,
+        ...merged,
+      });
     }
     throw error;
   }
@@ -129,6 +218,7 @@ export async function signUpWithEmail({
   password,
   passwordConfirm,
   role,
+  profileFields = {},
 }) {
   normalizeRole(role);
 
@@ -138,6 +228,9 @@ export async function signUpWithEmail({
     passwordConfirm == null ? normalizedPassword : passwordConfirm,
   );
 
+  const { avatarAsset, ...rawProfile } = profileFields || {};
+  const profilePayload = compactProfileFields(rawProfile);
+
   await pb.collection("UsersAuth").create({
     name: name?.trim() || "",
     email: normalizedEmail,
@@ -146,11 +239,43 @@ export async function signUpWithEmail({
     role,
   });
 
+  // Briefly authenticate so we can seed the role-specific profile with
+  // collected fields (primary_condition, specialty, avatar, etc.). The user
+  // will still need to verify their email before being allowed to fully log
+  // back in via loginWithEmail.
+  try {
+    const authData = await pb
+      .collection("UsersAuth")
+      .authWithPassword(normalizedEmail, normalizedPassword);
+
+    if (!getAuthUser() && authData?.token && authData?.record) {
+      pb.authStore.save(authData.token, authData.record);
+    }
+
+    let profile = await ensureRoleProfile(role, profilePayload);
+
+    if (role === "patient" && avatarAsset?.uri && profile?.id) {
+      const part = uploadPartFromImageAsset(avatarAsset);
+      if (part) {
+        try {
+          const formData = new FormData();
+          formData.append("avatar", part);
+          await pb.collection("patient_profile").update(profile.id, formData);
+        } catch (avatarError) {
+          console.log("Patient profile avatar upload skipped:", avatarError);
+        }
+      }
+    }
+  } catch (setupError) {
+    console.log("Signup profile setup error:", setupError);
+  }
+
   try {
     await pb
       .collection("UsersAuth")
       .requestVerification(normalizedEmail, { requestKey: null });
   } catch {
+    pb.authStore.clear();
     throw new Error(
       "Account created, but we could not send the verification email. Please try logging in to request a new verification link.",
     );
@@ -237,6 +362,15 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
     let authData;
 
     if (providerName === "google") {
+      // Manual code exchange (recommended on mobile):
+      // 1) Open Google's consent screen with redirect_uri pointing to an HTTPS page.
+      // 2) That page redirects back into the app via deep link (myapp://oauth2).
+      // 3) Exchange the received code via PocketBase authWithOAuth2Code.
+
+      // IMPORTANT:
+      // - Add `https://nvoisyshealth.com/authredirect` to Google Console redirect URIs
+      // - The redirect page bounces back into the app via deep link (myapp://oauth2).
+
       const authUrl = `${provider.authUrl}${OAUTH2_REDIRECT_URL}`;
       console.log("OAuth vendor URL:", authUrl);
 
