@@ -30,7 +30,7 @@ function normalizeBase64(value) {
 
 function resolveKeyB64() {
   // Best practice: inject at build time (EAS/CI) via EXPO_PUBLIC_* env var.
-  if (process?.env?.EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64) {
+  if (process.env.EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64) {
     return String(process.env.EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64).trim();
   }
 
@@ -59,27 +59,27 @@ function resolveKeyBytes() {
   }
 }
 
-const KEY_BYTES = resolveKeyBytes();
-
 export function isChatEncryptionEnabled() {
-  return !!KEY_BYTES;
+  return !!resolveKeyBytes();
 }
 
 export async function encryptChatText(plainText) {
-  if (!KEY_BYTES) return typeof plainText === "string" ? plainText : "";
+  const keyBytes = resolveKeyBytes();
+  if (!keyBytes) return typeof plainText === "string" ? plainText : "";
   const text = typeof plainText === "string" ? plainText : String(plainText);
 
   const nonce = await Crypto.getRandomBytesAsync(nacl.secretbox.nonceLength);
   const messageBytes = decodeUTF8(text);
-  const boxed = nacl.secretbox(messageBytes, nonce, KEY_BYTES);
+  const boxed = nacl.secretbox(messageBytes, nonce, keyBytes);
 
   // Store as a string so it fits into the existing PocketBase `text` field.
   return `${ENCRYPTED_PREFIX}${encodeBase64(nonce)}|${encodeBase64(boxed)}`;
 }
 
 export function decryptChatText(maybeEncrypted) {
+  const keyBytes = resolveKeyBytes();
   if (typeof maybeEncrypted !== "string") return "";
-  if (!KEY_BYTES) return maybeEncrypted;
+  if (!keyBytes) return maybeEncrypted;
 
   if (!maybeEncrypted.startsWith(ENCRYPTED_PREFIX)) {
     return maybeEncrypted;
@@ -92,7 +92,7 @@ export function decryptChatText(maybeEncrypted) {
   try {
     const nonce = decodeBase64(nonceB64);
     const boxed = decodeBase64(boxedB64);
-    const opened = nacl.secretbox.open(boxed, nonce, KEY_BYTES);
+    const opened = nacl.secretbox.open(boxed, nonce, keyBytes);
     if (!opened) return "[Encrypted message]";
     return encodeUTF8(opened);
   } catch {
@@ -105,6 +105,7 @@ export async function encryptChatImagePayload({
   mimeType = "image/jpeg",
   caption = "",
 }) {
+  const keyBytes = resolveKeyBytes();
   const normalizedBase64 = normalizeBase64(base64Data);
   if (!normalizedBase64) {
     throw new Error("Missing image data");
@@ -114,7 +115,7 @@ export async function encryptChatImagePayload({
   const plainCaption =
     typeof caption === "string" ? caption : String(caption || "");
 
-  if (!KEY_BYTES) {
+  if (!keyBytes) {
     return `${ENCRYPTED_IMAGE_PREFIX}${JSON.stringify({
       plain: true,
       mimeType: normalizedMime,
@@ -125,7 +126,7 @@ export async function encryptChatImagePayload({
 
   const nonce = await Crypto.getRandomBytesAsync(nacl.secretbox.nonceLength);
   const imageBytes = decodeBase64(normalizedBase64);
-  const boxed = nacl.secretbox(imageBytes, nonce, KEY_BYTES);
+  const boxed = nacl.secretbox(imageBytes, nonce, keyBytes);
   const encryptedCaption = plainCaption
     ? await encryptChatText(plainCaption)
     : "";
@@ -140,6 +141,7 @@ export async function encryptChatImagePayload({
 }
 
 export function decryptChatImagePayload(maybePayload) {
+  const keyBytes = resolveKeyBytes();
   if (typeof maybePayload !== "string") return null;
   if (!maybePayload.startsWith(ENCRYPTED_IMAGE_PREFIX)) return null;
 
@@ -165,7 +167,7 @@ export function decryptChatImagePayload(maybePayload) {
       };
     }
 
-    if (!KEY_BYTES) {
+    if (!keyBytes) {
       return {
         dataUri: null,
         caption,
@@ -175,7 +177,7 @@ export function decryptChatImagePayload(maybePayload) {
 
     const nonce = decodeBase64(parsed?.nonceB64 || "");
     const boxed = decodeBase64(parsed?.boxedB64 || "");
-    const opened = nacl.secretbox.open(boxed, nonce, KEY_BYTES);
+    const opened = nacl.secretbox.open(boxed, nonce, keyBytes);
 
     if (!opened) {
       return {
