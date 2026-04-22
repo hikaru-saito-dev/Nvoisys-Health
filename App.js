@@ -2,6 +2,7 @@ import React, {
   useState,
   useEffect,
   useRef,
+  useCallback,
   createContext,
   useContext,
 } from "react";
@@ -711,6 +712,231 @@ const formatPhoneForDisplay = (value) => {
   }
   if (String(value || "").trim()) return String(value).trim();
   return "";
+};
+
+// Patient health profile fields shared by signup and edit-profile.
+// These align with Version 1.0 launch spec (age, lifestyle, weight/height,
+// marital status, medical conditions, location district/state, allergies).
+const MARITAL_STATUS_OPTIONS = [
+  { id: "single", label: "Single" },
+  { id: "married", label: "Married" },
+  { id: "divorced", label: "Divorced" },
+  { id: "widowed", label: "Widowed" },
+  { id: "prefer_not_to_say", label: "Prefer not to say" },
+];
+
+const SMOKING_OPTIONS = [
+  { id: "never", label: "Never" },
+  { id: "former", label: "Former" },
+  { id: "occasionally", label: "Occasionally" },
+  { id: "current", label: "Current" },
+];
+
+const ALCOHOL_OPTIONS = [
+  { id: "never", label: "Never" },
+  { id: "occasional", label: "Occasional" },
+  { id: "regular", label: "Regular" },
+];
+
+const PATIENT_HEALTH_TEXT_KEYS = [
+  "marital_status",
+  "district",
+  "state",
+  "smoking",
+  "alcohol",
+  "medical_conditions",
+  "allergies",
+];
+const PATIENT_HEALTH_NUMERIC_KEYS = ["age", "weight_kg", "height_cm"];
+
+// Turn the UI-level values object into a plain partial payload suitable for
+// PocketBase `patient_profile` create/update. Empty values are omitted.
+const buildPatientHealthPayload = (values) => {
+  const payload = {};
+  if (!values || typeof values !== "object") return payload;
+  for (const key of PATIENT_HEALTH_NUMERIC_KEYS) {
+    const raw = values[key];
+    if (raw === undefined || raw === null) continue;
+    const trimmed = String(raw).trim();
+    if (!trimmed) continue;
+    const num = Number(trimmed);
+    if (Number.isFinite(num)) payload[key] = num;
+  }
+  for (const key of PATIENT_HEALTH_TEXT_KEYS) {
+    const value = String(values?.[key] ?? "").trim();
+    if (value) payload[key] = value;
+  }
+  return payload;
+};
+
+// Pull stored values back out of a PocketBase patient_profile record into the
+// shape the form uses (strings, so TextInput can render them).
+const patientHealthValuesFromProfile = (profile) => ({
+  age: profile?.age != null ? String(profile.age) : "",
+  weight_kg: profile?.weight_kg != null ? String(profile.weight_kg) : "",
+  height_cm: profile?.height_cm != null ? String(profile.height_cm) : "",
+  marital_status: String(profile?.marital_status || ""),
+  district: String(profile?.district || ""),
+  state: String(profile?.state || ""),
+  smoking: String(profile?.smoking || ""),
+  alcohol: String(profile?.alcohol || ""),
+  medical_conditions: String(profile?.medical_conditions || ""),
+  allergies: String(profile?.allergies || ""),
+});
+
+const emptyPatientHealthValues = () => ({
+  age: "",
+  weight_kg: "",
+  height_cm: "",
+  marital_status: "",
+  district: "",
+  state: "",
+  smoking: "",
+  alcohol: "",
+  medical_conditions: "",
+  allergies: "",
+});
+
+const PatientHealthProfileFields = ({
+  palette,
+  values,
+  onChange,
+  disabled,
+}) => {
+  const labelStyle = {
+    fontSize: RFValue(13),
+    fontWeight: "700",
+    color: palette.textSecondary,
+    marginBottom: RFValue(8),
+  };
+  const sectionStyle = {
+    fontSize: RFValue(12),
+    fontWeight: "800",
+    color: palette.textTertiary,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginTop: RFValue(8),
+    marginBottom: RFValue(10),
+  };
+  const inputStyle = {
+    backgroundColor: palette.card,
+    borderRadius: RFValue(14),
+    paddingHorizontal: RFValue(16),
+    paddingVertical: RFValue(14),
+    marginBottom: RFValue(12),
+    borderWidth: 1,
+    borderColor: palette.border,
+    fontSize: RFValue(15),
+    color: palette.textPrimary,
+  };
+
+  const renderText = (key, label, placeholder, keyboardType) => (
+    <View>
+      <Text style={labelStyle}>{label}</Text>
+      <TextInput
+        value={String(values?.[key] ?? "")}
+        onChangeText={(v) => onChange(key, v)}
+        placeholder={placeholder}
+        placeholderTextColor={palette.placeholder}
+        keyboardType={keyboardType || "default"}
+        editable={!disabled}
+        style={inputStyle}
+      />
+    </View>
+  );
+
+  const renderChips = (key, label, options) => (
+    <View>
+      <Text style={labelStyle}>{label}</Text>
+      <View
+        style={{
+          flexDirection: "row",
+          flexWrap: "wrap",
+          marginBottom: RFValue(12),
+        }}
+      >
+        {options.map((option) => {
+          const active = values?.[key] === option.id;
+          return (
+            <TouchableOpacity
+              key={option.id}
+              onPress={() =>
+                !disabled && onChange(key, active ? "" : option.id)
+              }
+              disabled={disabled}
+              style={{
+                paddingHorizontal: RFValue(14),
+                paddingVertical: RFValue(9),
+                borderRadius: RFValue(12),
+                backgroundColor: active ? palette.accent : palette.card,
+                borderWidth: 1,
+                borderColor: active ? palette.accent : palette.border,
+                marginRight: RFValue(8),
+                marginBottom: RFValue(8),
+                opacity: disabled ? 0.6 : 1,
+              }}
+            >
+              <Text
+                style={{
+                  fontWeight: "700",
+                  fontSize: RFValue(13),
+                  color: active ? palette.accentText : palette.textPrimary,
+                }}
+              >
+                {option.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  return (
+    <View>
+      <Text style={sectionStyle}>Basics</Text>
+      {renderText("age", "Age", "e.g. 34", "numeric")}
+      <View style={{ flexDirection: "row" }}>
+        <View style={{ flex: 1, marginRight: RFValue(8) }}>
+          {renderText("weight_kg", "Weight (kg)", "e.g. 72", "numeric")}
+        </View>
+        <View style={{ flex: 1, marginLeft: RFValue(8) }}>
+          {renderText("height_cm", "Height (cm)", "e.g. 168", "numeric")}
+        </View>
+      </View>
+      {renderChips(
+        "marital_status",
+        "Marital status",
+        MARITAL_STATUS_OPTIONS,
+      )}
+
+      <Text style={sectionStyle}>Lifestyle</Text>
+      {renderChips("smoking", "Smoking", SMOKING_OPTIONS)}
+      {renderChips("alcohol", "Alcohol", ALCOHOL_OPTIONS)}
+
+      <Text style={sectionStyle}>Location</Text>
+      <View style={{ flexDirection: "row" }}>
+        <View style={{ flex: 1, marginRight: RFValue(8) }}>
+          {renderText("district", "District", "e.g. Pune")}
+        </View>
+        <View style={{ flex: 1, marginLeft: RFValue(8) }}>
+          {renderText("state", "State", "e.g. Maharashtra")}
+        </View>
+      </View>
+
+      <Text style={sectionStyle}>Medical</Text>
+      {renderText(
+        "medical_conditions",
+        "Other conditions (optional)",
+        "e.g. hypertension, asthma",
+      )}
+      {renderText(
+        "allergies",
+        "Allergies (optional)",
+        "e.g. penicillin, peanuts",
+      )}
+    </View>
+  );
 };
 
 const mapWoundRecord = (record) => ({
@@ -5174,8 +5400,13 @@ const PatientEditProfileScreen = ({
   const [condition, setCondition] = useState("");
   const [gender, setGender] = useState("");
   const [avatarAsset, setAvatarAsset] = useState(null);
+  const [healthValues, setHealthValues] = useState(emptyPatientHealthValues);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const updateHealthField = useCallback((key, value) => {
+    setHealthValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
   useEffect(() => {
     setFullName(
@@ -5188,6 +5419,7 @@ const PatientEditProfileScreen = ({
       ).trim(),
     );
     setGender(String(patientProfile?.gender || "").trim());
+    setHealthValues(patientHealthValuesFromProfile(patientProfile));
     setAvatarAsset(null);
     setError("");
   }, [patientProfile?.id, currentUser?.id]);
@@ -5248,6 +5480,7 @@ const PatientEditProfileScreen = ({
         phone: phone.trim(),
         primary_condition: condition.trim(),
         gender: gender.trim(),
+        ...buildPatientHealthPayload(healthValues),
       });
       if (currentUser?.id) {
         await pb.collection("UsersAuth").update(currentUser.id, {
@@ -5277,7 +5510,7 @@ const PatientEditProfileScreen = ({
       setError(
         saveError?.data?.message ||
           saveError?.message ||
-          "Could not save. Add fields on patient_profile in PocketBase: full_name, phone, primary_condition, gender, avatar.",
+          "Could not save. Required patient_profile fields in PocketBase: full_name, phone, primary_condition, gender, avatar, plus optional: age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies.",
       );
     } finally {
       setSaving(false);
@@ -5441,6 +5674,22 @@ const PatientEditProfileScreen = ({
               />
             </View>
           ))}
+
+          <PatientHealthProfileFields
+            palette={{
+              card: theme.card,
+              border: theme.cardBorder,
+              textPrimary: theme.textPrimary,
+              textSecondary: theme.textSecondary,
+              textTertiary: theme.textTertiary,
+              placeholder: theme.textTertiary,
+              accent: theme.accent,
+              accentText: "#FFFFFF",
+            }}
+            values={healthValues}
+            onChange={updateHealthField}
+            disabled={saving}
+          />
 
           <Text
             style={{
@@ -8513,6 +8762,12 @@ const AuthScreen = ({ onLogin }) => {
   const [patientCondition, setPatientCondition] = useState("");
   const [patientGender, setPatientGender] = useState("");
   const [patientRegAvatar, setPatientRegAvatar] = useState(null);
+  const [patientHealthValues, setPatientHealthValues] = useState(
+    emptyPatientHealthValues,
+  );
+  const updatePatientHealthField = useCallback((key, value) => {
+    setPatientHealthValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
   const [doctorSpecialtyField, setDoctorSpecialtyField] = useState("");
   const [doctorClinic, setDoctorClinic] = useState("");
 
@@ -8670,6 +8925,7 @@ const AuthScreen = ({ onLogin }) => {
                   primary_condition: patientCondition.trim(),
                   gender: patientGender,
                   avatarAsset: patientRegAvatar,
+                  ...buildPatientHealthPayload(patientHealthValues),
                 }
               : role === "doctor"
                 ? {
@@ -9163,6 +9419,23 @@ const AuthScreen = ({ onLogin }) => {
                 }}
                 placeholderTextColor="#9CA3AF"
               />
+
+              <PatientHealthProfileFields
+                palette={{
+                  card: "#FFFFFF",
+                  border: "#E5E7EB",
+                  textPrimary: "#1E1B4B",
+                  textSecondary: "#374151",
+                  textTertiary: "#6B7280",
+                  placeholder: "#9CA3AF",
+                  accent: "#4338CA",
+                  accentText: "#FFFFFF",
+                }}
+                values={patientHealthValues}
+                onChange={updatePatientHealthField}
+                disabled={authLoading}
+              />
+
               <Text
                 style={{
                   fontSize: RFValue(13),

@@ -103,7 +103,13 @@ function compactProfileFields(fields) {
 }
 
 /**
- * Matches PocketBase `patient_profile`: user, primary_condition, gender, phone (optional).
+ * Matches PocketBase `patient_profile`:
+ *   Required (pre-existing): user, primary_condition, gender
+ *   Optional (pre-existing): phone
+ *   Optional (Launch v1.0):  age (number), weight_kg (number), height_cm (number),
+ *                            marital_status (text/select), district (text), state (text),
+ *                            smoking (text/select), alcohol (text/select),
+ *                            medical_conditions (text), allergies (text)
  * Avatar is uploaded after create in signUpWithEmail (file field).
  */
 async function createPatientProfileRecord(userId, merged) {
@@ -118,6 +124,37 @@ async function createPatientProfileRecord(userId, merged) {
   };
   if (phone) {
     payload.phone = phone;
+  }
+
+  // Launch v1.0 additions. Each field is written only when a non-empty
+  // value is supplied, so this remains backwards compatible with older
+  // PocketBase schemas that have not added the fields yet (PB will reject
+  // unknown fields — omitting empties keeps quiet signups working).
+  const numericFields = ["age", "weight_kg", "height_cm"];
+  for (const key of numericFields) {
+    const raw = merged[key];
+    if (raw === undefined || raw === null || String(raw).trim() === "") {
+      continue;
+    }
+    const num = Number(String(raw).trim());
+    if (Number.isFinite(num)) {
+      payload[key] = num;
+    }
+  }
+  const textFields = [
+    "marital_status",
+    "district",
+    "state",
+    "smoking",
+    "alcohol",
+    "medical_conditions",
+    "allergies",
+  ];
+  for (const key of textFields) {
+    const value = String(merged[key] || "").trim();
+    if (value) {
+      payload[key] = value;
+    }
   }
 
   return await pb.collection("patient_profile").create(payload);
