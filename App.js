@@ -385,6 +385,56 @@ const formatAppointmentSummaryDate = (iso) => {
   }
 };
 
+// Appointment lifecycle (Launch v1.0):
+// requested → approved → paid → completed, or requested → rejected.
+// Legacy values (e.g. "scheduled") are folded into "approved" for display so
+// existing rows in PocketBase keep working.
+const APPOINTMENT_STATUS_META = {
+  requested: { label: "Awaiting approval", tone: "warning" },
+  approved: { label: "Approved", tone: "info" },
+  rejected: { label: "Declined", tone: "danger" },
+  paid: { label: "Paid", tone: "success" },
+  completed: { label: "Completed", tone: "muted" },
+};
+
+const normalizeAppointmentStatus = (raw) => {
+  const value = String(raw || "").toLowerCase().trim();
+  if (!value) return "requested";
+  if (APPOINTMENT_STATUS_META[value]) return value;
+  if (value === "scheduled" || value === "confirmed") return "approved";
+  if (value === "declined" || value === "canceled" || value === "cancelled") {
+    return "rejected";
+  }
+  if (value === "done" || value === "finished") return "completed";
+  return "requested";
+};
+
+const humanizeAppointmentStatus = (raw) =>
+  APPOINTMENT_STATUS_META[normalizeAppointmentStatus(raw)].label;
+
+const appointmentStatusIsActionable = (statusKey) => {
+  const key = normalizeAppointmentStatus(statusKey);
+  return key === "approved" || key === "paid" || key === "completed";
+};
+
+const appointmentStatusColorsFor = (theme, statusKey) => {
+  const tone = APPOINTMENT_STATUS_META[normalizeAppointmentStatus(statusKey)]
+    .tone;
+  if (tone === "success") {
+    return { bg: theme.successLight, fg: theme.success };
+  }
+  if (tone === "danger") {
+    return { bg: theme.dangerLight, fg: theme.danger };
+  }
+  if (tone === "info") {
+    return { bg: theme.accentLight, fg: theme.accent };
+  }
+  if (tone === "warning") {
+    return { bg: "#FEF3C7", fg: "#B45309" };
+  }
+  return { bg: theme.bg, fg: theme.textSecondary };
+};
+
 const buildAppointmentDateOptions = (count = 14) => {
   const output = [];
   const now = new Date();
@@ -1015,8 +1065,16 @@ const doctorMatchesPatientHealthFocus = (doctor, patientProfile) => {
 const mapAppointmentRecord = (record) => {
   const doctor = record.expand?.doctor;
   const doctorUser = doctor?.expand?.user;
+  const patient = record.expand?.patient;
   const scheduledAt =
     record.scheduled_at || record.scheduledAt || record.date || record.when;
+  const rawStatus = record.status || "scheduled";
+  const doctorUserIdFromExpand =
+    doctorUser?.id ||
+    (typeof doctor?.user === "string" ? doctor.user : null) ||
+    null;
+  const doctorUserIdFromRecord =
+    typeof record.doctor === "string" ? record.doctor : null;
   return {
     id: record.id,
     scheduledAt,
@@ -1025,7 +1083,18 @@ const mapAppointmentRecord = (record) => {
       record.consultationType ||
       record.type ||
       "video",
-    status: record.status || "scheduled",
+    status: rawStatus,
+    statusKey: normalizeAppointmentStatus(rawStatus),
+    reason: String(record.reason || "").trim(),
+    reply: String(record.reply || record.doctor_reply || "").trim(),
+    conversationId: record.conversation || null,
+    patientId: record.patient || null,
+    patientName:
+      patient?.name ||
+      patient?.full_name ||
+      record.patient_name ||
+      "Patient",
+    doctorUserId: doctorUserIdFromExpand || doctorUserIdFromRecord,
     doctorName:
       doctorUser?.name ||
       doctor?.name ||
@@ -5873,54 +5942,152 @@ const PatientAppointmentsScreen = ({ onBack }) => {
             </Text>
           </View>
         ) : (
-          rows.map((appointment) => (
-            <View
-              key={appointment.id}
-              style={{
-                backgroundColor: theme.card,
-                borderRadius: RFValue(16),
-                padding: RFValue(16),
-                marginBottom: RFValue(12),
-                shadowColor: theme.shadowColor,
-                shadowOpacity: 0.06,
-                shadowOffset: { width: 0, height: 4 },
-                shadowRadius: 12,
-                elevation: 3,
-              }}
-            >
-              <Text
+          rows.map((appointment) => {
+            const statusKey = normalizeAppointmentStatus(appointment.statusKey);
+            const statusColors = appointmentStatusColorsFor(theme, statusKey);
+            const canConsult = appointmentStatusIsActionable(statusKey);
+            return (
+              <View
+                key={appointment.id}
                 style={{
-                  fontSize: RFValue(16),
-                  fontWeight: "700",
-                  color: theme.textPrimary,
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(16),
+                  padding: RFValue(16),
+                  marginBottom: RFValue(12),
+                  shadowColor: theme.shadowColor,
+                  shadowOpacity: 0.06,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowRadius: 12,
+                  elevation: 3,
                 }}
               >
-                {appointment.doctorName}
-              </Text>
-              <Text
-                style={{
-                  fontSize: RFValue(13),
-                  color: theme.textSecondary,
-                  marginTop: RFValue(6),
-                }}
-              >
-                {formatAppointmentSummaryDate(appointment.scheduledAt)} ·{" "}
-                {formatTimeValue(appointment.scheduledAt)}
-              </Text>
-              <Text
-                style={{
-                  fontSize: RFValue(12),
-                  color: theme.textTertiary,
-                  marginTop: RFValue(4),
-                }}
-              >
-                {appointment.consultationType === "chat"
-                  ? "Chat consult"
-                  : "Video consult"}{" "}
-                · {appointment.status}
-              </Text>
-            </View>
-          ))
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: RFValue(16),
+                      fontWeight: "700",
+                      color: theme.textPrimary,
+                      flex: 1,
+                      marginRight: RFValue(8),
+                    }}
+                    numberOfLines={1}
+                  >
+                    {appointment.doctorName}
+                  </Text>
+                  <View
+                    style={{
+                      backgroundColor: statusColors.bg,
+                      borderRadius: RFValue(8),
+                      paddingHorizontal: RFValue(10),
+                      paddingVertical: RFValue(4),
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: statusColors.fg,
+                        fontSize: RFValue(11),
+                        fontWeight: "800",
+                      }}
+                    >
+                      {humanizeAppointmentStatus(statusKey)}
+                    </Text>
+                  </View>
+                </View>
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    color: theme.textSecondary,
+                    marginTop: RFValue(6),
+                  }}
+                >
+                  {formatAppointmentSummaryDate(appointment.scheduledAt)} ·{" "}
+                  {formatTimeValue(appointment.scheduledAt)}
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    color: theme.textTertiary,
+                    marginTop: RFValue(4),
+                  }}
+                >
+                  {appointment.consultationType === "chat"
+                    ? "Chat consult"
+                    : "Video consult"}
+                </Text>
+                {appointment.reason ? (
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(8),
+                      lineHeight: RFValue(17),
+                    }}
+                  >
+                    <Text style={{ fontWeight: "700" }}>Reason: </Text>
+                    {appointment.reason}
+                  </Text>
+                ) : null}
+                {appointment.reply ? (
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(6),
+                      lineHeight: RFValue(17),
+                    }}
+                  >
+                    <Text style={{ fontWeight: "700" }}>Doctor note: </Text>
+                    {appointment.reply}
+                  </Text>
+                ) : null}
+                {statusKey === "requested" ? (
+                  <Text
+                    style={{
+                      marginTop: RFValue(10),
+                      fontSize: RFValue(12),
+                      color: "#B45309",
+                      fontWeight: "600",
+                    }}
+                  >
+                    Waiting for the doctor to approve your request.
+                  </Text>
+                ) : null}
+                {statusKey === "rejected" ? (
+                  <Text
+                    style={{
+                      marginTop: RFValue(10),
+                      fontSize: RFValue(12),
+                      color: theme.danger,
+                      fontWeight: "600",
+                    }}
+                  >
+                    The doctor declined this request. You can book another
+                    time.
+                  </Text>
+                ) : null}
+                {canConsult ? (
+                  <Text
+                    style={{
+                      marginTop: RFValue(10),
+                      fontSize: RFValue(12),
+                      color: theme.success,
+                      fontWeight: "600",
+                    }}
+                  >
+                    {statusKey === "completed"
+                      ? "Consultation completed — chat with your doctor stays open in the Messages tab."
+                      : "Approved. Open the Messages tab to chat with your doctor."}
+                  </Text>
+                ) : null}
+              </View>
+            );
+          })
         )}
       </ScrollView>
     </SafeAreaView>
@@ -9765,6 +9932,501 @@ const AuthScreen = ({ onLogin }) => {
 };
 
 // --- DOCTOR DASHBOARD COMPONENTS ---
+const DoctorAppointmentRequestsSection = () => {
+  const { theme } = useTheme();
+  const { appointments, updateAppointmentStatus } = useAppData();
+  const [actingId, setActingId] = useState(null);
+  const [replyDraft, setReplyDraft] = useState({});
+  const [localError, setLocalError] = useState("");
+
+  const requests = (appointments || [])
+    .filter(
+      (item) => normalizeAppointmentStatus(item.statusKey) === "requested",
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.scheduledAt || 0).getTime() -
+        new Date(b.scheduledAt || 0).getTime(),
+    );
+
+  const runAction = async (appointment, nextStatus) => {
+    if (!updateAppointmentStatus) return;
+    try {
+      setActingId(`${appointment.id}:${nextStatus}`);
+      setLocalError("");
+      await updateAppointmentStatus({
+        appointmentId: appointment.id,
+        nextStatus,
+        replyNote: replyDraft[appointment.id] || "",
+      });
+      setReplyDraft((prev) => {
+        const next = { ...prev };
+        delete next[appointment.id];
+        return next;
+      });
+    } catch (error) {
+      console.log("DoctorAppointmentRequestsSection action error:", error);
+      setLocalError(
+        error?.message || "Could not update the appointment. Please retry.",
+      );
+    } finally {
+      setActingId(null);
+    }
+  };
+
+  return (
+    <View
+      style={{
+        backgroundColor: theme.card,
+        borderRadius: RFValue(20),
+        padding: RFValue(18),
+        marginBottom: RFValue(16),
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.06,
+        shadowOffset: { width: 0, height: 4 },
+        shadowRadius: 12,
+        elevation: 3,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          marginBottom: RFValue(12),
+        }}
+      >
+        <View
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.accentLight,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(10),
+          }}
+        >
+          <Ionicons
+            name="mail-unread-outline"
+            size={RFValue(18)}
+            color={theme.accent}
+          />
+        </View>
+        <Text
+          style={{
+            fontSize: RFValue(16),
+            fontWeight: "800",
+            color: theme.textPrimary,
+            flex: 1,
+          }}
+        >
+          Appointment Requests
+        </Text>
+        <View
+          style={{
+            backgroundColor: theme.accent,
+            borderRadius: RFValue(10),
+            paddingHorizontal: RFValue(8),
+            paddingVertical: RFValue(3),
+          }}
+        >
+          <Text
+            style={{
+              color: "#FFF",
+              fontSize: RFValue(10),
+              fontWeight: "800",
+            }}
+          >
+            {requests.length}
+          </Text>
+        </View>
+      </View>
+
+      {localError ? (
+        <Text
+          style={{
+            color: theme.danger,
+            fontSize: RFValue(12),
+            fontWeight: "600",
+            marginBottom: RFValue(10),
+          }}
+        >
+          {localError}
+        </Text>
+      ) : null}
+
+      {requests.length === 0 ? (
+        <Text
+          style={{
+            fontSize: RFValue(13),
+            color: theme.textSecondary,
+            textAlign: "center",
+            paddingVertical: RFValue(10),
+          }}
+        >
+          No pending requests right now.
+        </Text>
+      ) : (
+        requests.map((appointment) => {
+          const busyApprove = actingId === `${appointment.id}:approved`;
+          const busyReject = actingId === `${appointment.id}:rejected`;
+          const anyBusy = busyApprove || busyReject;
+          return (
+            <View
+              key={appointment.id}
+              style={{
+                borderTopWidth: 1,
+                borderTopColor: theme.cardBorder,
+                paddingTop: RFValue(12),
+                marginTop: RFValue(6),
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: RFValue(14),
+                  fontWeight: "700",
+                  color: theme.textPrimary,
+                }}
+              >
+                {appointment.patientName || "Patient"}
+              </Text>
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  color: theme.textSecondary,
+                  marginTop: RFValue(4),
+                }}
+              >
+                {formatAppointmentSummaryDate(appointment.scheduledAt)} ·{" "}
+                {formatTimeValue(appointment.scheduledAt)} ·{" "}
+                {appointment.consultationType === "chat"
+                  ? "Chat consult"
+                  : "Video consult"}
+              </Text>
+              {appointment.reason ? (
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    color: theme.textSecondary,
+                    marginTop: RFValue(6),
+                    lineHeight: RFValue(17),
+                  }}
+                >
+                  <Text style={{ fontWeight: "700" }}>Reason: </Text>
+                  {appointment.reason}
+                </Text>
+              ) : null}
+
+              <TextInput
+                value={replyDraft[appointment.id] || ""}
+                onChangeText={(value) =>
+                  setReplyDraft((prev) => ({
+                    ...prev,
+                    [appointment.id]: value,
+                  }))
+                }
+                placeholder="Optional note to the patient (e.g. suggest a different time)"
+                placeholderTextColor={theme.textTertiary}
+                editable={!anyBusy}
+                multiline
+                style={{
+                  backgroundColor: theme.bg,
+                  borderRadius: RFValue(10),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  paddingHorizontal: RFValue(12),
+                  paddingVertical: RFValue(10),
+                  marginTop: RFValue(10),
+                  minHeight: RFValue(56),
+                  textAlignVertical: "top",
+                  fontSize: RFValue(13),
+                  color: theme.textPrimary,
+                }}
+              />
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  marginTop: RFValue(10),
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => runAction(appointment, "rejected")}
+                  disabled={anyBusy}
+                  style={{
+                    flex: 1,
+                    backgroundColor: theme.dangerLight,
+                    borderRadius: RFValue(12),
+                    paddingVertical: RFValue(10),
+                    alignItems: "center",
+                    marginRight: RFValue(8),
+                    opacity: anyBusy ? 0.6 : 1,
+                  }}
+                >
+                  {busyReject ? (
+                    <ActivityIndicator color={theme.danger} />
+                  ) : (
+                    <Text
+                      style={{
+                        color: theme.danger,
+                        fontWeight: "700",
+                        fontSize: RFValue(13),
+                      }}
+                    >
+                      Reject
+                    </Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => runAction(appointment, "approved")}
+                  disabled={anyBusy}
+                  style={{
+                    flex: 1,
+                    backgroundColor: theme.accent,
+                    borderRadius: RFValue(12),
+                    paddingVertical: RFValue(10),
+                    alignItems: "center",
+                    marginLeft: RFValue(8),
+                    opacity: anyBusy ? 0.75 : 1,
+                  }}
+                >
+                  {busyApprove ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <Text
+                      style={{
+                        color: "#FFF",
+                        fontWeight: "700",
+                        fontSize: RFValue(13),
+                      }}
+                    >
+                      Approve
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })
+      )}
+    </View>
+  );
+};
+
+const DoctorUpcomingAppointmentsSection = () => {
+  const { theme } = useTheme();
+  const { appointments, updateAppointmentStatus } = useAppData();
+  const [completingId, setCompletingId] = useState(null);
+  const [localError, setLocalError] = useState("");
+
+  const upcoming = (appointments || [])
+    .filter((item) => {
+      const key = normalizeAppointmentStatus(item.statusKey);
+      return key === "approved" || key === "paid" || key === "completed";
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.scheduledAt || 0).getTime() -
+        new Date(b.scheduledAt || 0).getTime(),
+    )
+    .slice(0, 8);
+
+  const markCompleted = async (appointment) => {
+    if (!updateAppointmentStatus) return;
+    try {
+      setCompletingId(appointment.id);
+      setLocalError("");
+      await updateAppointmentStatus({
+        appointmentId: appointment.id,
+        nextStatus: "completed",
+      });
+    } catch (error) {
+      console.log("markCompleted error:", error);
+      setLocalError(
+        error?.message || "Could not mark the appointment as completed.",
+      );
+    } finally {
+      setCompletingId(null);
+    }
+  };
+
+  return (
+    <View
+      style={{
+        backgroundColor: theme.card,
+        borderRadius: RFValue(20),
+        padding: RFValue(18),
+        marginBottom: RFValue(16),
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.06,
+        shadowOffset: { width: 0, height: 4 },
+        shadowRadius: 12,
+        elevation: 3,
+      }}
+    >
+      <Text
+        style={{
+          fontSize: RFValue(16),
+          fontWeight: "800",
+          color: theme.textPrimary,
+          marginBottom: RFValue(12),
+        }}
+      >
+        Upcoming Appointments
+      </Text>
+
+      {localError ? (
+        <Text
+          style={{
+            color: theme.danger,
+            fontSize: RFValue(12),
+            fontWeight: "600",
+            marginBottom: RFValue(8),
+          }}
+        >
+          {localError}
+        </Text>
+      ) : null}
+
+      {upcoming.length === 0 ? (
+        <Text
+          style={{
+            fontSize: RFValue(13),
+            color: theme.textSecondary,
+            textAlign: "center",
+            paddingVertical: RFValue(10),
+          }}
+        >
+          No approved appointments yet.
+        </Text>
+      ) : (
+        upcoming.map((appointment) => {
+          const statusKey = normalizeAppointmentStatus(appointment.statusKey);
+          const statusColors = appointmentStatusColorsFor(theme, statusKey);
+          const isDone = statusKey === "completed";
+          const busyComplete = completingId === appointment.id;
+          return (
+            <View
+              key={appointment.id}
+              style={{
+                borderTopWidth: 1,
+                borderTopColor: theme.cardBorder,
+                paddingTop: RFValue(12),
+                marginTop: RFValue(6),
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: RFValue(14),
+                    fontWeight: "700",
+                    color: theme.textPrimary,
+                    flex: 1,
+                    marginRight: RFValue(8),
+                  }}
+                  numberOfLines={1}
+                >
+                  {appointment.patientName || "Patient"}
+                </Text>
+                <View
+                  style={{
+                    backgroundColor: statusColors.bg,
+                    borderRadius: RFValue(8),
+                    paddingHorizontal: RFValue(8),
+                    paddingVertical: RFValue(3),
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: statusColors.fg,
+                      fontSize: RFValue(10),
+                      fontWeight: "800",
+                    }}
+                  >
+                    {humanizeAppointmentStatus(statusKey)}
+                  </Text>
+                </View>
+              </View>
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  color: theme.textSecondary,
+                  marginTop: RFValue(4),
+                }}
+              >
+                {formatAppointmentSummaryDate(appointment.scheduledAt)} ·{" "}
+                {formatTimeValue(appointment.scheduledAt)} ·{" "}
+                {appointment.consultationType === "chat"
+                  ? "Chat consult"
+                  : "Video consult"}
+              </Text>
+              {appointment.reason ? (
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    color: theme.textSecondary,
+                    marginTop: RFValue(6),
+                    lineHeight: RFValue(17),
+                  }}
+                >
+                  <Text style={{ fontWeight: "700" }}>Reason: </Text>
+                  {appointment.reason}
+                </Text>
+              ) : null}
+              {!isDone ? (
+                <TouchableOpacity
+                  onPress={() => markCompleted(appointment)}
+                  disabled={busyComplete}
+                  style={{
+                    marginTop: RFValue(10),
+                    alignSelf: "flex-start",
+                    backgroundColor: theme.successLight,
+                    borderRadius: RFValue(10),
+                    paddingHorizontal: RFValue(12),
+                    paddingVertical: RFValue(8),
+                    opacity: busyComplete ? 0.6 : 1,
+                  }}
+                >
+                  {busyComplete ? (
+                    <ActivityIndicator color={theme.success} />
+                  ) : (
+                    <Text
+                      style={{
+                        color: theme.success,
+                        fontSize: RFValue(12),
+                        fontWeight: "700",
+                      }}
+                    >
+                      Mark completed
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <Text
+                  style={{
+                    marginTop: RFValue(8),
+                    fontSize: RFValue(12),
+                    color: theme.textTertiary,
+                    fontStyle: "italic",
+                  }}
+                >
+                  Chat with this patient stays open in the Messages tab.
+                </Text>
+              )}
+            </View>
+          );
+        })
+      )}
+    </View>
+  );
+};
+
 const DoctorDashboard = ({ wounds, patients }) => {
   const { theme } = useTheme();
 
@@ -10081,60 +10743,11 @@ const DoctorDashboard = ({ wounds, patients }) => {
             )}
           </View>
 
-          {/* Today's Schedule */}
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(18),
-              marginBottom: RFValue(16),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: RFValue(14),
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: RFValue(16),
-                  fontWeight: "800",
-                  color: theme.textPrimary,
-                }}
-              >
-                {"Today's Schedule"}
-              </Text>
-              <TouchableOpacity>
-                <Text
-                  style={{
-                    color: theme.accent,
-                    fontWeight: "600",
-                    fontSize: RFValue(12),
-                  }}
-                >
-                  View All
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <Text
-              style={{
-                fontSize: RFValue(13),
-                color: theme.textSecondary,
-                textAlign: "center",
-                paddingVertical: RFValue(10),
-              }}
-            >
-              No appointments scheduled for today.
-            </Text>
-          </View>
+          {/* Appointment Requests (pending approval) */}
+          <DoctorAppointmentRequestsSection />
+
+          {/* Upcoming / approved appointments */}
+          <DoctorUpcomingAppointmentsSection />
 
           {/* Recent Activity */}
           <View
@@ -11517,6 +12130,7 @@ const AppointmentBookingScreen = ({
   const [selectedDate, setSelectedDate] = useState(0);
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [consultType, setConsultType] = useState("video");
+  const [reason, setReason] = useState("");
   const [bookingConfirmed, setBookingConfirmed] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookingError, setBookingError] = useState("");
@@ -11544,6 +12158,13 @@ const AppointmentBookingScreen = ({
 
   const handleConfirmBooking = async () => {
     if (!selectedSlot) return;
+    const trimmedReason = reason.trim();
+    if (!demoMode && !trimmedReason) {
+      setBookingError(
+        "Please describe the reason for visit so the doctor can review your request.",
+      );
+      return;
+    }
     const iso = combineDateAndSlotLabel(selectedDateObj, selectedSlot);
     setScheduledIso(iso);
     setBookingError("");
@@ -11558,13 +12179,14 @@ const AppointmentBookingScreen = ({
         doctorProfileId: activeDoctor.profileId,
         scheduledAtIso: iso,
         consultationType: consultType,
+        reason: trimmedReason,
       });
       setBookingConfirmed(true);
     } catch (error) {
       console.log("AppointmentBookingScreen error:", error);
       setBookingError(
         error?.message ||
-          "Could not book. Add an `appointments` collection in PocketBase (patient, doctor, scheduled_at, consultation_type, status).",
+          "Could not book. Add an `appointments` collection in PocketBase (patient, doctor, scheduled_at, consultation_type, status, reason, conversation).",
       );
     } finally {
       setBookingLoading(false);
@@ -11762,6 +12384,48 @@ const AppointmentBookingScreen = ({
                 }}
               >
                 {consultType === "video" ? "Video consult" : "Chat consult"}
+              </Text>
+            </View>
+            {reason.trim() ? (
+              <View style={{ marginTop: RFValue(10) }}>
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    color: theme.textSecondary,
+                    marginBottom: RFValue(4),
+                  }}
+                >
+                  Reason
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    color: theme.textPrimary,
+                    lineHeight: RFValue(18),
+                  }}
+                >
+                  {reason.trim()}
+                </Text>
+              </View>
+            ) : null}
+            <View
+              style={{
+                marginTop: RFValue(12),
+                backgroundColor: "#FEF3C7",
+                borderRadius: RFValue(10),
+                paddingVertical: RFValue(8),
+                paddingHorizontal: RFValue(10),
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  color: "#B45309",
+                  fontWeight: "600",
+                }}
+              >
+                Awaiting doctor approval. You will be notified once it is
+                reviewed.
               </Text>
             </View>
           </View>
@@ -12149,6 +12813,63 @@ const AppointmentBookingScreen = ({
               </Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(16),
+            padding: RFValue(16),
+            marginBottom: RFValue(16),
+            shadowColor: theme.shadowColor,
+            shadowOpacity: 0.06,
+            shadowOffset: { width: 0, height: 4 },
+            shadowRadius: 12,
+            elevation: 3,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: RFValue(15),
+              fontWeight: "700",
+              color: theme.textPrimary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Reason for visit
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: theme.textTertiary,
+              marginBottom: RFValue(10),
+            }}
+          >
+            The doctor will use this to review and approve your request.
+          </Text>
+          <TextInput
+            value={reason}
+            onChangeText={(value) => {
+              setReason(value);
+              if (bookingError) setBookingError("");
+            }}
+            placeholder="e.g. Persistent cough for 5 days, mild fever, asking for an online review."
+            placeholderTextColor={theme.textTertiary}
+            multiline
+            editable={!bookingLoading}
+            style={{
+              backgroundColor: theme.bg,
+              borderRadius: RFValue(12),
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+              paddingHorizontal: RFValue(14),
+              paddingVertical: RFValue(12),
+              minHeight: RFValue(88),
+              textAlignVertical: "top",
+              fontSize: RFValue(14),
+              color: theme.textPrimary,
+            }}
+          />
         </View>
 
         {bookingError ? (
@@ -16881,6 +17602,7 @@ export default function App() {
     doctorProfileId,
     scheduledAtIso,
     consultationType,
+    reason,
   }) => {
     if (!currentUser?.id) {
       throw new Error("Please login again");
@@ -16895,15 +17617,40 @@ export default function App() {
           : "Doctor is not available for booking.",
       );
     }
-    const payload = {
+    const trimmedReason = String(reason || "").trim();
+
+    // Create / reuse a persistent patient↔doctor conversation. This is the
+    // chat thread that stays open *after* the consultation is completed,
+    // satisfying the "chat remains after consultation" launch requirement.
+    let conversationId = null;
+    if (doctorUserId) {
+      try {
+        const conv = await ensureDirectConversation(doctorUserId);
+        conversationId = conv?.id || null;
+      } catch (convError) {
+        console.log(
+          "createAppointment conversation skipped:",
+          convError?.message,
+        );
+      }
+    }
+
+    const createWithPayload = async (payload) =>
+      pb.collection(PB_APPOINTMENTS_COLLECTION).create(payload);
+
+    const primaryPayload = {
       patient: currentUser.id,
       doctor: doctorRecordId,
       scheduled_at: scheduledAtIso,
       consultation_type: consultationType || "video",
-      status: "scheduled",
+      status: "requested",
     };
+    if (trimmedReason) primaryPayload.reason = trimmedReason;
+    if (conversationId) primaryPayload.conversation = conversationId;
+
+    let appointmentRecord = null;
     try {
-      await pb.collection(PB_APPOINTMENTS_COLLECTION).create(payload);
+      appointmentRecord = await createWithPayload(primaryPayload);
     } catch (error) {
       const status = error?.status ?? error?.response?.status;
       const pocketBaseMessage =
@@ -16921,15 +17668,148 @@ export default function App() {
             "Permission denied: check PocketBase API rules for creating appointments (patient must be allowed to create their own record).",
         );
       }
+      // 400 usually means the PB `appointments` schema doesn't yet know about
+      // one of the new fields (`reason`, `conversation`, or the `requested`
+      // status option). Retry with legacy shape so signup/booking keeps
+      // working until the schema is updated.
       if (status === 400) {
-        throw new Error(
-          pocketBaseMessage ||
-            "Invalid appointment data: check field names (scheduled_at, consultation_type) and whether `doctor` relates to UsersAuth or doctor_profile - toggle EXPO_PUBLIC_PB_APPOINTMENT_DOCTOR_IS_PROFILE=true if the relation targets doctor_profile.",
+        const legacyPayload = {
+          patient: currentUser.id,
+          doctor: doctorRecordId,
+          scheduled_at: scheduledAtIso,
+          consultation_type: consultationType || "video",
+          status: "scheduled",
+        };
+        try {
+          appointmentRecord = await createWithPayload(legacyPayload);
+        } catch (legacyError) {
+          const legacyMessage =
+            legacyError?.data?.message ||
+            legacyError?.response?.data?.message ||
+            legacyError?.message ||
+            pocketBaseMessage;
+          throw new Error(
+            legacyMessage ||
+              "Invalid appointment data: add `reason` (text), `conversation` (rel → conversations), and select values `requested, approved, rejected, paid, completed` on the `appointments` collection.",
+          );
+        }
+      } else {
+        throw new Error(pocketBaseMessage || "Unable to create appointment.");
+      }
+    }
+
+    // Best-effort: announce the request into the shared conversation so the
+    // doctor can see it even before they look at the requests section.
+    if (conversationId && appointmentRecord) {
+      try {
+        const whenLabel = `${formatAppointmentSummaryDate(scheduledAtIso)} · ${formatTimeValue(
+          scheduledAtIso,
+        )}`;
+        const reasonSuffix = trimmedReason
+          ? `\nReason: ${trimmedReason}`
+          : "";
+        await pb.collection("messages").create({
+          conversation: conversationId,
+          kind: "system",
+          text: `Appointment request: ${whenLabel}.${reasonSuffix}`,
+        });
+        await pb.collection("conversations").update(conversationId, {
+          lastMessageAt: new Date().toISOString(),
+        });
+      } catch (msgError) {
+        console.log(
+          "createAppointment system message skipped:",
+          msgError?.message,
         );
       }
-      throw new Error(pocketBaseMessage || "Unable to create appointment.");
     }
+
     await refreshAllData();
+    return appointmentRecord;
+  };
+
+  const updateAppointmentStatus = async ({
+    appointmentId,
+    nextStatus,
+    replyNote,
+  }) => {
+    if (!appointmentId) {
+      throw new Error("Appointment not found");
+    }
+    const normalized = normalizeAppointmentStatus(nextStatus);
+    let existing = null;
+    try {
+      existing = await pb
+        .collection(PB_APPOINTMENTS_COLLECTION)
+        .getOne(appointmentId, { requestKey: null });
+    } catch (error) {
+      console.log("updateAppointmentStatus load error:", error?.message);
+    }
+    const trimmedReply = String(replyNote || "").trim();
+    const payload = { status: normalized };
+    if (trimmedReply) payload.reply = trimmedReply;
+    try {
+      await pb
+        .collection(PB_APPOINTMENTS_COLLECTION)
+        .update(appointmentId, payload);
+    } catch (error) {
+      // Retry without the optional reply field if the column is missing.
+      if (trimmedReply) {
+        try {
+          await pb
+            .collection(PB_APPOINTMENTS_COLLECTION)
+            .update(appointmentId, { status: normalized });
+        } catch (retryError) {
+          throw new Error(
+            retryError?.data?.message ||
+              retryError?.message ||
+              "Unable to update appointment status.",
+          );
+        }
+      } else {
+        throw new Error(
+          error?.data?.message ||
+            error?.message ||
+            "Unable to update appointment status.",
+        );
+      }
+    }
+
+    const conversationId = existing?.conversation || null;
+    if (conversationId) {
+      const systemText =
+        normalized === "approved"
+          ? `Doctor approved the appointment.${trimmedReply ? `\nNote: ${trimmedReply}` : ""}`
+          : normalized === "rejected"
+            ? `Doctor declined the appointment.${trimmedReply ? `\nNote: ${trimmedReply}` : ""}`
+            : normalized === "completed"
+              ? `Consultation marked completed. This chat stays open for follow-up questions.`
+              : normalized === "paid"
+                ? `Consultation fee paid. Appointment is confirmed.`
+                : `Appointment status updated: ${humanizeAppointmentStatus(normalized)}.`;
+      try {
+        await pb.collection("messages").create({
+          conversation: conversationId,
+          kind: "system",
+          text: systemText,
+        });
+        await pb.collection("conversations").update(conversationId, {
+          lastMessageAt: new Date().toISOString(),
+        });
+      } catch (msgError) {
+        console.log(
+          "updateAppointmentStatus message skipped:",
+          msgError?.message,
+        );
+      }
+    }
+
+    void refreshAllData().catch((refreshError) =>
+      console.log(
+        "refreshAllData after appointment status change:",
+        refreshError?.message || refreshError,
+      ),
+    );
   };
 
   const createWoundReport = async ({ description, image, doctorUserId }) => {
@@ -17382,6 +18262,7 @@ export default function App() {
     updateOrderStatus,
     fetchApprovedDoctors,
     createAppointment,
+    updateAppointmentStatus,
   };
 
   return (
