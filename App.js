@@ -23,6 +23,7 @@ import {
   Platform,
   KeyboardAvoidingView,
   BackHandler,
+  Modal,
 } from "react-native";
 import {
   RTCPeerConnection,
@@ -2091,6 +2092,7 @@ const PatientHomeScreen = () => {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  onPress={() => setShowFindDoctor(true)}
                   style={{ alignItems: "center", width: "25%" }}
                 >
                   <View
@@ -14439,7 +14441,35 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   const [image, setImage] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const { createWoundReport } = useAppData();
+  const [doctors, setDoctors] = useState([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(true);
+  const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
+  const submitInFlightRef = useRef(false);
+  const { createWoundReport, fetchApprovedDoctors } = useAppData();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchApprovedDoctors();
+        if (!cancelled) setDoctors(Array.isArray(list) ? list : []);
+      } catch (error) {
+        console.log("load doctors for wound report:", error);
+        if (!cancelled) setDoctors([]);
+      } finally {
+        if (!cancelled) setDoctorsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!submitting) return undefined;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => sub.remove();
+  }, [submitting]);
 
   const pickWoundPhoto = async (source) => {
     try {
@@ -14481,25 +14511,86 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   };
 
   const handleSubmit = async () => {
+    if (submitInFlightRef.current || submitting) return;
     if (!desc.trim()) return;
+    if (!selectedDoctorUserId) {
+      Alert.alert(
+        "Select a doctor",
+        "Choose which doctor should receive this wound report.",
+      );
+      return;
+    }
+    submitInFlightRef.current = true;
+    setSubmitting(true);
+    setSubmitError("");
     try {
-      setSubmitting(true);
-      setSubmitError("");
       await createWoundReport({
         description: desc.trim(),
         image,
+        doctorUserId: selectedDoctorUserId,
       });
-      setSubmitting(false);
       onBack();
     } catch (error) {
       console.log("Create wound error:", error);
       setSubmitError(error?.message || "Unable to submit wound report");
       setSubmitting(false);
+      submitInFlightRef.current = false;
     }
+  };
+
+  const handleBack = () => {
+    if (submitInFlightRef.current || submitting) return;
+    onBack();
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FFF" }}>
+      <Modal visible={submitting} transparent animationType="fade">
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(15, 23, 42, 0.45)",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: RFValue(24),
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: "#FFF",
+              borderRadius: RFValue(20),
+              paddingVertical: RFValue(28),
+              paddingHorizontal: RFValue(32),
+              alignItems: "center",
+              maxWidth: 320,
+              width: "100%",
+            }}
+          >
+            <ActivityIndicator size="large" color="#4338CA" />
+            <Text
+              style={{
+                marginTop: RFValue(18),
+                fontSize: RFValue(16),
+                fontWeight: "800",
+                color: "#1E1B4B",
+                textAlign: "center",
+              }}
+            >
+              Sending your report…
+            </Text>
+            <Text
+              style={{
+                marginTop: RFValue(10),
+                fontSize: RFValue(13),
+                color: "#6B7280",
+                textAlign: "center",
+              }}
+            >
+              Please wait. You will return to Wound Tracker when this finishes.
+            </Text>
+          </View>
+        </View>
+      </Modal>
       <View
         style={{
           padding: RFValue(20),
@@ -14509,7 +14600,11 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           borderBottomColor: "#F3F4F6",
         }}
       >
-        <TouchableOpacity onPress={onBack} style={{ marginRight: RFValue(16) }}>
+        <TouchableOpacity
+          onPress={handleBack}
+          disabled={submitting}
+          style={{ marginRight: RFValue(16), opacity: submitting ? 0.35 : 1 }}
+        >
           <Ionicons name="arrow-back" size={RFValue(24)} color="#1E1B4B" />
         </TouchableOpacity>
         <Text
@@ -14519,7 +14614,11 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: RFValue(20) }}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        scrollEnabled={!submitting}
+        contentContainerStyle={{ padding: RFValue(20) }}
+      >
         <Text
           style={{
             fontSize: RFValue(14),
@@ -14531,6 +14630,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           Wound Photo
         </Text>
         <TouchableOpacity
+          disabled={submitting}
           style={{
             width: "100%",
             height: RFValue(200),
@@ -14543,6 +14643,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
             borderColor: "#E5E7EB",
             borderStyle: "dashed",
             overflow: "hidden",
+            opacity: submitting ? 0.55 : 1,
           }}
           activeOpacity={0.85}
           onPress={() =>
@@ -14601,7 +14702,76 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           }}
           value={desc}
           onChangeText={setDesc}
+          editable={!submitting}
         />
+
+        <Text
+          style={{
+            fontSize: RFValue(14),
+            fontWeight: "700",
+            color: "#374151",
+            marginBottom: RFValue(10),
+            marginTop: RFValue(8),
+          }}
+        >
+          Select doctor
+        </Text>
+        {doctorsLoading ? (
+          <View
+            style={{
+              paddingVertical: RFValue(20),
+              alignItems: "center",
+            }}
+          >
+            <ActivityIndicator color="#4338CA" />
+            <Text style={{ color: "#9CA3AF", marginTop: RFValue(8) }}>
+              Loading doctors…
+            </Text>
+          </View>
+        ) : doctors.length === 0 ? (
+          <Text style={{ color: "#DC2626", marginBottom: RFValue(12) }}>
+            No approved doctors are available. Try again later.
+          </Text>
+        ) : (
+          doctors.map((d) => {
+            const selected = selectedDoctorUserId === d.userId;
+            return (
+              <TouchableOpacity
+                key={d.userId || d.profileId}
+                disabled={submitting}
+                onPress={() => !submitting && setSelectedDoctorUserId(d.userId)}
+                activeOpacity={0.85}
+                style={{
+                  padding: RFValue(14),
+                  borderRadius: RFValue(14),
+                  borderWidth: 2,
+                  borderColor: selected ? "#4338CA" : "#E5E7EB",
+                  backgroundColor: selected ? "#EEF2FF" : "#FFF",
+                  marginBottom: RFValue(10),
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: RFValue(15),
+                    fontWeight: "700",
+                    color: "#1E1B4B",
+                  }}
+                >
+                  {d.name}
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    color: "#6B7280",
+                    marginTop: RFValue(4),
+                  }}
+                >
+                  {d.specialty}
+                </Text>
+              </TouchableOpacity>
+            );
+          })
+        )}
 
         {submitError ? (
           <Text
@@ -14619,29 +14789,28 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           onPress={handleSubmit}
           disabled={submitting}
           style={{
-            backgroundColor: "#4338CA",
+            backgroundColor: submitting ? "#6366F1" : "#4338CA",
             borderRadius: RFValue(16),
             paddingVertical: RFValue(16),
             alignItems: "center",
             marginTop: RFValue(30),
-            opacity: submitting ? 0.75 : 1,
+            opacity: submitting ? 0.92 : 1,
+            flexDirection: "row",
+            justifyContent: "center",
           }}
         >
           {submitting ? (
-            <Text style={{ color: "#FFF", fontWeight: "700" }}>
-              Submitting...
-            </Text>
-          ) : (
-            <Text
-              style={{
-                color: "#FFF",
-                fontWeight: "700",
-                fontSize: RFValue(16),
-              }}
-            >
-              Submit to Doctor
-            </Text>
-          )}
+            <ActivityIndicator color="#FFF" style={{ marginRight: RFValue(10) }} />
+          ) : null}
+          <Text
+            style={{
+              color: "#FFF",
+              fontWeight: "700",
+              fontSize: RFValue(16),
+            }}
+          >
+            {submitting ? "Submitting…" : "Submit to Doctor"}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -14682,10 +14851,12 @@ const WoundDetailScreen = ({
     setLocalWound((prev) => (prev?.id === wound.id ? prev : wound));
   }, [wound?.id]);
 
-  const hydrateConversation = async () => {
+  const hydrateConversation = async (woundLike) => {
+    const target = woundLike || localWound;
+    if (!target?.id) return;
     try {
       setLoadingChat(true);
-      const conversation = await ensureConversationForWound(localWound, {
+      const conversation = await ensureConversationForWound(target, {
         includeCurrentUser: userRole !== "patient",
       });
       const messages = await loadConversationMessages(conversation.id);
@@ -14699,12 +14870,13 @@ const WoundDetailScreen = ({
   };
 
   useEffect(() => {
-    if (!localWound?.id) return;
+    if (!wound?.id) return;
     let mounted = true;
+    let chatReloadTimer = null;
 
-    hydrateConversation();
+    hydrateConversation(wound);
 
-    const woundIdForCleanup = localWound.id;
+    const woundIdForCleanup = wound.id;
 
     const subscribe = async () => {
       try {
@@ -14713,10 +14885,16 @@ const WoundDetailScreen = ({
           const conversationId = conversationIdRef.current;
           if (!conversationId || record?.conversation !== conversationId)
             return;
-          const messages = await loadConversationMessages(conversationId);
-          if (mounted) {
-            setChat(messages);
-          }
+          if (chatReloadTimer) clearTimeout(chatReloadTimer);
+          chatReloadTimer = setTimeout(async () => {
+            if (!mounted) return;
+            try {
+              const messages = await loadConversationMessages(conversationId);
+              if (mounted) setChat(messages);
+            } catch (e) {
+              console.log("Wound detail chat reload error:", e);
+            }
+          }, 350);
         });
         await pb
           .collection("wounds")
@@ -14725,7 +14903,7 @@ const WoundDetailScreen = ({
             const refreshedWound = mapWoundRecord({
               ...record,
               expand: {
-                patient: localWound?.raw?.expand?.patient,
+                patient: record.expand?.patient,
               },
             });
             setLocalWound((prev) => ({
@@ -14743,10 +14921,11 @@ const WoundDetailScreen = ({
 
     return () => {
       mounted = false;
+      if (chatReloadTimer) clearTimeout(chatReloadTimer);
       pb.collection("messages").unsubscribe("*");
       pb.collection("wounds").unsubscribe(woundIdForCleanup);
     };
-  }, [localWound?.id]);
+  }, [wound?.id]);
 
   const sendMessage = async () => {
     if (!message.trim()) return;
@@ -15088,7 +15267,6 @@ const WoundDetailScreen = ({
               );
               throw error;
             }
-            setShowPrescriptionModal(false);
             try {
               const conversation = await ensureConversationForWound(localWound, {
                 includeCurrentUser: true,
@@ -15107,6 +15285,8 @@ const WoundDetailScreen = ({
                 status: "Medication Prescribed",
               }));
               await refreshAllData();
+            } finally {
+              setShowPrescriptionModal(false);
             }
           }}
         />
@@ -15913,10 +16093,11 @@ export default function App() {
 
   useEffect(() => {
     if (userRole !== "doctor" || !doctorSelectedWoundId) return;
+    if (dataLoading) return;
     if (!(wounds || []).some((wound) => wound.id === doctorSelectedWoundId)) {
       setDoctorSelectedWoundId(null);
     }
-  }, [wounds, doctorSelectedWoundId, userRole]);
+  }, [wounds, doctorSelectedWoundId, userRole, dataLoading]);
 
   useEffect(() => {
     if (userRole !== "patient" || !patientSelectedWoundId) return;
@@ -16478,12 +16659,19 @@ export default function App() {
     await refreshAllData();
   };
 
-  const createWoundReport = async ({ description, image }) => {
+  const createWoundReport = async ({ description, image, doctorUserId }) => {
     if (!currentUser?.id) {
       throw new Error("Please login again");
     }
     const doctorUsers = await fetchUsersByRole("doctor");
+    const conversationDoctorIds = doctorUserId
+      ? uniqueIds([doctorUserId])
+      : doctorUsers.map((user) => user.id);
     const filePart = image?.uri ? pickerAssetToUploadPart(image) : null;
+
+    const appendDoctorRelation = (formData) => {
+      if (doctorUserId) formData.append("doctor", doctorUserId);
+    };
 
     let woundRecord;
     if (filePart) {
@@ -16493,6 +16681,7 @@ export default function App() {
       formData.append("severity", "moderate");
       formData.append("status", "review_pending");
       formData.append("notes", "");
+      appendDoctorRelation(formData);
       formData.append("image", filePart);
       try {
         woundRecord = await pb.collection("wounds").create(formData);
@@ -16504,38 +16693,40 @@ export default function App() {
         fallbackData.append("severity", "moderate");
         fallbackData.append("status", "review_pending");
         fallbackData.append("notes", "");
+        appendDoctorRelation(fallbackData);
         fallbackData.append("photo", filePart);
         try {
           woundRecord = await pb.collection("wounds").create(fallbackData);
         } catch (fallbackError) {
           console.log("wound photo upload failed, saving without photo:", fallbackError);
-          woundRecord = await pb.collection("wounds").create({
+          const jsonPayload = {
             patient: currentUser.id,
             description: description?.trim() || "",
             severity: "moderate",
             status: "review_pending",
             notes: "",
             hasPharmacy: false,
-          });
+          };
+          if (doctorUserId) jsonPayload.doctor = doctorUserId;
+          woundRecord = await pb.collection("wounds").create(jsonPayload);
         }
       }
     } else {
-      woundRecord = await pb.collection("wounds").create({
+      const jsonPayload = {
         patient: currentUser.id,
         description: description?.trim() || "",
         severity: "moderate",
         status: "review_pending",
         notes: "",
         hasPharmacy: false,
-      });
+      };
+      if (doctorUserId) jsonPayload.doctor = doctorUserId;
+      woundRecord = await pb.collection("wounds").create(jsonPayload);
     }
     const conversation = await pb.collection("conversations").create({
       title: buildConversationTitle(woundRecord),
       linkedWound: woundRecord.id,
-      members: uniqueIds([
-        currentUser.id,
-        ...doctorUsers.map((user) => user.id),
-      ]),
+      members: uniqueIds([currentUser.id, ...conversationDoctorIds]),
       lastMessageAt: new Date().toISOString(),
     });
     await pb.collection("wounds").update(woundRecord.id, {
@@ -16546,7 +16737,9 @@ export default function App() {
       kind: "system",
       text: DEFAULT_WOUND_SYSTEM_MESSAGE,
     });
-    await refreshAllData();
+    void refreshAllData().catch((err) =>
+      console.log("refreshAllData after wound create:", err?.message || err),
+    );
   };
 
   const prescribeForWound = async (woundLike, prescriptionInput) => {
@@ -16800,30 +16993,39 @@ export default function App() {
       return;
     }
 
+    let debounceTimer = null;
+    const scheduleDataRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        refreshAllData(currentUser, userRole);
+      }, 500);
+    };
+
     const subscribe = async () => {
       try {
         await pb.collection("wounds").subscribe("*", () => {
-          refreshAllData(currentUser, userRole);
+          scheduleDataRefresh();
         });
         await pb.collection("orders").subscribe("*", () => {
-          refreshAllData(currentUser, userRole);
+          scheduleDataRefresh();
         });
         try {
           await pb.collection("prescriptions").subscribe("*", () => {
-            refreshAllData(currentUser, userRole);
+            scheduleDataRefresh();
           });
         } catch (error) {
           console.log("prescriptions subscribe skipped:", error?.message);
         }
         await pb.collection("conversations").subscribe("*", () => {
-          refreshAllData(currentUser, userRole);
+          scheduleDataRefresh();
         });
       } catch (error) {
         console.log("App subscription error:", error);
       }
       try {
         await pb.collection(PB_APPOINTMENTS_COLLECTION).subscribe("*", () => {
-          refreshAllData(currentUser, userRole);
+          scheduleDataRefresh();
         });
       } catch (error) {
         console.log("appointments subscribe skipped:", error?.message);
@@ -16833,6 +17035,7 @@ export default function App() {
     subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       pb.collection("wounds").unsubscribe("*");
       pb.collection("orders").unsubscribe("*");
       try {
