@@ -59,6 +59,8 @@ import {
   restoreAuth,
   ensureRoleProfile,
   formatPocketBaseClientError,
+  getPbAppointmentsCollection,
+  isPbAppointmentDoctorProfileRelation,
   signUpWithEmail,
   loginWithEmail,
   requestPasswordReset,
@@ -273,19 +275,9 @@ const MEDICINE_PRICE_MAP = {
   Neosporin: 150,
 };
 
-const PB_APPOINTMENTS_COLLECTION =
-  (typeof process !== "undefined" &&
-    process.env?.EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION) ||
-  Constants.expoConfig?.extra?.pbAppointmentsCollection ||
-  "appointments";
-
+const PB_APPOINTMENTS_COLLECTION = getPbAppointmentsCollection();
 const PB_APPOINTMENT_DOCTOR_IS_PROFILE =
-  String(
-    (typeof process !== "undefined" &&
-      process.env?.EXPO_PUBLIC_PB_APPOINTMENT_DOCTOR_IS_PROFILE) ||
-      Constants.expoConfig?.extra?.pbAppointmentDoctorIsProfile ||
-      "",
-  ).toLowerCase() === "true";
+  isPbAppointmentDoctorProfileRelation();
 
 const CALL_DIRECTORY_ALLOWED_ROLES = ["doctor", "pharmacy", "staff", "admin"];
 
@@ -2769,6 +2761,7 @@ const PatientHomeScreen = () => {
   const [showSOS, setShowSOS] = useState(false);
   const [showHospital, setShowHospital] = useState(false);
   const [showPharmacy, setShowPharmacy] = useState(false);
+  const [showAppointments, setShowAppointments] = useState(false);
 
   useEffect(() => {
     void fetchHospitals();
@@ -2820,6 +2813,10 @@ const PatientHomeScreen = () => {
         setShowPharmacy(false);
         return true;
       }
+      if (showAppointments) {
+        setShowAppointments(false);
+        return true;
+      }
       return false;
     };
     const subscription = BackHandler.addEventListener(
@@ -2836,6 +2833,7 @@ const PatientHomeScreen = () => {
     showSOS,
     showHospital,
     showPharmacy,
+    showAppointments,
   ]);
 
   if (startCallType)
@@ -2865,6 +2863,12 @@ const PatientHomeScreen = () => {
     return <HospitalDirectoryScreen onBack={() => setShowHospital(false)} />;
   if (showPharmacy)
     return <PharmacyDirectoryScreen onBack={() => setShowPharmacy(false)} />;
+  if (showAppointments)
+    return (
+      <PatientAppointmentsScreen
+        onBack={() => setShowAppointments(false)}
+      />
+    );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -3173,7 +3177,7 @@ const PatientHomeScreen = () => {
 
             {upcomingAppointments.length > 0 ? (
               <TouchableOpacity
-                onPress={() => setShowFindDoctor(true)}
+                onPress={() => setShowAppointments(true)}
                 activeOpacity={0.9}
                 style={{
                   backgroundColor: theme.card,
@@ -3436,6 +3440,63 @@ const PatientHomeScreen = () => {
                 </Text>
               </TouchableOpacity>
             </View>
+
+            {/* My appointments — pay fee, status (Step 8) */}
+            <TouchableOpacity
+              onPress={() => setShowAppointments(true)}
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: RFValue(16),
+                padding: RFValue(16),
+                marginBottom: RFValue(16),
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
+                flexDirection: "row",
+                alignItems: "center",
+              }}
+            >
+              <View
+                style={{
+                  paddingHorizontal: RFValue(10),
+                  height: RFValue(36),
+                  borderRadius: RFValue(14),
+                  backgroundColor: theme.accentLight,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginRight: RFValue(14),
+                }}
+              >
+                <Ionicons
+                  name="calendar"
+                  size={RFValue(22)}
+                  color={theme.accent}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: RFValue(14),
+                    fontWeight: "700",
+                    color: theme.textPrimary,
+                  }}
+                >
+                  My appointments
+                </Text>
+                <Text
+                  style={{ fontSize: RFValue(12), color: theme.textSecondary }}
+                >
+                  Approve, pay fee, and join your visit
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={RFValue(18)}
+                color={theme.textTertiary}
+              />
+            </TouchableOpacity>
 
             {/* Prescriptions */}
             <TouchableOpacity
@@ -6837,6 +6898,7 @@ const PatientEditProfileScreen = ({
 const PatientAppointmentsScreen = ({ onBack }) => {
   const { theme } = useTheme();
   const { appointments, payForAppointment } = useAppData();
+  const showBack = typeof onBack === "function";
   const [payingId, setPayingId] = useState(null);
   const [payError, setPayError] = useState("");
 
@@ -6879,24 +6941,26 @@ const PatientAppointmentsScreen = ({ onBack }) => {
           alignItems: "center",
         }}
       >
-        <TouchableOpacity
-          onPress={onBack}
-          style={{
-            width: RFValue(36),
-            height: RFValue(36),
-            borderRadius: RFValue(10),
-            backgroundColor: theme.bg,
-            justifyContent: "center",
-            alignItems: "center",
-            marginRight: RFValue(14),
-          }}
-        >
-          <Ionicons
-            name="arrow-back"
-            size={RFValue(20)}
-            color={theme.textPrimary}
-          />
-        </TouchableOpacity>
+        {showBack ? (
+          <TouchableOpacity
+            onPress={onBack}
+            style={{
+              width: RFValue(36),
+              height: RFValue(36),
+              borderRadius: RFValue(10),
+              backgroundColor: theme.bg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(14),
+            }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+        ) : null}
         <Text
           style={{
             fontSize: RFValue(20),
@@ -6927,7 +6991,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                 textAlign: "center",
               }}
             >
-              No appointments yet. Book one from the Home tab.
+              No appointments yet. Tap Book Appt on Home to schedule one.
             </Text>
           </View>
         ) : (
@@ -13252,7 +13316,8 @@ const AppointmentBookingScreen = ({
     } catch (error) {
       console.log("AppointmentBookingScreen error:", error);
       setBookingError(
-        error?.message ||
+        formatPocketBaseClientError(error) ||
+          error?.message ||
           "Could not book. Add an `appointments` collection in PocketBase (patient, doctor, scheduled_at, consultation_type, status, reason, conversation).",
       );
     } finally {
@@ -21530,64 +21595,97 @@ export default function App() {
     const createWithPayload = async (payload) =>
       pb.collection(PB_APPOINTMENTS_COLLECTION).create(payload);
 
-    const primaryPayload = {
-      patient: currentUser.id,
-      doctor: doctorRecordId,
-      scheduled_at: scheduledAtIso,
-      consultation_type: consultationType || "video",
-      status: "requested",
+    const pocketDetail = (err) =>
+      formatPocketBaseClientError(err) ||
+      err?.data?.message ||
+      err?.response?.data?.message ||
+      err?.message ||
+      "";
+
+    // Some PocketBase setups relate `doctor` to **users**, others to
+    // **doctor_profile**. Try the configured id first, then the alternate.
+    const doctorIdCandidates = [
+      ...(PB_APPOINTMENT_DOCTOR_IS_PROFILE
+        ? [doctorProfileId, doctorUserId]
+        : [doctorUserId, doctorProfileId]),
+    ].filter((id, idx, arr) => id && arr.indexOf(id) === idx);
+
+    const buildPayloadVariants = (docId) => {
+      const consult = consultationType || "video";
+      const base = {
+        patient: currentUser.id,
+        doctor: docId,
+        scheduled_at: scheduledAtIso,
+      };
+      const withConsult = { ...base, consultation_type: consult };
+      return [
+        // Step 2 "request" flow — needs matching PocketBase select values.
+        {
+          ...withConsult,
+          status: "requested",
+          ...(trimmedReason ? { reason: trimmedReason } : {}),
+          ...(conversationId ? { conversation: conversationId } : {}),
+        },
+        // Same without optional conversation (field / rules issues).
+        {
+          ...withConsult,
+          status: "requested",
+          ...(trimmedReason ? { reason: trimmedReason } : {}),
+        },
+        // Legacy "scheduled" shape (older demos).
+        { ...withConsult, status: "scheduled" },
+        // Common alternate first state.
+        { ...withConsult, status: "pending" },
+        // No consultation_type column or wrong select values.
+        { ...base, status: "scheduled" },
+        { ...base, status: "pending" },
+        // Bare minimum (custom default status in PocketBase).
+        { ...base },
+      ];
     };
-    if (trimmedReason) primaryPayload.reason = trimmedReason;
-    if (conversationId) primaryPayload.conversation = conversationId;
 
     let appointmentRecord = null;
-    try {
-      appointmentRecord = await createWithPayload(primaryPayload);
-    } catch (error) {
-      const status = error?.status ?? error?.response?.status;
-      const pocketBaseMessage =
-        error?.data?.message ||
-        error?.response?.data?.message ||
-        error?.message;
-      if (status === 404) {
-        throw new Error(
-          `PocketBase 404: collection "${PB_APPOINTMENTS_COLLECTION}" was not found. Create it in Admin, or set EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION / app.json extra.pbAppointmentsCollection to your collection id/name.`,
-        );
-      }
-      if (status === 403) {
-        throw new Error(
-          pocketBaseMessage ||
-            "Permission denied: check PocketBase API rules for creating appointments (patient must be allowed to create their own record).",
-        );
-      }
-      // 400 usually means the PB `appointments` schema doesn't yet know about
-      // one of the new fields (`reason`, `conversation`, or the `requested`
-      // status option). Retry with legacy shape so signup/booking keeps
-      // working until the schema is updated.
-      if (status === 400) {
-        const legacyPayload = {
-          patient: currentUser.id,
-          doctor: doctorRecordId,
-          scheduled_at: scheduledAtIso,
-          consultation_type: consultationType || "video",
-          status: "scheduled",
-        };
+    let lastError = null;
+
+    outer: for (const docId of doctorIdCandidates) {
+      const variants = buildPayloadVariants(docId);
+      for (const payload of variants) {
         try {
-          appointmentRecord = await createWithPayload(legacyPayload);
-        } catch (legacyError) {
-          const legacyMessage =
-            legacyError?.data?.message ||
-            legacyError?.response?.data?.message ||
-            legacyError?.message ||
-            pocketBaseMessage;
-          throw new Error(
-            legacyMessage ||
-              "Invalid appointment data: add `reason` (text), `conversation` (rel → conversations), and select values `requested, approved, rejected, paid, completed` on the `appointments` collection.",
-          );
+          appointmentRecord = await createWithPayload(payload);
+          break outer;
+        } catch (error) {
+          lastError = error;
+          const httpStatus = error?.status ?? error?.response?.status;
+          if (httpStatus === 404) {
+            throw new Error(
+              `PocketBase 404: collection "${PB_APPOINTMENTS_COLLECTION}" was not found. Create it in Admin, or set EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION / app.json extra.pbAppointmentsCollection to your collection id/name.`,
+            );
+          }
+          if (httpStatus === 403) {
+            throw new Error(
+              pocketDetail(error) ||
+                "Permission denied: check PocketBase API rules for creating appointments (patient must be allowed to create their own record).",
+            );
+          }
+          // Only retry payload variants on validation / schema mismatch.
+          if (httpStatus !== 400) {
+            throw new Error(
+              pocketDetail(error) || "Unable to create appointment.",
+            );
+          }
         }
-      } else {
-        throw new Error(pocketBaseMessage || "Unable to create appointment.");
       }
+    }
+
+    if (!appointmentRecord) {
+      const hint =
+        doctorIdCandidates.length > 1
+          ? " Also try app.json → extra.pbAppointmentDoctorIsProfile: true if your `doctor` field relates to doctor_profile instead of users."
+          : "";
+      throw new Error(
+        (lastError && pocketDetail(lastError)) ||
+          `Could not save appointment (PocketBase rejected every field combination). Check: patient + doctor relations, scheduled_at (date field), status options (requested / pending / scheduled / approved), consultation_type, optional reason & conversation.${hint}`,
+      );
     }
 
     // Best-effort: announce the request into the shared conversation so the
@@ -22885,6 +22983,18 @@ const AppContent = ({
             icon: ({ color, focused }) => (
               <Ionicons
                 name={focused ? "bandage" : "bandage-outline"}
+                size={RFValue(22)}
+                color={color}
+              />
+            ),
+          },
+          {
+            name: "Appts",
+            label: "Appts",
+            component: () => <PatientAppointmentsScreen />,
+            icon: ({ color, focused }) => (
+              <Ionicons
+                name={focused ? "calendar" : "calendar-outline"}
                 size={RFValue(22)}
                 color={color}
               />

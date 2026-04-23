@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import PocketBase, { AsyncAuthStore } from "pocketbase";
+import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import EventSource from "react-native-sse";
@@ -24,6 +25,49 @@ const authStore = new AsyncAuthStore({
 });
 
 export const pb = new PocketBase(PB_URL, authStore);
+
+/**
+ * PocketBase **appointments** collection (patient booking + doctor approval + pay).
+ *
+ * Configure in **Expo** `app.json` → `expo.extra`:
+ * - `pbAppointmentsCollection` — collection name or id (default `"appointments"`).
+ * - `pbAppointmentDoctorIsProfile` — `"true"` if the `doctor` relation points at
+ *   **doctor_profile**; omit or `"false"` if `doctor` points at **UsersAuth** / users.
+ *
+ * **Admin dashboard — you normally must add/update the schema once:**
+ * - `patient` (relation → your auth users collection, e.g. UsersAuth)
+ * - `doctor` (relation → **either** users **or** doctor_profile — must match the flag above)
+ * - `scheduled_at` (datetime)
+ * - `consultation_type` (select): include at least `video`, `chat` (or relax / omit field)
+ * - `status` (select): include `requested`, `approved`, `rejected` or `declined`,
+ *   `paid`, `completed`, and often `pending` / `scheduled` for older rows
+ * - `reason` (text, optional but recommended)
+ * - `conversation` (relation → conversations, optional)
+ * - `consultationFee` or fee on doctor_profile (optional; app reads fee for “Pay fee”)
+ *
+ * **API rules:** patients need **Create** where `patient = @request.auth.id`;
+ * doctors need **List/Update** for their side of the workflow.
+ */
+export function getPbAppointmentsCollection() {
+  return (
+    (typeof process !== "undefined" &&
+      process.env?.EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION) ||
+    Constants.expoConfig?.extra?.pbAppointmentsCollection ||
+    "appointments"
+  );
+}
+
+/** @returns {boolean} True when `appointments.doctor` relates to doctor_profile, not auth user id. */
+export function isPbAppointmentDoctorProfileRelation() {
+  return (
+    String(
+      (typeof process !== "undefined" &&
+        process.env?.EXPO_PUBLIC_PB_APPOINTMENT_DOCTOR_IS_PROFILE) ||
+        Constants.expoConfig?.extra?.pbAppointmentDoctorIsProfile ||
+        "",
+    ).toLowerCase() === "true"
+  );
+}
 
 const ROLE_TO_PROFILE_COLLECTION = {
   patient: "patient_profile",
