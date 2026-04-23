@@ -38,6 +38,7 @@ import {
 } from "@livekit/react-native-webrtc";
 import Constants from "expo-constants";
 import * as ImagePicker from "expo-image-picker";
+import * as Notifications from "expo-notifications";
 import {
   Ionicons,
   MaterialCommunityIcons,
@@ -420,6 +421,116 @@ const appointmentStatusIsActionable = (statusKey) => {
   return key === "approved" || key === "paid" || key === "completed";
 };
 
+// Appointments unlock the consultation actions (chat / video) only once the
+// patient has paid. This keeps Step 8's payment gate consistent across screens.
+const appointmentConsultationUnlocked = (statusKey) => {
+  const key = normalizeAppointmentStatus(statusKey);
+  return key === "paid" || key === "completed";
+};
+
+// ---------------------------------------------------------------------------
+// Step 7 — Smart prescription: structured timing options.
+// Doctors pick a frequency + meal timing + explicit times-of-day chips. The
+// structured values are written alongside the legacy free-text `whenToTake`
+// so old viewers keep working while the new `medication_schedule` expansion
+// uses the structured shape.
+// ---------------------------------------------------------------------------
+const FREQUENCY_OPTIONS = [
+  { id: "once_daily", label: "Once a day", defaults: ["08:00"] },
+  { id: "twice_daily", label: "Twice a day", defaults: ["08:00", "20:00"] },
+  {
+    id: "thrice_daily",
+    label: "Three times a day",
+    defaults: ["08:00", "14:00", "20:00"],
+  },
+  {
+    id: "four_times_daily",
+    label: "Four times a day",
+    defaults: ["08:00", "13:00", "18:00", "22:00"],
+  },
+  { id: "as_needed", label: "As needed", defaults: [] },
+];
+
+const MEAL_TIMING_OPTIONS = [
+  { id: "before_meal", label: "Before meal" },
+  { id: "after_meal", label: "After meal" },
+  { id: "with_meal", label: "With meal" },
+  { id: "no_preference", label: "No preference" },
+];
+
+const FREQUENCY_LABEL = FREQUENCY_OPTIONS.reduce((acc, item) => {
+  acc[item.id] = item.label;
+  return acc;
+}, {});
+
+const MEAL_TIMING_LABEL = MEAL_TIMING_OPTIONS.reduce((acc, item) => {
+  acc[item.id] = item.label;
+  return acc;
+}, {});
+
+const defaultTimesForFrequency = (frequency) => {
+  const entry = FREQUENCY_OPTIONS.find((item) => item.id === frequency);
+  return entry?.defaults || [];
+};
+
+const isValidHHMM = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value));
+
+const parseDurationDays = (raw) => {
+  if (raw == null) return 0;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.max(0, Math.round(raw));
+  }
+  const match = String(raw).match(/\d+/);
+  if (!match) return 0;
+  return Math.max(0, parseInt(match[0], 10) || 0);
+};
+
+// ---------------------------------------------------------------------------
+// Step 8 — Appointment payment configuration.
+// In "stub" mode the Pay Fee button just updates the status locally. When
+// `paymentMode` is set to "stripe" or "razorpay" the corresponding keys
+// become available to an external helper (not wired by default).
+// ---------------------------------------------------------------------------
+const PAYMENT_MODE = String(
+  Constants.expoConfig?.extra?.paymentMode || "stub",
+)
+  .trim()
+  .toLowerCase();
+
+const PAYMENT_STRIPE_KEY =
+  String(Constants.expoConfig?.extra?.stripePublishableKey || "").trim();
+const PAYMENT_RAZORPAY_KEY_ID =
+  String(Constants.expoConfig?.extra?.razorpayKeyId || "").trim();
+
+// ---------------------------------------------------------------------------
+// Step 9 — AI assistant configuration.
+// A JSON endpoint (POST) that takes { kind: "chat" | "side_effect_check",
+// messages?, items?, patient? } and responds with { reply } or
+// { warnings: [{ medicine, message, severity }] }. When aiBaseUrl/apiKey are
+// missing the app falls back to a friendly stub so the screen always works.
+// ---------------------------------------------------------------------------
+const AI_BASE_URL = String(
+  Constants.expoConfig?.extra?.aiBaseUrl || "",
+).trim();
+const AI_API_KEY = String(
+  Constants.expoConfig?.extra?.aiApiKey || "",
+).trim();
+
+const ASSISTANT_CONVERSATION_KIND = "assistant";
+const ASSISTANT_USER_MESSAGE_KIND = "assistant_user";
+const ASSISTANT_REPLY_MESSAGE_KIND = "assistant_reply";
+
+// Detects "plain text" kinds where we must NOT run decryption — AI messages
+// are stored as plain text so a missing encryption key can't garble them.
+const messageKindIsPlainText = (kind) => {
+  const normalized = String(kind || "").toLowerCase();
+  return (
+    normalized === "system" ||
+    normalized === ASSISTANT_USER_MESSAGE_KIND ||
+    normalized === ASSISTANT_REPLY_MESSAGE_KIND
+  );
+};
+
 const appointmentStatusColorsFor = (theme, statusKey) => {
   const tone = APPOINTMENT_STATUS_META[normalizeAppointmentStatus(statusKey)]
     .tone;
@@ -583,27 +694,86 @@ const normalizePrescriptionLineFromUnknown = (entry) => {
       dosage: "",
       whenToTake: "",
       duration: "",
+      frequency: "",
+      mealTiming: "",
+      timesOfDay: [],
+      durationDays: 0,
+      notes: "",
     };
   }
   if (typeof entry === "object") {
     const name = prescriptionLineName(entry);
     if (!name) return null;
+    // Read both camelCase and snake_case variants so records saved under an
+    // older schema still flow through the structured fields cleanly.
+    const frequencyRaw = String(
+      entry.frequency || entry.freq || "",
+    )
+      .trim()
+      .toLowerCase();
+    const mealTimingRaw = String(
+      entry.mealTiming || entry.meal_timing || entry.meals || "",
+    )
+      .trim()
+      .toLowerCase();
+    const timesOfDayRaw = entry.timesOfDay || entry.times_of_day || [];
+    const timesOfDay = Array.isArray(timesOfDayRaw)
+      ? timesOfDayRaw
+          .map((value) => String(value || "").trim())
+          .filter((value) => isValidHHMM(value))
+      : [];
+    const durationDaysRaw =
+      entry.durationDays ?? entry.duration_days ?? entry.days ?? null;
+    const durationDays =
+      typeof durationDaysRaw === "number" && Number.isFinite(durationDaysRaw)
+        ? Math.max(0, Math.round(durationDaysRaw))
+        : parseDurationDays(entry.duration || entry.howLong || durationDaysRaw);
+    const whenToTakeSummary = String(
+      entry.whenToTake ||
+        entry.schedule ||
+        entry.timing ||
+        "",
+    ).trim();
     return {
       name,
       dosage: String(entry.dosage || entry.amount || "").trim(),
-      whenToTake: String(
-        entry.whenToTake ||
-          entry.frequency ||
-          entry.schedule ||
-          entry.timing ||
-          "",
-      ).trim(),
+      // Keep legacy free text so old viewers still work. If not provided but
+      // we have structured data, we'll derive it downstream when writing.
+      whenToTake: whenToTakeSummary,
       duration: String(
         entry.duration || entry.howLong || entry.days || "",
       ).trim(),
+      frequency:
+        FREQUENCY_LABEL[frequencyRaw] ? frequencyRaw : (frequencyRaw || ""),
+      mealTiming:
+        MEAL_TIMING_LABEL[mealTimingRaw]
+          ? mealTimingRaw
+          : mealTimingRaw || "",
+      timesOfDay,
+      durationDays,
+      notes: String(entry.notes || entry.note || "").trim(),
     };
   }
   return null;
+};
+
+// Turn a structured prescription line back into a human-readable summary so
+// we can always populate `whenToTake` for legacy viewers/APIs that don't yet
+// know about the structured fields.
+const describeStructuredTiming = (line) => {
+  const freqLabel = FREQUENCY_LABEL[line?.frequency] || "";
+  const mealLabel =
+    line?.mealTiming && line.mealTiming !== "no_preference"
+      ? MEAL_TIMING_LABEL[line.mealTiming] || ""
+      : "";
+  const times =
+    Array.isArray(line?.timesOfDay) && line.timesOfDay.length
+      ? line.timesOfDay.join(", ")
+      : "";
+  const parts = [freqLabel, mealLabel, times ? `at ${times}` : ""].filter(
+    Boolean,
+  );
+  return parts.join(" · ");
 };
 
 const normalizeOrderItemsList = (record) => {
@@ -646,6 +816,241 @@ const sumMedicationAmount = (items) =>
     const name = prescriptionLineName(entry);
     return total + (MEDICINE_PRICE_MAP[name] || 100);
   }, 0);
+
+// ---------------------------------------------------------------------------
+// Step 7b — schedule expansion.
+// Given a normalized prescription line (with `frequency`, `timesOfDay`,
+// `durationDays`) this produces one schedule row per dose. Rows are
+// `medication_schedule` records with a `due_at` date, `meal_timing`, and
+// `status = "pending"`. Duration defaults to 1 day if not specified so a
+// doctor can still prescribe ad-hoc single doses without filling duration.
+// ---------------------------------------------------------------------------
+const buildScheduleRowsForLine = (line, context) => {
+  const times =
+    Array.isArray(line?.timesOfDay) && line.timesOfDay.length
+      ? line.timesOfDay
+      : defaultTimesForFrequency(line?.frequency);
+  if (!times.length) return [];
+  const duration = Math.max(1, Number(line?.durationDays || 0) || 1);
+  const rows = [];
+  const now = new Date();
+  const startDate = new Date(now);
+  startDate.setHours(0, 0, 0, 0);
+  for (let day = 0; day < duration; day += 1) {
+    for (const time of times) {
+      const [hh, mm] = String(time)
+        .split(":")
+        .map((value) => Number(value));
+      if (!Number.isFinite(hh) || !Number.isFinite(mm)) continue;
+      const dueAt = new Date(startDate);
+      dueAt.setDate(dueAt.getDate() + day);
+      dueAt.setHours(hh, mm, 0, 0);
+      // Skip past times on day 0 so we don't schedule a dose in the past.
+      if (day === 0 && dueAt.getTime() < now.getTime() - 60 * 1000) {
+        continue;
+      }
+      rows.push({
+        patient: context.patientId,
+        prescription: context.prescriptionId,
+        wound: context.woundId || null,
+        medicine_name: line.name,
+        dosage: line.dosage || "",
+        meal_timing: line.mealTiming || "no_preference",
+        due_at: dueAt.toISOString(),
+        status: "pending",
+      });
+    }
+  }
+  return rows;
+};
+
+// ---------------------------------------------------------------------------
+// Step 7b — local notification helpers for medication reminders.
+// These are best-effort: if the user denies permission or the device doesn't
+// support notifications (e.g. Expo Go on iOS 17+), the app still works, just
+// without local reminders. Scheduling is idempotent-ish — we tag each
+// notification with the schedule row id so we can cancel it when marked taken.
+// ---------------------------------------------------------------------------
+const MEAL_TIMING_NOTIFICATION_HINT = {
+  before_meal: "before meal",
+  after_meal: "after meal",
+  with_meal: "with meal",
+  no_preference: "",
+};
+
+let notificationsHandlerConfigured = false;
+const configureNotificationsHandler = () => {
+  if (notificationsHandlerConfigured) return;
+  notificationsHandlerConfigured = true;
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+  } catch (error) {
+    console.log("Notifications handler setup skipped:", error?.message);
+  }
+};
+
+let reminderPermissionChecked = false;
+const ensureReminderPermissions = async () => {
+  if (reminderPermissionChecked) return true;
+  reminderPermissionChecked = true;
+  try {
+    configureNotificationsHandler();
+    const existing = await Notifications.getPermissionsAsync();
+    if (existing.granted) return true;
+    if (
+      existing.canAskAgain === false &&
+      existing.status !== "undetermined"
+    ) {
+      return false;
+    }
+    const asked = await Notifications.requestPermissionsAsync();
+    return !!asked.granted;
+  } catch (error) {
+    console.log("ensureReminderPermissions error:", error?.message);
+    return false;
+  }
+};
+
+const scheduleDoseReminder = async (scheduleRecord) => {
+  if (!scheduleRecord?.id || !scheduleRecord?.due_at) return null;
+  const dueAt = new Date(scheduleRecord.due_at);
+  if (!Number.isFinite(dueAt.getTime())) return null;
+  if (dueAt.getTime() < Date.now() + 30 * 1000) return null;
+  try {
+    const granted = await ensureReminderPermissions();
+    if (!granted) return null;
+    const mealHint =
+      MEAL_TIMING_NOTIFICATION_HINT[scheduleRecord.meal_timing] || "";
+    const dosage = scheduleRecord.dosage
+      ? ` ${scheduleRecord.dosage}`
+      : "";
+    const body = mealHint
+      ? `Take ${scheduleRecord.medicine_name}${dosage} — ${mealHint}.`
+      : `Take ${scheduleRecord.medicine_name}${dosage}.`;
+    const identifier = `rx-dose-${scheduleRecord.id}`;
+    await Notifications.cancelScheduledNotificationAsync(identifier).catch(
+      () => {},
+    );
+    await Notifications.scheduleNotificationAsync({
+      identifier,
+      content: {
+        title: "Medication reminder",
+        body,
+        data: { scheduleId: scheduleRecord.id },
+      },
+      trigger: { type: "date", date: dueAt },
+    });
+    return identifier;
+  } catch (error) {
+    console.log("scheduleDoseReminder error:", error?.message);
+    return null;
+  }
+};
+
+const cancelDoseReminder = async (scheduleId) => {
+  if (!scheduleId) return;
+  try {
+    await Notifications.cancelScheduledNotificationAsync(
+      `rx-dose-${scheduleId}`,
+    );
+  } catch (error) {
+    // ignore — notification may never have been scheduled
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Step 9 — AI assistant stub.
+// If aiBaseUrl / aiApiKey are set in app.json → extra, the app calls a JSON
+// endpoint. Otherwise it returns friendly placeholder responses so the UI
+// still works end-to-end. Never throws.
+// ---------------------------------------------------------------------------
+const callAIEndpoint = async (payload) => {
+  if (!AI_BASE_URL) return null;
+  try {
+    const response = await fetch(AI_BASE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(AI_API_KEY ? { Authorization: `Bearer ${AI_API_KEY}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response?.ok) {
+      return null;
+    }
+    return await response.json().catch(() => null);
+  } catch (error) {
+    console.log("AI endpoint call failed:", error?.message || error);
+    return null;
+  }
+};
+
+const aiChatStubReply = (text) => {
+  const clean = String(text || "").trim();
+  if (!clean) {
+    return "Hi! I'm your Nvoisys Health Assistant. Ask me about symptoms, medicines, or your prescriptions.";
+  }
+  const lower = clean.toLowerCase();
+  if (lower.includes("side effect") || lower.includes("side-effect")) {
+    return "Common side effects depend on the specific medicine and your health profile. Please share the medicine name and I'll list the typical ones. Always confirm with your doctor before stopping any medicine.";
+  }
+  if (lower.includes("fever") || lower.includes("temperature")) {
+    return "For fever, rest, hydrate, and monitor your temperature. If it lasts over 48 hours, is above 39°C, or comes with chest pain / confusion / severe headache, please contact a doctor immediately.";
+  }
+  if (lower.includes("diet") || lower.includes("food")) {
+    return "A balanced plate with vegetables, whole grains, and lean protein supports recovery. If you have diabetes or hypertension, your doctor's plan should guide portions and timing.";
+  }
+  return `I hear you. For your question about "${clean.slice(0, 80)}": always combine general guidance with your doctor's advice. Share symptoms, duration, and medicines you take so I can give a more useful answer.`;
+};
+
+const aiSideEffectStubWarnings = (items, patientFields) => {
+  const conditions = Array.isArray(patientFields?.conditions)
+    ? patientFields.conditions.map((value) => String(value).toLowerCase())
+    : [];
+  const age = Number(patientFields?.age || 0);
+  const warnings = [];
+  for (const item of safeArray(items)) {
+    const name = String(item?.name || "").toLowerCase();
+    if (!name) continue;
+    if (name.includes("ibuprofen") && conditions.some((c) => c.includes("hypertension") || c.includes("kidney") || c.includes("ulcer"))) {
+      warnings.push({
+        medicine: item.name,
+        severity: "high",
+        message: `${item.name} can worsen hypertension / kidney / ulcer conditions. Consider paracetamol or a gastro-protective alternative.`,
+      });
+    }
+    if (name.includes("warfarin")) {
+      warnings.push({
+        medicine: item.name,
+        severity: "high",
+        message: `${item.name} interacts with many foods & medicines. Confirm INR target and recent reading.`,
+      });
+    }
+    if (name.includes("amoxicillin") && conditions.some((c) => c.includes("allerg"))) {
+      warnings.push({
+        medicine: item.name,
+        severity: "medium",
+        message: `Patient reports an allergy. Confirm it's not penicillin before prescribing ${item.name}.`,
+      });
+    }
+    if (name.includes("aspirin") && age > 0 && age < 18) {
+      warnings.push({
+        medicine: item.name,
+        severity: "high",
+        message: `${item.name} in under-18s has a rare but serious Reye's syndrome risk — prefer paracetamol.`,
+      });
+    }
+  }
+  return warnings;
+};
 
 const resolveMessageText = (record) => {
   const value =
@@ -696,9 +1101,15 @@ const resolveMessageImageFiles = (record) => {
 
 const mapMessageRecord = (record) => {
   const senderRecord = record?.expand?.sender;
-  const isSystem = record?.kind === "system";
+  const rawKind = String(record?.kind || "").toLowerCase();
+  const isSystem = rawKind === "system";
+  const isAssistantReply = rawKind === ASSISTANT_REPLY_MESSAGE_KIND;
+  const isAssistantUser = rawKind === ASSISTANT_USER_MESSAGE_KIND;
   const rawText = resolveMessageText(record);
-  const imagePayload = decryptChatImagePayload(rawText);
+  // Skip image-payload parsing for AI messages — they are always plain text.
+  const imagePayload = messageKindIsPlainText(rawKind)
+    ? null
+    : decryptChatImagePayload(rawText);
   const imagePayloadUrl = imagePayload?.dataUri || null;
   const imageFiles = resolveMessageImageFiles(record);
   const imageUrls = imageFiles.filter(Boolean).map((fileName) => {
@@ -715,7 +1126,9 @@ const mapMessageRecord = (record) => {
     record.kind || (imagePayloadUrl || imagePayload?.error ? "image" : "text");
   const mappedText = imagePayload
     ? imagePayload.caption || imagePayload.error || ""
-    : decryptChatText(rawText);
+    : messageKindIsPlainText(rawKind)
+      ? rawText
+      : decryptChatText(rawText);
 
   return {
     id: record.id,
@@ -724,8 +1137,24 @@ const mapMessageRecord = (record) => {
     imageUrls,
     imageUrl: imageUrls[0] || null,
     senderId: record.sender || null,
-    senderRole: senderRecord?.role || (isSystem ? "system" : "user"),
-    senderName: senderRecord?.name || (isSystem ? "System" : "User"),
+    senderRole:
+      senderRecord?.role ||
+      (isSystem
+        ? "system"
+        : isAssistantReply
+          ? "assistant"
+          : isAssistantUser
+            ? "user"
+            : "user"),
+    senderName:
+      senderRecord?.name ||
+      (isSystem
+        ? "System"
+        : isAssistantReply
+          ? "Health Assistant"
+          : isAssistantUser
+            ? "You"
+            : "User"),
     time: formatTimeValue(record.created),
     created: record.created,
     raw: record,
@@ -1325,6 +1754,14 @@ const mapAppointmentRecord = (record) => {
       record.doctor_name ||
       "Doctor",
     doctorId: record.doctor || null,
+    consultationFee:
+      Number(
+        record.consultation_fee ??
+          record.fee ??
+          doctor?.consultation_fee ??
+          doctor?.fee ??
+          500,
+      ) || 500,
     raw: record,
   };
 };
@@ -1353,12 +1790,30 @@ const mapOrderRecord = (record) => {
     itemsList.length > 0
       ? formatPrescriptionSummaryText(itemsList, diagnosis)
       : safeArray(record.items).join(", ") || "Medicine items";
+  const pharmacyUser = record.expand?.pharmacy;
+  const pharmacyUserId =
+    (typeof record.pharmacy === "string" ? record.pharmacy : null) ||
+    pharmacyUser?.id ||
+    null;
+  const pharmacyName =
+    pharmacyUser?.name ||
+    pharmacyUser?.expand?.pharmacy_profile?.store_name ||
+    "";
+  const note = String(record.note || record.notes || "").trim();
+  // "pharmacy_order" = patient placed this with a specific pharmacy from
+  // the directory. "prescription_order" = doctor's prescribe flow auto-created
+  // the order for any pharmacy.
+  const orderKind = pharmacyUserId ? "pharmacy_order" : "prescription_order";
   return {
     id: record.id,
     wound: record.wound || null,
     conversation: record.conversation || null,
     patient: record.expand?.patient?.name || "Patient",
     patientId: record.patient || null,
+    pharmacyId: pharmacyUserId,
+    pharmacyName,
+    kind: orderKind,
+    note,
     itemsList,
     items: itemsText,
     diagnosis: diagnosis || null,
@@ -1405,11 +1860,17 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
   const memberRoles = uniqueIds(otherMembers.map((member) => member.role));
   const linkedWound = record.expand?.linkedWound;
   const preview = previewMap[record.id];
-  const displayName =
-    record.title ||
-    (otherMembers.length > 0
-      ? otherMembers.map((member) => member.name || member.role).join(", ")
-      : "Conversation");
+  // Step 9: AI assistant conversations are marked with `kind: "assistant"`
+  // on the record. They carry only one member (the patient themselves) and
+  // should show up first with a distinct name, icon, and role label.
+  const conversationKind = String(record.kind || "").toLowerCase();
+  const isAssistant = conversationKind === ASSISTANT_CONVERSATION_KIND;
+  const displayName = isAssistant
+    ? "Health Assistant"
+    : record.title ||
+      (otherMembers.length > 0
+        ? otherMembers.map((member) => member.name || member.role).join(", ")
+        : "Conversation");
   const fallbackTitle = linkedWound
     ? buildConversationTitle(linkedWound)
     : null;
@@ -1417,30 +1878,37 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
     linkedWound?.description || record.title || displayName;
   return {
     id: record.id,
-    title: record.title || fallbackTitle || displayName,
+    kind: isAssistant ? ASSISTANT_CONVERSATION_KIND : "direct",
+    title: isAssistant
+      ? "Health Assistant"
+      : record.title || fallbackTitle || displayName,
     linkedWoundId: record.linkedWound || linkedWound?.id || null,
     linkedWoundDescription,
     members: safeArray(record.members),
     memberUsers: members,
     displayName,
-    roleLabel:
-      memberRoles.length > 0
+    roleLabel: isAssistant
+      ? "AI · Ask anything"
+      : memberRoles.length > 0
         ? memberRoles.join(", ")
         : linkedWound
           ? "Wound Case"
           : "Chat",
-    status: "Online",
-    image: linkedWound
-      ? "bandage-outline"
-      : memberRoles.includes("pharmacy")
-        ? "leaf"
-        : memberRoles.includes("doctor")
-          ? "medical"
-          : "chatbubble-ellipses",
+    status: isAssistant ? "Always available" : "Online",
+    image: isAssistant
+      ? "sparkles"
+      : linkedWound
+        ? "bandage-outline"
+        : memberRoles.includes("pharmacy")
+          ? "leaf"
+          : memberRoles.includes("doctor")
+            ? "medical"
+            : "chatbubble-ellipses",
     lastMsg:
       messagePreviewText(preview) ||
-      linkedWound?.description ||
-      "Tap to open conversation",
+      (isAssistant
+        ? "Ask about symptoms, medicine, or your prescriptions."
+        : linkedWound?.description || "Tap to open conversation"),
     time: formatTimeValue(
       record.lastMessageAt || record.updated || record.created,
     ),
@@ -4465,6 +4933,7 @@ const PatientChatScreen = () => {
     sendConversationMessage,
     sendConversationImage,
     ensureDirectConversation,
+    sendAssistantMessage,
     loadDirectoryContacts,
     dataLoading,
     dataError,
@@ -4481,9 +4950,21 @@ const PatientChatScreen = () => {
   const [activeCall, setActiveCall] = useState(null);
   const [sendingAttachment, setSendingAttachment] = useState(false);
   const [showPrescriptionViewer, setShowPrescriptionViewer] = useState(false);
+  const [assistantThinking, setAssistantThinking] = useState(false);
+
+  const isAssistantConversation = (conversation) =>
+    conversation?.kind === ASSISTANT_CONVERSATION_KIND;
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
-  const filteredContacts = conversations.filter((c) => {
+  // Step 9: the Health Assistant thread is always pinned to the top so
+  // patients see it as a first-class chat partner.
+  const sortedConversations = [...conversations].sort((a, b) => {
+    const aAssist = a?.kind === ASSISTANT_CONVERSATION_KIND ? 1 : 0;
+    const bAssist = b?.kind === ASSISTANT_CONVERSATION_KIND ? 1 : 0;
+    if (aAssist !== bAssist) return bAssist - aAssist;
+    return 0;
+  });
+  const filteredContacts = sortedConversations.filter((c) => {
     if (!normalizedQuery) return true;
     return (
       c.displayName.toLowerCase().includes(normalizedQuery) ||
@@ -4613,6 +5094,43 @@ const PatientChatScreen = () => {
   const sendMessage = async () => {
     if (!message.trim() || !selectedContact?.id) return;
     const text = message.trim();
+    // Step 9: route through the assistant endpoint when chatting with the
+    // Health Assistant conversation, so the message is stored as plain text
+    // and the AI reply is appended immediately.
+    if (isAssistantConversation(selectedContact)) {
+      if (assistantThinking) return;
+      setMessage("");
+      setAssistantThinking(true);
+      try {
+        const result = await sendAssistantMessage(selectedContact.id, text);
+        if (result?.userMessage || result?.replyMessage) {
+          setContactMessages((prev) => {
+            const next = [...prev];
+            if (
+              result.userMessage &&
+              !next.some((item) => item.id === result.userMessage.id)
+            ) {
+              next.push(result.userMessage);
+            }
+            if (
+              result.replyMessage &&
+              !next.some((item) => item.id === result.replyMessage.id)
+            ) {
+              next.push(result.replyMessage);
+            }
+            return next;
+          });
+        } else {
+          setMessage(text);
+        }
+      } catch (error) {
+        console.log("Assistant send error:", error?.message);
+        setMessage(text);
+      } finally {
+        setAssistantThinking(false);
+      }
+      return;
+    }
     const created = await sendConversationMessage(selectedContact.id, text);
     if (created) {
       setMessage("");
@@ -5057,46 +5575,50 @@ const PatientChatScreen = () => {
               alignItems: "center",
             }}
           >
-            <TouchableOpacity
-              onPress={() => sendAttachment("camera")}
-              disabled={sendingAttachment}
-              style={{
-                width: RFValue(36),
-                height: RFValue(36),
-                borderRadius: RFValue(18),
-                backgroundColor: theme.bg,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: RFValue(8),
-                opacity: sendingAttachment ? 0.5 : 1,
-              }}
-            >
-              <Ionicons
-                name="camera"
-                size={RFValue(18)}
-                color={theme.textSecondary}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => sendAttachment("image")}
-              disabled={sendingAttachment}
-              style={{
-                width: RFValue(36),
-                height: RFValue(36),
-                borderRadius: RFValue(18),
-                backgroundColor: theme.bg,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: RFValue(8),
-                opacity: sendingAttachment ? 0.5 : 1,
-              }}
-            >
-              <Ionicons
-                name="image"
-                size={RFValue(18)}
-                color={theme.textSecondary}
-              />
-            </TouchableOpacity>
+            {!isAssistantConversation(selectedContact) && (
+              <>
+                <TouchableOpacity
+                  onPress={() => sendAttachment("camera")}
+                  disabled={sendingAttachment}
+                  style={{
+                    width: RFValue(36),
+                    height: RFValue(36),
+                    borderRadius: RFValue(18),
+                    backgroundColor: theme.bg,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginRight: RFValue(8),
+                    opacity: sendingAttachment ? 0.5 : 1,
+                  }}
+                >
+                  <Ionicons
+                    name="camera"
+                    size={RFValue(18)}
+                    color={theme.textSecondary}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => sendAttachment("image")}
+                  disabled={sendingAttachment}
+                  style={{
+                    width: RFValue(36),
+                    height: RFValue(36),
+                    borderRadius: RFValue(18),
+                    backgroundColor: theme.bg,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginRight: RFValue(8),
+                    opacity: sendingAttachment ? 0.5 : 1,
+                  }}
+                >
+                  <Ionicons
+                    name="image"
+                    size={RFValue(18)}
+                    color={theme.textSecondary}
+                  />
+                </TouchableOpacity>
+              </>
+            )}
             <View
               style={{
                 flex: 1,
@@ -5116,15 +5638,25 @@ const PatientChatScreen = () => {
                   fontSize: RFValue(14),
                   color: theme.textPrimary,
                 }}
-                placeholder="Write something..."
+                placeholder={
+                  isAssistantConversation(selectedContact)
+                    ? assistantThinking
+                      ? "Assistant is typing..."
+                      : "Ask the Health Assistant..."
+                    : "Write something..."
+                }
                 placeholderTextColor={theme.textTertiary}
                 value={message}
                 onChangeText={setMessage}
                 multiline
+                editable={!assistantThinking}
               />
             </View>
             <TouchableOpacity
               onPress={sendMessage}
+              disabled={
+                isAssistantConversation(selectedContact) && assistantThinking
+              }
               style={{
                 width: RFValue(40),
                 height: RFValue(40),
@@ -5133,6 +5665,10 @@ const PatientChatScreen = () => {
                 justifyContent: "center",
                 alignItems: "center",
                 marginLeft: RFValue(8),
+                opacity:
+                  isAssistantConversation(selectedContact) && assistantThinking
+                    ? 0.6
+                    : 1,
                 shadowColor: theme.accent,
                 shadowOpacity: 0.3,
                 shadowOffset: { width: 0, height: 2 },
@@ -5140,7 +5676,11 @@ const PatientChatScreen = () => {
                 elevation: 3,
               }}
             >
-              <Ionicons name="send" size={RFValue(18)} color="#FFF" />
+              {isAssistantConversation(selectedContact) && assistantThinking ? (
+                <ActivityIndicator color="#FFF" />
+              ) : (
+                <Ionicons name="send" size={RFValue(18)} color="#FFF" />
+              )}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -6296,7 +6836,29 @@ const PatientEditProfileScreen = ({
 
 const PatientAppointmentsScreen = ({ onBack }) => {
   const { theme } = useTheme();
-  const { appointments } = useAppData();
+  const { appointments, payForAppointment } = useAppData();
+  const [payingId, setPayingId] = useState(null);
+  const [payError, setPayError] = useState("");
+
+  const handlePayFee = async (appointment) => {
+    if (!appointment?.id) return;
+    setPayError("");
+    setPayingId(appointment.id);
+    try {
+      await payForAppointment(appointment);
+      Alert.alert(
+        "Payment recorded",
+        "Thanks — your consultation is now unlocked. Open the Messages tab to chat with your doctor.",
+      );
+    } catch (error) {
+      setPayError(
+        error?.message || "Unable to complete payment. Please try again.",
+      );
+    } finally {
+      setPayingId(null);
+    }
+  };
+
   const rows = [...(appointments || [])].sort(
     (a, b) =>
       new Date(a.scheduledAt || 0).getTime() -
@@ -6498,7 +7060,64 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                     time.
                   </Text>
                 ) : null}
-                {canConsult ? (
+                {statusKey === "approved" ? (
+                  <View
+                    style={{
+                      marginTop: RFValue(10),
+                      padding: RFValue(12),
+                      borderRadius: RFValue(12),
+                      borderWidth: 1,
+                      borderColor: theme.accent,
+                      backgroundColor: theme.accentLight,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: RFValue(12),
+                        color: theme.accent,
+                        fontWeight: "700",
+                        marginBottom: RFValue(6),
+                      }}
+                    >
+                      Approved — pay the consultation fee to unlock the chat.
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textSecondary,
+                        marginBottom: RFValue(10),
+                      }}
+                    >
+                      Fee: INR {appointment.consultationFee || 500}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => handlePayFee(appointment)}
+                      disabled={payingId === appointment.id}
+                      style={{
+                        backgroundColor: theme.accent,
+                        paddingVertical: RFValue(10),
+                        borderRadius: RFValue(10),
+                        alignItems: "center",
+                        opacity: payingId === appointment.id ? 0.7 : 1,
+                      }}
+                    >
+                      {payingId === appointment.id ? (
+                        <ActivityIndicator color="#FFF" size="small" />
+                      ) : (
+                        <Text
+                          style={{
+                            color: "#FFF",
+                            fontWeight: "800",
+                            fontSize: RFValue(12),
+                          }}
+                        >
+                          Pay fee
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                {statusKey === "paid" ? (
                   <Text
                     style={{
                       marginTop: RFValue(10),
@@ -6507,9 +7126,30 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                       fontWeight: "600",
                     }}
                   >
-                    {statusKey === "completed"
-                      ? "Consultation completed — chat with your doctor stays open in the Messages tab."
-                      : "Approved. Open the Messages tab to chat with your doctor."}
+                    Paid. Open the Messages tab to chat with your doctor.
+                  </Text>
+                ) : null}
+                {statusKey === "completed" ? (
+                  <Text
+                    style={{
+                      marginTop: RFValue(10),
+                      fontSize: RFValue(12),
+                      color: theme.success,
+                      fontWeight: "600",
+                    }}
+                  >
+                    Consultation completed — chat with your doctor stays open in the Messages tab.
+                  </Text>
+                ) : null}
+                {payError && payingId === null ? (
+                  <Text
+                    style={{
+                      marginTop: RFValue(8),
+                      fontSize: RFValue(11),
+                      color: theme.danger,
+                    }}
+                  >
+                    {payError}
                   </Text>
                 ) : null}
               </View>
@@ -15012,10 +15652,361 @@ const PharmacyCard = ({ theme, pharmacy, onOpen }) => {
   );
 };
 
+// Step 6 — Patient-facing composer used to create a medicine order with a
+// specific pharmacy. Lets the patient select items from the pharmacy's
+// product catalog (with quantity) and optionally add custom items. The final
+// payload is handled by `createPharmacyOrder` in App state.
+const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
+  const { theme } = useTheme();
+  const { createPharmacyOrder } = useAppData();
+  const products = pharmacy?.products || [];
+  const [selections, setSelections] = useState({});
+  const [customItems, setCustomItems] = useState([]);
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const toggleProduct = (idx) => {
+    setSelections((prev) => {
+      if (prev[idx]) {
+        const next = { ...prev };
+        delete next[idx];
+        return next;
+      }
+      return { ...prev, [idx]: { qty: "1", notes: "" } };
+    });
+  };
+
+  const updateSelection = (idx, field, value) => {
+    setSelections((prev) =>
+      prev[idx]
+        ? { ...prev, [idx]: { ...prev[idx], [field]: value } }
+        : prev,
+    );
+  };
+
+  const addCustomItem = () => {
+    setCustomItems((prev) => [
+      ...prev,
+      { key: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, name: "", qty: "1", notes: "" },
+    ]);
+  };
+
+  const updateCustomItem = (key, field, value) => {
+    setCustomItems((prev) =>
+      prev.map((item) => (item.key === key ? { ...item, [field]: value } : item)),
+    );
+  };
+
+  const removeCustomItem = (key) => {
+    setCustomItems((prev) => prev.filter((item) => item.key !== key));
+  };
+
+  const buildItems = () => {
+    const picked = Object.entries(selections).map(([idx, config]) => {
+      const product = products[Number(idx)] || {};
+      return {
+        name: String(product.name || "").trim(),
+        qty: String(config?.qty || "").trim(),
+        notes: [product.price ? `₹${String(product.price).replace(/^₹/, "")}` : "", config?.notes]
+          .filter(Boolean)
+          .join(" · "),
+      };
+    });
+    const custom = customItems
+      .map((item) => ({
+        name: String(item.name || "").trim(),
+        qty: String(item.qty || "").trim(),
+        notes: String(item.notes || "").trim(),
+      }))
+      .filter((item) => item.name);
+    return [...picked, ...custom];
+  };
+
+  const handleSubmit = async () => {
+    setErrorMessage("");
+    const items = buildItems();
+    if (!items.length) {
+      setErrorMessage("Pick at least one product or add a custom medicine.");
+      return;
+    }
+    if (!pharmacy?.userId) {
+      setErrorMessage("This pharmacy is not set up for orders yet.");
+      return;
+    }
+    try {
+      setSubmitting(true);
+      await createPharmacyOrder({
+        pharmacyUserId: pharmacy.userId,
+        items,
+        note: note.trim(),
+      });
+      Alert.alert(
+        "Order placed",
+        "Your order has been sent. The pharmacy will respond in chat about price and delivery.",
+      );
+      if (onOrderPlaced) onOrderPlaced();
+      onClose();
+    } catch (error) {
+      setErrorMessage(
+        error?.message ||
+          "Unable to place order. Please try again in a moment.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const inputStyle = {
+    borderWidth: 1,
+    borderColor: theme.cardBorder,
+    borderRadius: RFValue(10),
+    paddingHorizontal: RFValue(12),
+    paddingVertical: RFValue(10),
+    fontSize: RFValue(13),
+    color: theme.textPrimary,
+    backgroundColor: theme.card,
+  };
+
+  return (
+    <View
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: "rgba(0,0,0,0.5)",
+        justifyContent: "flex-end",
+      }}
+    >
+      <View
+        style={{
+          backgroundColor: theme.bg,
+          borderTopLeftRadius: RFValue(24),
+          borderTopRightRadius: RFValue(24),
+          padding: RFValue(20),
+          maxHeight: "92%",
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: RFValue(16),
+          }}
+        >
+          <Text style={{ fontSize: RFValue(18), fontWeight: "800", color: theme.textPrimary }}>
+            Order from {pharmacy?.name || "pharmacy"}
+          </Text>
+          <TouchableOpacity onPress={onClose} disabled={submitting}>
+            <Ionicons
+              name="close"
+              size={RFValue(26)}
+              color={submitting ? theme.cardBorder : theme.textPrimary}
+            />
+          </TouchableOpacity>
+        </View>
+
+        <Text style={{ fontSize: RFValue(11), color: theme.textTertiary, marginBottom: RFValue(10) }}>
+          The app doesn't handle payment or delivery. Finalize price and delivery with the pharmacy in chat.
+        </Text>
+
+        <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: RFValue(440) }}>
+          {products.length ? (
+            <>
+              <Text style={{ fontSize: RFValue(12), fontWeight: "800", color: theme.textPrimary, marginBottom: RFValue(8) }}>
+                Products
+              </Text>
+              {products.map((product, idx) => {
+                const selected = !!selections[idx];
+                return (
+                  <View
+                    key={`prod-${idx}`}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: selected ? theme.accent : theme.cardBorder,
+                      backgroundColor: selected ? theme.accentLight : theme.card,
+                      borderRadius: RFValue(12),
+                      padding: RFValue(12),
+                      marginBottom: RFValue(10),
+                    }}
+                  >
+                    <TouchableOpacity
+                      onPress={() => toggleProduct(idx)}
+                      style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}
+                    >
+                      <View style={{ flex: 1, marginRight: RFValue(8) }}>
+                        <Text style={{ fontSize: RFValue(13), fontWeight: "700", color: theme.textPrimary }}>
+                          {product.name}
+                        </Text>
+                        {product.price ? (
+                          <Text style={{ fontSize: RFValue(11), color: theme.textSecondary }}>
+                            {String(product.price).startsWith("₹") ? product.price : `₹${product.price}`}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <Ionicons
+                        name={selected ? "checkbox" : "square-outline"}
+                        size={22}
+                        color={selected ? theme.accent : theme.textTertiary}
+                      />
+                    </TouchableOpacity>
+                    {selected ? (
+                      <View style={{ flexDirection: "row", marginTop: RFValue(8) }}>
+                        <TextInput
+                          style={[inputStyle, { flex: 1, marginRight: 8 }]}
+                          placeholder="Qty"
+                          placeholderTextColor={theme.textTertiary}
+                          value={selections[idx].qty}
+                          onChangeText={(value) => updateSelection(idx, "qty", value)}
+                          keyboardType="numeric"
+                          editable={!submitting}
+                        />
+                        <TextInput
+                          style={[inputStyle, { flex: 2 }]}
+                          placeholder="Notes (optional)"
+                          placeholderTextColor={theme.textTertiary}
+                          value={selections[idx].notes}
+                          onChangeText={(value) => updateSelection(idx, "notes", value)}
+                          editable={!submitting}
+                        />
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </>
+          ) : (
+            <Text style={{ fontSize: RFValue(12), color: theme.textTertiary, marginBottom: RFValue(10) }}>
+              This pharmacy hasn't listed products yet. Add the items you want below.
+            </Text>
+          )}
+
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "800",
+              color: theme.textPrimary,
+              marginBottom: RFValue(8),
+              marginTop: RFValue(8),
+            }}
+          >
+            Add custom items
+          </Text>
+          {customItems.map((item) => (
+            <View
+              key={item.key}
+              style={{
+                borderWidth: 1,
+                borderColor: theme.cardBorder,
+                borderRadius: RFValue(12),
+                padding: RFValue(12),
+                marginBottom: RFValue(8),
+                backgroundColor: theme.card,
+              }}
+            >
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ fontSize: RFValue(11), color: theme.textSecondary, fontWeight: "700" }}>
+                  Custom item
+                </Text>
+                <TouchableOpacity onPress={() => removeCustomItem(item.key)} disabled={submitting}>
+                  <Ionicons name="trash-outline" size={18} color={theme.danger} />
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={[inputStyle, { marginTop: RFValue(6), marginBottom: RFValue(6) }]}
+                placeholder="Medicine name"
+                placeholderTextColor={theme.textTertiary}
+                value={item.name}
+                onChangeText={(value) => updateCustomItem(item.key, "name", value)}
+                editable={!submitting}
+              />
+              <View style={{ flexDirection: "row" }}>
+                <TextInput
+                  style={[inputStyle, { flex: 1, marginRight: 8 }]}
+                  placeholder="Qty"
+                  placeholderTextColor={theme.textTertiary}
+                  value={item.qty}
+                  onChangeText={(value) => updateCustomItem(item.key, "qty", value)}
+                  keyboardType="numeric"
+                  editable={!submitting}
+                />
+                <TextInput
+                  style={[inputStyle, { flex: 2 }]}
+                  placeholder="Notes (optional)"
+                  placeholderTextColor={theme.textTertiary}
+                  value={item.notes}
+                  onChangeText={(value) => updateCustomItem(item.key, "notes", value)}
+                  editable={!submitting}
+                />
+              </View>
+            </View>
+          ))}
+          <TouchableOpacity onPress={addCustomItem} disabled={submitting} style={{ paddingVertical: RFValue(8) }}>
+            <Text style={{ color: theme.accent, fontWeight: "700", fontSize: RFValue(12) }}>
+              + Add custom item
+            </Text>
+          </TouchableOpacity>
+
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "800",
+              color: theme.textPrimary,
+              marginTop: RFValue(12),
+              marginBottom: RFValue(6),
+            }}
+          >
+            Note to pharmacy (optional)
+          </Text>
+          <TextInput
+            style={[inputStyle, { minHeight: RFValue(60), textAlignVertical: "top" }]}
+            placeholder="Delivery address, urgency, or any special instructions"
+            placeholderTextColor={theme.textTertiary}
+            value={note}
+            onChangeText={setNote}
+            multiline
+            editable={!submitting}
+          />
+
+          {errorMessage ? (
+            <Text style={{ color: theme.danger, marginTop: RFValue(10), fontSize: RFValue(12) }}>
+              {errorMessage}
+            </Text>
+          ) : null}
+        </ScrollView>
+
+        <TouchableOpacity
+          onPress={handleSubmit}
+          disabled={submitting}
+          style={{
+            backgroundColor: submitting ? theme.cardBorder : theme.accent,
+            borderRadius: RFValue(14),
+            paddingVertical: RFValue(14),
+            alignItems: "center",
+            marginTop: RFValue(12),
+          }}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#FFF" />
+          ) : (
+            <Text style={{ color: "#FFF", fontWeight: "800", fontSize: RFValue(14) }}>
+              Place order · Pharmacy will reply in chat
+            </Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
 const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
   const { theme } = useTheme();
   const { ensureDirectConversation } = useAppData();
   const [startingChat, setStartingChat] = useState(false);
+  const [showOrderComposer, setShowOrderComposer] = useState(false);
 
   const handleCall = () => {
     const number = String(pharmacy?.phone || "").trim();
@@ -15103,8 +16094,8 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
 
           <View style={{ flexDirection: "row", marginTop: RFValue(12) }}>
             <TouchableOpacity
-              onPress={handleChat}
-              disabled={startingChat || !pharmacy?.userId}
+              onPress={() => setShowOrderComposer(true)}
+              disabled={!pharmacy?.userId}
               style={{
                 flex: 1,
                 backgroundColor: theme.accent,
@@ -15112,13 +16103,32 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
                 borderRadius: RFValue(12),
                 alignItems: "center",
                 opacity: !pharmacy?.userId ? 0.5 : 1,
+                marginRight: RFValue(8),
+              }}
+            >
+              <Text style={{ color: "#FFF", fontWeight: "800", fontSize: RFValue(13) }}>
+                Order medicines
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleChat}
+              disabled={startingChat || !pharmacy?.userId}
+              style={{
+                flex: 1,
+                backgroundColor: theme.card,
+                borderWidth: 1,
+                borderColor: theme.accent,
+                paddingVertical: RFValue(12),
+                borderRadius: RFValue(12),
+                alignItems: "center",
+                opacity: !pharmacy?.userId ? 0.5 : 1,
               }}
             >
               {startingChat ? (
-                <ActivityIndicator size="small" color="#FFF" />
+                <ActivityIndicator size="small" color={theme.accent} />
               ) : (
-                <Text style={{ color: "#FFF", fontWeight: "800", fontSize: RFValue(13) }}>
-                  Chat with pharmacy
+                <Text style={{ color: theme.accent, fontWeight: "800", fontSize: RFValue(13) }}>
+                  Chat
                 </Text>
               )}
             </TouchableOpacity>
@@ -15209,6 +16219,14 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
           )}
         </View>
       </ScrollView>
+
+      {showOrderComposer ? (
+        <PatientOrderComposerModal
+          pharmacy={pharmacy}
+          onClose={() => setShowOrderComposer(false)}
+          onOrderPlaced={() => setShowOrderComposer(false)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 };
@@ -15441,20 +16459,199 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
 // ========================================
 
 const MedicationTrackerScreen = ({ onBack }) => {
-  const [takenMeds, setTakenMeds] = useState({});
-  const [adherenceRate] = useState(0);
+  const {
+    currentUserId,
+    fetchMedicationSchedule,
+    markScheduleDoseTaken,
+    markScheduleDoseMissed,
+  } = useAppData();
+  const [doses, setDoses] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [actionId, setActionId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
-  const todayMeds = [];
+  const loadSchedule = useCallback(async () => {
+    if (!currentUserId) return;
+    try {
+      const records = await fetchMedicationSchedule({
+        patientId: currentUserId,
+        daysPast: 30,
+      });
+      const normalized = records.map((record) => ({
+        id: record.id,
+        medicine_name: record.medicine_name || "Medication",
+        dosage: record.dosage || "",
+        meal_timing: record.meal_timing || "no_preference",
+        due_at: record.due_at,
+        taken_at: record.taken_at,
+        status: record.status || "pending",
+      }));
+      // Auto-flip overdue pending doses to "missed" locally so the UI
+      // reflects reality; the server-side write is best-effort.
+      const now = Date.now();
+      const autoMissed = [];
+      for (const dose of normalized) {
+        if (
+          dose.status === "pending" &&
+          dose.due_at &&
+          new Date(dose.due_at).getTime() < now - 2 * 60 * 60 * 1000
+        ) {
+          dose.status = "missed";
+          autoMissed.push(dose.id);
+        }
+      }
+      setDoses(normalized);
+      for (const id of autoMissed) {
+        markScheduleDoseMissed(id).catch(() => {});
+      }
+    } catch (e) {
+      console.log("loadSchedule error:", e?.message);
+      setError("Unable to load medication schedule.");
+    }
+  }, [currentUserId, fetchMedicationSchedule, markScheduleDoseMissed]);
 
-  const weekData = [
-    { day: "Mon", rate: 100 },
-    { day: "Tue", rate: 100 },
-    { day: "Wed", rate: 80 },
-    { day: "Thu", rate: 100 },
-    { day: "Fri", rate: 60 },
-    { day: "Sat", rate: 100 },
-    { day: "Sun", rate: 87 },
-  ];
+  useEffect(() => {
+    setLoading(true);
+    loadSchedule().finally(() => setLoading(false));
+  }, [loadSchedule]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadSchedule();
+    setRefreshing(false);
+  };
+
+  const handleMarkTaken = async (dose) => {
+    if (!dose?.id || actionId) return;
+    setActionId(dose.id);
+    try {
+      await markScheduleDoseTaken(dose.id);
+      setDoses((prev) =>
+        prev.map((item) =>
+          item.id === dose.id
+            ? {
+                ...item,
+                status: "taken",
+                taken_at: new Date().toISOString(),
+              }
+            : item,
+        ),
+      );
+    } catch (e) {
+      Alert.alert("Unable to mark dose", e?.message || "Please try again.");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const startOfToday = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+  const endOfToday = useMemo(() => {
+    const d = new Date(startOfToday);
+    d.setDate(d.getDate() + 1);
+    return d;
+  }, [startOfToday]);
+
+  const todayDoses = useMemo(
+    () =>
+      doses
+        .filter((d) => {
+          if (!d.due_at) return false;
+          const due = new Date(d.due_at);
+          return due >= startOfToday && due < endOfToday;
+        })
+        .sort((a, b) => new Date(a.due_at) - new Date(b.due_at)),
+    [doses, startOfToday, endOfToday],
+  );
+
+  const computeAdherence = (days) => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const window = doses.filter((d) => {
+      if (!d.due_at) return false;
+      const due = new Date(d.due_at);
+      return due >= cutoff && due <= new Date();
+    });
+    const taken = window.filter((d) => d.status === "taken").length;
+    const countable = window.filter(
+      (d) => d.status === "taken" || d.status === "missed",
+    ).length;
+    if (!countable) return { taken: 0, missed: 0, pending: window.length - taken, rate: 0 };
+    return {
+      taken,
+      missed: countable - taken,
+      pending: window.length - countable,
+      rate: Math.round((taken / countable) * 100),
+    };
+  };
+
+  const week = useMemo(() => computeAdherence(7), [doses]);
+  const month = useMemo(() => computeAdherence(30), [doses]);
+
+  const weekDays = useMemo(() => {
+    const result = [];
+    for (let i = 6; i >= 0; i -= 1) {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - i);
+      const next = new Date(day);
+      next.setDate(next.getDate() + 1);
+      const dayDoses = doses.filter((d) => {
+        if (!d.due_at) return false;
+        const due = new Date(d.due_at);
+        return due >= day && due < next;
+      });
+      const taken = dayDoses.filter((d) => d.status === "taken").length;
+      const countable = dayDoses.filter(
+        (d) => d.status === "taken" || d.status === "missed",
+      ).length;
+      const rate = countable ? Math.round((taken / countable) * 100) : 0;
+      result.push({
+        label: day.toLocaleDateString(undefined, { weekday: "short" }),
+        rate,
+        hadDoses: dayDoses.length > 0,
+      });
+    }
+    return result;
+  }, [doses]);
+
+  const perMedicineBreakdown = useMemo(() => {
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+    const map = new Map();
+    for (const dose of doses) {
+      if (!dose.due_at) continue;
+      const due = new Date(dose.due_at);
+      if (due < since || due > new Date()) continue;
+      const key = dose.medicine_name || "Medicine";
+      const entry = map.get(key) || { name: key, taken: 0, missed: 0, pending: 0 };
+      if (dose.status === "taken") entry.taken += 1;
+      else if (dose.status === "missed") entry.missed += 1;
+      else entry.pending += 1;
+      map.set(key, entry);
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+  }, [doses]);
+
+  const formatTime = (value) => {
+    if (!value) return "";
+    try {
+      return new Date(value).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return "";
+    }
+  };
+
+  const mealLabel = (meal) => MEAL_TIMING_LABEL[meal] || "";
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
@@ -15506,7 +16703,31 @@ const MedicationTrackerScreen = ({ onBack }) => {
           padding: RFValue(16),
           paddingBottom: RFValue(100),
         }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
       >
+        {loading && !doses.length ? (
+          <View style={{ paddingVertical: RFValue(40), alignItems: "center" }}>
+            <ActivityIndicator color="#4338CA" />
+          </View>
+        ) : null}
+
+        {error ? (
+          <View
+            style={{
+              backgroundColor: "#FEF2F2",
+              borderRadius: RFValue(12),
+              padding: RFValue(12),
+              marginBottom: RFValue(12),
+            }}
+          >
+            <Text style={{ color: "#B91C1C", fontSize: RFValue(12) }}>
+              {error}
+            </Text>
+          </View>
+        ) : null}
+
         {/* Adherence Score */}
         <View
           style={{
@@ -15528,7 +16749,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
               height: RFValue(100),
               borderRadius: RFValue(50),
               borderWidth: RFValue(8),
-              borderColor: adherenceRate >= 80 ? "#059669" : "#D97706",
+              borderColor: week.rate >= 80 ? "#059669" : "#D97706",
               justifyContent: "center",
               alignItems: "center",
               marginBottom: RFValue(12),
@@ -15538,10 +16759,10 @@ const MedicationTrackerScreen = ({ onBack }) => {
               style={{
                 fontSize: RFValue(32),
                 fontWeight: "800",
-                color: adherenceRate >= 80 ? "#059669" : "#D97706",
+                color: week.rate >= 80 ? "#059669" : "#D97706",
               }}
             >
-              {adherenceRate}%
+              {week.rate}%
             </Text>
           </View>
           <Text
@@ -15551,16 +16772,16 @@ const MedicationTrackerScreen = ({ onBack }) => {
               color: "#1E1B4B",
             }}
           >
-            Weekly Adherence
+            7-day Adherence
           </Text>
           <Text
             style={{
               fontSize: RFValue(12),
-              color: adherenceRate >= 80 ? "#059669" : "#D97706",
+              color: week.rate >= 80 ? "#059669" : "#D97706",
               fontWeight: "600",
             }}
           >
-            {adherenceRate >= 80 ? "Great job!" : "Needs improvement"}
+            {week.taken} taken · {week.missed} missed
           </Text>
         </View>
 
@@ -15596,17 +16817,21 @@ const MedicationTrackerScreen = ({ onBack }) => {
               height: RFValue(80),
             }}
           >
-            {weekData.map((d, i) => (
+            {weekDays.map((d, i) => (
               <View key={i} style={{ alignItems: "center", flex: 1 }}>
                 <View
                   style={{
                     width: RFValue(24),
-                    height: (d.rate / 100) * RFValue(70),
+                    height: Math.max(
+                      d.hadDoses ? RFValue(6) : RFValue(2),
+                      (d.rate / 100) * RFValue(70),
+                    ),
                     borderRadius: RFValue(4),
-                    backgroundColor:
-                      d.rate === 100
+                    backgroundColor: !d.hadDoses
+                      ? "#E5E7EB"
+                      : d.rate >= 80
                         ? "#059669"
-                        : d.rate >= 80
+                        : d.rate >= 50
                           ? "#D97706"
                           : "#EF4444",
                     marginBottom: RFValue(6),
@@ -15619,7 +16844,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
                     fontWeight: "600",
                   }}
                 >
-                  {d.day}
+                  {d.label}
                 </Text>
               </View>
             ))}
@@ -15637,79 +16862,254 @@ const MedicationTrackerScreen = ({ onBack }) => {
         >
           {"Today's Schedule"}
         </Text>
-        {todayMeds.map((med, idx) => (
-          <TouchableOpacity
-            key={idx}
-            onPress={() =>
-              setTakenMeds({ ...takenMeds, [idx]: !takenMeds[idx] })
-            }
+        {todayDoses.length === 0 ? (
+          <View
             style={{
               backgroundColor: "#FFFFFF",
               borderRadius: RFValue(14),
               padding: RFValue(16),
-              marginBottom: RFValue(10),
-              shadowColor: "#000",
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-              flexDirection: "row",
+              marginBottom: RFValue(12),
               alignItems: "center",
-              opacity: takenMeds[idx] ? 0.7 : 1,
             }}
           >
-            <View
+            <Text
               style={{
-                paddingHorizontal: RFValue(10),
-                height: RFValue(36),
-                borderRadius: RFValue(12),
-                backgroundColor: takenMeds[idx] ? "#ECFDF5" : "#F3F4F6",
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: RFValue(14),
+                fontSize: RFValue(12),
+                color: "#6B7280",
+                textAlign: "center",
               }}
             >
-              <Ionicons
-                name={takenMeds[idx] ? "checkmark-circle" : "pill"}
-                size={RFValue(22)}
-                color={takenMeds[idx] ? "#059669" : "#6B7280"}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text
+              No doses scheduled for today. When your doctor prescribes
+              medicine with timing, doses will appear here.
+            </Text>
+          </View>
+        ) : null}
+        {todayDoses.map((dose) => {
+          const taken = dose.status === "taken";
+          const missed = dose.status === "missed";
+          const isBusy = actionId === dose.id;
+          return (
+            <TouchableOpacity
+              key={dose.id}
+              onPress={() => !taken && handleMarkTaken(dose)}
+              disabled={taken || isBusy}
+              style={{
+                backgroundColor: "#FFFFFF",
+                borderRadius: RFValue(14),
+                padding: RFValue(16),
+                marginBottom: RFValue(10),
+                shadowColor: "#000",
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
+                flexDirection: "row",
+                alignItems: "center",
+                opacity: taken ? 0.7 : 1,
+                borderWidth: missed ? 1 : 0,
+                borderColor: missed ? "#FCA5A5" : "transparent",
+              }}
+            >
+              <View
                 style={{
-                  fontSize: RFValue(14),
-                  fontWeight: "700",
-                  color: "#1E1B4B",
-                  textDecorationLine: takenMeds[idx] ? "line-through" : "none",
+                  paddingHorizontal: RFValue(10),
+                  height: RFValue(36),
+                  borderRadius: RFValue(12),
+                  backgroundColor: taken
+                    ? "#ECFDF5"
+                    : missed
+                      ? "#FEF2F2"
+                      : "#F3F4F6",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginRight: RFValue(14),
                 }}
               >
-                {med.name}
+                <Ionicons
+                  name={
+                    taken
+                      ? "checkmark-circle"
+                      : missed
+                        ? "alert-circle"
+                        : "medkit"
+                  }
+                  size={RFValue(22)}
+                  color={taken ? "#059669" : missed ? "#B91C1C" : "#6B7280"}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: RFValue(14),
+                    fontWeight: "700",
+                    color: "#1E1B4B",
+                    textDecorationLine: taken ? "line-through" : "none",
+                  }}
+                >
+                  {dose.medicine_name}
+                </Text>
+                <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
+                  {formatTime(dose.due_at)}
+                  {dose.dosage ? ` · ${dose.dosage}` : ""}
+                </Text>
+                {mealLabel(dose.meal_timing) ? (
+                  <Text
+                    style={{ fontSize: RFValue(11), color: "#9CA3AF" }}
+                  >
+                    {mealLabel(dose.meal_timing)}
+                  </Text>
+                ) : null}
+                {missed ? (
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: "#B91C1C",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    Missed dose
+                  </Text>
+                ) : null}
+              </View>
+              {isBusy ? (
+                <ActivityIndicator color="#059669" />
+              ) : (
+                <View
+                  style={{
+                    width: RFValue(24),
+                    height: RFValue(24),
+                    borderRadius: RFValue(12),
+                    borderWidth: 2,
+                    borderColor: taken ? "#059669" : "#D1D5DB",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    backgroundColor: taken ? "#059669" : "#FFF",
+                  }}
+                >
+                  {taken && (
+                    <Ionicons
+                      name="checkmark"
+                      size={RFValue(14)}
+                      color="#FFF"
+                    />
+                  )}
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        })}
+
+        {/* Monthly adherence report */}
+        <Text
+          style={{
+            fontSize: RFValue(15),
+            fontWeight: "700",
+            color: "#1E1B4B",
+            marginTop: RFValue(12),
+            marginBottom: RFValue(10),
+          }}
+        >
+          Monthly Report (last 30 days)
+        </Text>
+        <View
+          style={{
+            backgroundColor: "#FFFFFF",
+            borderRadius: RFValue(14),
+            padding: RFValue(16),
+            marginBottom: RFValue(12),
+            shadowColor: "#000",
+            shadowOpacity: 0.06,
+            shadowOffset: { width: 0, height: 4 },
+            shadowRadius: 12,
+            elevation: 3,
+          }}
+        >
+          <View
+            style={{ flexDirection: "row", justifyContent: "space-between" }}
+          >
+            <View style={{ alignItems: "center", flex: 1 }}>
+              <Text
+                style={{
+                  fontSize: RFValue(22),
+                  fontWeight: "800",
+                  color: "#059669",
+                }}
+              >
+                {month.taken}
               </Text>
-              <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
-                {med.time} | {med.dosage}
-              </Text>
-              <Text style={{ fontSize: RFValue(11), color: "#9CA3AF" }}>
-                {med.food}
+              <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
+                Taken
               </Text>
             </View>
-            <View
+            <View style={{ alignItems: "center", flex: 1 }}>
+              <Text
+                style={{
+                  fontSize: RFValue(22),
+                  fontWeight: "800",
+                  color: "#B91C1C",
+                }}
+              >
+                {month.missed}
+              </Text>
+              <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
+                Missed
+              </Text>
+            </View>
+            <View style={{ alignItems: "center", flex: 1 }}>
+              <Text
+                style={{
+                  fontSize: RFValue(22),
+                  fontWeight: "800",
+                  color: "#4338CA",
+                }}
+              >
+                {month.rate}%
+              </Text>
+              <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
+                Adherence
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {perMedicineBreakdown.map((med) => (
+          <View
+            key={med.name}
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: RFValue(12),
+              padding: RFValue(12),
+              marginBottom: RFValue(8),
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <Text
               style={{
-                width: RFValue(24),
-                height: RFValue(24),
-                borderRadius: RFValue(12),
-                borderWidth: 2,
-                borderColor: takenMeds[idx] ? "#059669" : "#D1D5DB",
-                justifyContent: "center",
-                alignItems: "center",
-                backgroundColor: takenMeds[idx] ? "#059669" : "#FFF",
+                fontSize: RFValue(13),
+                fontWeight: "700",
+                color: "#1E1B4B",
+                flex: 1,
+              }}
+              numberOfLines={1}
+            >
+              {med.name}
+            </Text>
+            <Text style={{ fontSize: RFValue(11), color: "#059669" }}>
+              {med.taken} taken
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(11),
+                color: "#B91C1C",
+                marginLeft: RFValue(10),
               }}
             >
-              {takenMeds[idx] && (
-                <Ionicons name="checkmark" size={RFValue(14)} color="#FFF" />
-              )}
-            </View>
-          </TouchableOpacity>
+              {med.missed} missed
+            </Text>
+          </View>
         ))}
       </ScrollView>
     </SafeAreaView>
@@ -18254,12 +19654,64 @@ const newPrescriptionLine = () => ({
   dosage: "",
   whenToTake: "",
   duration: "",
+  frequency: "once_daily",
+  mealTiming: "no_preference",
+  timesOfDay: ["08:00"],
+  durationDays: 7,
+  notes: "",
 });
 
+// Small reusable chip-style selector for frequency / meal timing dropdowns.
+const SegmentedChipRow = ({ options, value, onChange, disabled }) => (
+  <View
+    style={{
+      flexDirection: "row",
+      flexWrap: "wrap",
+      marginBottom: RFValue(10),
+    }}
+  >
+    {options.map((opt) => {
+      const selected = opt.id === value;
+      return (
+        <TouchableOpacity
+          key={opt.id}
+          disabled={disabled}
+          onPress={() => onChange(opt.id)}
+          style={{
+            paddingHorizontal: RFValue(12),
+            paddingVertical: RFValue(8),
+            borderRadius: RFValue(20),
+            borderWidth: 1,
+            borderColor: selected ? "#4338CA" : "#E5E7EB",
+            backgroundColor: selected ? "#EEF2FF" : "#FFF",
+            marginRight: RFValue(8),
+            marginBottom: RFValue(8),
+            opacity: disabled ? 0.6 : 1,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: RFValue(11),
+              fontWeight: selected ? "800" : "600",
+              color: selected ? "#4338CA" : "#374151",
+            }}
+          >
+            {opt.label}
+          </Text>
+        </TouchableOpacity>
+      );
+    })}
+  </View>
+);
+
 const PrescriptionModal = ({ onBack, onConfirm }) => {
+  const { runSideEffectCheck, patientProfile: currentPatientProfile } =
+    useAppData();
   const [disease, setDisease] = useState("");
   const [lines, setLines] = useState(() => [newPrescriptionLine()]);
   const [sending, setSending] = useState(false);
+  const [warnings, setWarnings] = useState([]);
+  const [checkingSideEffects, setCheckingSideEffects] = useState(false);
   const sendingRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -18272,7 +19724,54 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
 
   const updateLine = (key, field, value) => {
     setLines((prev) =>
-      prev.map((row) => (row.key === key ? { ...row, [field]: value } : row)),
+      prev.map((row) => {
+        if (row.key !== key) return row;
+        const next = { ...row, [field]: value };
+        // When frequency changes, seed the times-of-day from the preset.
+        if (field === "frequency") {
+          const preset = defaultTimesForFrequency(value);
+          if (preset.length) next.timesOfDay = [...preset];
+        }
+        // When duration text changes, re-derive `durationDays`.
+        if (field === "duration") {
+          next.durationDays = parseDurationDays(value) || next.durationDays;
+        }
+        return next;
+      }),
+    );
+  };
+
+  const updateLineTime = (key, index, value) => {
+    setLines((prev) =>
+      prev.map((row) => {
+        if (row.key !== key) return row;
+        const times = [...(row.timesOfDay || [])];
+        times[index] = value;
+        return { ...row, timesOfDay: times };
+      }),
+    );
+  };
+
+  const addLineTime = (key) => {
+    setLines((prev) =>
+      prev.map((row) => {
+        if (row.key !== key) return row;
+        return {
+          ...row,
+          timesOfDay: [...(row.timesOfDay || []), "08:00"],
+        };
+      }),
+    );
+  };
+
+  const removeLineTime = (key, index) => {
+    setLines((prev) =>
+      prev.map((row) => {
+        if (row.key !== key) return row;
+        const times = [...(row.timesOfDay || [])];
+        times.splice(index, 1);
+        return { ...row, timesOfDay: times };
+      }),
     );
   };
 
@@ -18283,6 +19782,37 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
       prev.length <= 1 ? prev : prev.filter((row) => row.key !== key),
     );
   };
+
+  // Step 9 — Debounced side-effect check against the AI endpoint (or stub).
+  // Runs whenever the list of medicines changes so the doctor can see
+  // warnings before hitting "Send to patient".
+  useEffect(() => {
+    const items = lines
+      .map((line) => ({ name: line.name.trim() }))
+      .filter((item) => item.name);
+    if (!items.length) {
+      setWarnings([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      if (cancelled) return;
+      setCheckingSideEffects(true);
+      try {
+        const result = await runSideEffectCheck({
+          items,
+          patient: currentPatientProfile || {},
+        });
+        if (!cancelled) setWarnings(Array.isArray(result) ? result : []);
+      } finally {
+        if (!cancelled) setCheckingSideEffects(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [lines, runSideEffectCheck, currentPatientProfile]);
 
   const handleConfirm = async () => {
     const diagnosis = disease.trim();
@@ -18295,10 +19825,21 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
     }
     const normalized = lines
       .map((line) => ({
-        name: line.name.trim(),
-        dosage: line.dosage.trim(),
-        whenToTake: line.whenToTake.trim(),
-        duration: line.duration.trim(),
+        name: String(line.name || "").trim(),
+        dosage: String(line.dosage || "").trim(),
+        whenToTake: String(line.whenToTake || "").trim(),
+        duration: String(line.duration || "").trim(),
+        frequency: String(line.frequency || "once_daily"),
+        mealTiming: String(line.mealTiming || "no_preference"),
+        timesOfDay: Array.isArray(line.timesOfDay)
+          ? line.timesOfDay
+              .map((time) => String(time).trim())
+              .filter((time) => isValidHHMM(time))
+          : [],
+        durationDays:
+          parseDurationDays(line.duration) ||
+          Math.max(1, Number(line.durationDays || 0) || 1),
+        notes: String(line.notes || "").trim(),
       }))
       .filter((line) => line.name);
     if (!normalized.length) {
@@ -18392,7 +19933,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
         <ScrollView
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          style={{ maxHeight: RFValue(440) }}
+          style={{ maxHeight: RFValue(460) }}
           scrollEnabled={!sending}
         >
           <Text style={labelStyle}>Condition / diagnosis (required)</Text>
@@ -18404,6 +19945,62 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
             onChangeText={setDisease}
             editable={!sending}
           />
+
+          {/* Side-effect warnings surface before the doctor hits send. */}
+          {warnings.length > 0 ? (
+            <View
+              style={{
+                marginBottom: RFValue(12),
+                padding: RFValue(12),
+                borderRadius: RFValue(12),
+                backgroundColor: "#FEF3C7",
+                borderWidth: 1,
+                borderColor: "#F59E0B",
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: RFValue(6),
+                }}
+              >
+                <Ionicons name="alert-circle" size={18} color="#B45309" />
+                <Text
+                  style={{
+                    marginLeft: 6,
+                    fontWeight: "800",
+                    color: "#B45309",
+                    fontSize: RFValue(12),
+                  }}
+                >
+                  AI side-effect check ({warnings.length})
+                </Text>
+              </View>
+              {warnings.map((w, idx) => (
+                <Text
+                  key={`${w.medicine}-${idx}`}
+                  style={{
+                    fontSize: RFValue(11),
+                    color: "#92400E",
+                    marginBottom: 4,
+                  }}
+                >
+                  • {w.medicine}: {w.message}
+                </Text>
+              ))}
+            </View>
+          ) : checkingSideEffects ? (
+            <Text
+              style={{
+                marginBottom: RFValue(10),
+                fontSize: RFValue(11),
+                color: "#6B7280",
+              }}
+            >
+              Checking for interactions…
+            </Text>
+          ) : null}
 
           {lines.map((line, index) => (
             <View
@@ -18461,7 +20058,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
                 editable={!sending}
               />
 
-              <Text style={labelStyle}>How much to take</Text>
+              <Text style={labelStyle}>Dosage</Text>
               <TextInput
                 style={[inputStyle, { marginBottom: RFValue(10) }]}
                 placeholder="e.g. 500 mg, 1 tablet"
@@ -18471,26 +20068,116 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
                 editable={!sending}
               />
 
-              <Text style={labelStyle}>When to take</Text>
+              <Text style={labelStyle}>Frequency</Text>
+              <SegmentedChipRow
+                options={FREQUENCY_OPTIONS}
+                value={line.frequency}
+                onChange={(value) =>
+                  updateLine(line.key, "frequency", value)
+                }
+                disabled={sending}
+              />
+
+              <Text style={labelStyle}>Meal timing</Text>
+              <SegmentedChipRow
+                options={MEAL_TIMING_OPTIONS}
+                value={line.mealTiming}
+                onChange={(value) =>
+                  updateLine(line.key, "mealTiming", value)
+                }
+                disabled={sending}
+              />
+
+              {line.frequency !== "as_needed" ? (
+                <>
+                  <Text style={labelStyle}>
+                    Times of day (HH:mm — edit or add)
+                  </Text>
+                  {(line.timesOfDay || []).map((time, timeIdx) => (
+                    <View
+                      key={`${line.key}-t-${timeIdx}`}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        marginBottom: RFValue(8),
+                      }}
+                    >
+                      <TextInput
+                        style={[inputStyle, { flex: 1 }]}
+                        placeholder="08:00"
+                        placeholderTextColor="#9CA3AF"
+                        value={time}
+                        onChangeText={(value) =>
+                          updateLineTime(line.key, timeIdx, value)
+                        }
+                        editable={!sending}
+                        keyboardType={
+                          Platform.OS === "ios" ? "numbers-and-punctuation" : "default"
+                        }
+                      />
+                      {(line.timesOfDay || []).length > 1 ? (
+                        <TouchableOpacity
+                          onPress={() => removeLineTime(line.key, timeIdx)}
+                          disabled={sending}
+                          style={{ marginLeft: 8, padding: 6 }}
+                        >
+                          <Ionicons
+                            name="trash-outline"
+                            size={18}
+                            color={sending ? "#D1D5DB" : "#DC2626"}
+                          />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  ))}
+                  <TouchableOpacity
+                    onPress={() => addLineTime(line.key)}
+                    disabled={sending}
+                    style={{
+                      paddingVertical: RFValue(6),
+                      marginBottom: RFValue(10),
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: sending ? "#D1D5DB" : "#4338CA",
+                        fontWeight: "700",
+                        fontSize: RFValue(12),
+                      }}
+                    >
+                      + Add another time
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : null}
+
+              <Text style={labelStyle}>Duration</Text>
               <TextInput
                 style={[inputStyle, { marginBottom: RFValue(10) }]}
-                placeholder="e.g. Twice daily after meals"
+                placeholder="e.g. 7 days"
                 placeholderTextColor="#9CA3AF"
-                value={line.whenToTake}
+                value={line.duration}
                 onChangeText={(value) =>
-                  updateLine(line.key, "whenToTake", value)
+                  updateLine(line.key, "duration", value)
                 }
                 editable={!sending}
               />
 
-              <Text style={labelStyle}>How long to take</Text>
+              <Text style={labelStyle}>Notes (optional)</Text>
               <TextInput
-                style={inputStyle}
-                placeholder="e.g. 7 days"
+                style={[
+                  inputStyle,
+                  {
+                    minHeight: RFValue(60),
+                    textAlignVertical: "top",
+                  },
+                ]}
+                placeholder="e.g. Take with a full glass of water"
                 placeholderTextColor="#9CA3AF"
-                value={line.duration}
-                onChangeText={(value) => updateLine(line.key, "duration", value)}
+                value={line.notes}
+                onChangeText={(value) => updateLine(line.key, "notes", value)}
                 editable={!sending}
+                multiline
               />
             </View>
           ))}
@@ -18872,7 +20559,52 @@ const PharmacyDashboard = ({ orders }) => {
   );
 };
 
+const PHARMACY_STATUS_STEPS = [
+  { id: "pending", label: "Pending", next: "packed" },
+  { id: "packed", label: "Packed", next: "dispatched" },
+  { id: "dispatched", label: "Dispatched", next: "delivered" },
+  { id: "delivered", label: "Delivered", next: null },
+  { id: "cancelled", label: "Cancelled", next: null },
+];
+
 const PharmacyOrdersScreen = ({ orders }) => {
+  const { updateOrderStatus, userRole } = useAppData();
+  const [busyId, setBusyId] = useState(null);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const advanceStatus = async (order) => {
+    const current = PHARMACY_STATUS_STEPS.find(
+      (s) => s.id === (order.statusKey || "pending"),
+    );
+    const nextId = current?.next;
+    if (!nextId) return;
+    try {
+      setBusyId(order.id);
+      setErrorMessage("");
+      await updateOrderStatus(order, nextId);
+    } catch (error) {
+      setErrorMessage(
+        error?.message || "Unable to update order status. Please try again.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const cancelOrder = async (order) => {
+    try {
+      setBusyId(order.id);
+      setErrorMessage("");
+      await updateOrderStatus(order, "cancelled");
+    } catch (error) {
+      setErrorMessage(
+        error?.message || "Unable to cancel order. Please try again.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -18888,80 +20620,138 @@ const PharmacyOrdersScreen = ({ orders }) => {
         <Text
           style={{ fontSize: RFValue(20), fontWeight: "800", color: "#1E1B4B" }}
         >
-          Medicine Orders
+          {userRole === "pharmacy" ? "Incoming orders" : "My medicine orders"}
+        </Text>
+        <Text style={{ fontSize: RFValue(11), color: "#6B7280", marginTop: 4 }}>
+          Coordinate price & delivery directly in chat. The app does not handle money.
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: RFValue(16) }}>
+      <ScrollView contentContainerStyle={{ padding: RFValue(16), paddingBottom: RFValue(40) }}>
+        {errorMessage ? (
+          <Text style={{ color: "#DC2626", marginBottom: RFValue(10), fontSize: RFValue(12) }}>
+            {errorMessage}
+          </Text>
+        ) : null}
         {(orders || []).length > 0 ? (
-          orders.map((o, idx) => (
-            <View
-              key={idx}
-              style={{
-                backgroundColor: "#FFFFFF",
-                borderRadius: RFValue(16),
-                padding: RFValue(18),
-                borderLeftWidth: 4,
-                borderLeftColor: "#8B5CF6",
-                shadowColor: "#000",
-                shadowOpacity: 0.05,
-                elevation: 2,
-                marginBottom: 12,
-              }}
-            >
+          orders.map((o, idx) => {
+            const statusKey = o.statusKey || "pending";
+            const current = PHARMACY_STATUS_STEPS.find((s) => s.id === statusKey);
+            const canAdvance = userRole === "pharmacy" && !!current?.next;
+            const canCancel =
+              userRole === "pharmacy" &&
+              statusKey !== "cancelled" &&
+              statusKey !== "delivered";
+            const isBusy = busyId === o.id;
+            return (
               <View
+                key={o.id || idx}
                 style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
+                  backgroundColor: "#FFFFFF",
+                  borderRadius: RFValue(16),
+                  padding: RFValue(16),
+                  borderLeftWidth: 4,
+                  borderLeftColor:
+                    statusKey === "delivered"
+                      ? "#059669"
+                      : statusKey === "cancelled"
+                        ? "#DC2626"
+                        : "#8B5CF6",
+                  shadowColor: "#000",
+                  shadowOpacity: 0.05,
+                  elevation: 2,
+                  marginBottom: 12,
                 }}
               >
-                <Text
-                  style={{
-                    fontWeight: "800",
-                    fontSize: RFValue(15),
-                    color: "#1E1B4B",
-                  }}
-                >
-                  Order #{o.id || idx + 1}
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ fontWeight: "800", fontSize: RFValue(14), color: "#1E1B4B" }}>
+                    {o.patient || "Patient"}
+                  </Text>
+                  <Text
+                    style={{
+                      color:
+                        statusKey === "delivered"
+                          ? "#059669"
+                          : statusKey === "cancelled"
+                            ? "#DC2626"
+                            : "#D97706",
+                      fontWeight: "700",
+                      fontSize: RFValue(12),
+                    }}
+                  >
+                    {o.status || "Ordered"}
+                  </Text>
+                </View>
+                <Text style={{ color: "#9CA3AF", fontSize: RFValue(10), marginTop: 2 }}>
+                  {o.kind === "pharmacy_order"
+                    ? "Direct patient order"
+                    : "From doctor's prescription"}
+                  {"  ·  "}
+                  {o.time}
                 </Text>
-                <Text
-                  style={{
-                    color: "#D97706",
-                    fontWeight: "700",
-                    fontSize: RFValue(12),
-                  }}
-                >
-                  {o.status || "Ordered"}
+                <Text style={{ color: "#6B7280", fontSize: RFValue(12), marginTop: 6 }}>
+                  {o.items || "Medicine items"}
                 </Text>
+                {o.note ? (
+                  <Text style={{ color: "#6B7280", fontSize: RFValue(11), marginTop: 4, fontStyle: "italic" }}>
+                    Note: {o.note}
+                  </Text>
+                ) : null}
+                {o.totalAmount ? (
+                  <Text style={{ color: "#1E1B4B", fontSize: RFValue(12), marginTop: 4, fontWeight: "700" }}>
+                    Indicative total: {o.total} (confirm in chat)
+                  </Text>
+                ) : null}
+
+                {userRole === "pharmacy" ? (
+                  <View style={{ flexDirection: "row", marginTop: RFValue(12) }}>
+                    {canAdvance ? (
+                      <TouchableOpacity
+                        onPress={() => advanceStatus(o)}
+                        disabled={isBusy}
+                        style={{
+                          flex: 1,
+                          backgroundColor: "#4338CA",
+                          paddingVertical: RFValue(10),
+                          borderRadius: RFValue(10),
+                          alignItems: "center",
+                          marginRight: 8,
+                          opacity: isBusy ? 0.7 : 1,
+                        }}
+                      >
+                        {isBusy ? (
+                          <ActivityIndicator color="#FFF" size="small" />
+                        ) : (
+                          <Text style={{ color: "#FFF", fontWeight: "800", fontSize: RFValue(12) }}>
+                            Mark as{" "}
+                            {PHARMACY_STATUS_STEPS.find((s) => s.id === current.next)?.label}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    ) : null}
+                    {canCancel ? (
+                      <TouchableOpacity
+                        onPress={() => cancelOrder(o)}
+                        disabled={isBusy}
+                        style={{
+                          flex: canAdvance ? 0.6 : 1,
+                          borderWidth: 1,
+                          borderColor: "#DC2626",
+                          paddingVertical: RFValue(10),
+                          borderRadius: RFValue(10),
+                          alignItems: "center",
+                          opacity: isBusy ? 0.6 : 1,
+                        }}
+                      >
+                        <Text style={{ color: "#DC2626", fontWeight: "700", fontSize: RFValue(12) }}>
+                          Cancel
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
-              <Text
-                style={{
-                  color: "#6B7280",
-                  fontSize: RFValue(13),
-                  marginTop: 4,
-                }}
-              >
-                {o.items || "Medicine items"}
-              </Text>
-              <View
-                style={{
-                  marginTop: 12,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="time-outline" size={16} color="#9CA3AF" />
-                <Text
-                  style={{
-                    color: "#9CA3AF",
-                    fontSize: RFValue(11),
-                    marginLeft: 4,
-                  }}
-                >
-                  Awaiting pharmacy confirmation
-                </Text>
-              </View>
-            </View>
-          ))
+            );
+          })
         ) : (
           <View style={{ alignItems: "center", marginTop: RFValue(60) }}>
             <Ionicons name="cart-outline" size={RFValue(48)} color="#E5E7EB" />
@@ -19278,7 +21068,7 @@ export default function App() {
           pb.collection("orders").getFullList({
             requestKey: null,
             sort: "-updated,-created",
-            expand: "patient,conversation,wound.doctor",
+            expand: "patient,conversation,wound.doctor,pharmacy",
           }),
           pb.collection("conversations").getFullList({
             requestKey: null,
@@ -19375,7 +21165,14 @@ export default function App() {
         );
       } else if (activeRole === "pharmacy") {
         setWounds(allWounds.filter((record) => record.hasPharmacy));
-        setMedOrders(allOrders);
+        // Step 6: pharmacies only see orders addressed to them, OR legacy
+        // doctor-prescribed orders (which have no `pharmacy` field set yet).
+        setMedOrders(
+          allOrders.filter(
+            (record) =>
+              !record.pharmacyId || record.pharmacyId === activeUser.id,
+          ),
+        );
         setPrescriptions([]);
         setAppointments([]);
       }
@@ -20107,6 +21904,18 @@ export default function App() {
       });
     }
 
+    // Derive a `whenToTake` summary for any line that only has structured
+    // timing, so legacy viewers still see a human-readable schedule.
+    const linesForStorage = lines.map((line) => {
+      const whenToTake =
+        line.whenToTake || describeStructuredTiming(line) || "";
+      return {
+        ...line,
+        whenToTake,
+      };
+    });
+
+    let savedPrescriptionId = null;
     try {
       let existingPrescription = null;
       try {
@@ -20123,18 +21932,80 @@ export default function App() {
         doctor: currentUser.id,
         wound: woundId,
         conversation: conversation.id,
-        items: lines,
+        items: linesForStorage,
         notes: disease,
       };
       if (existingPrescription) {
         await pb
           .collection("prescriptions")
           .update(existingPrescription.id, prescriptionPayload);
+        savedPrescriptionId = existingPrescription.id;
       } else {
-        await pb.collection("prescriptions").create(prescriptionPayload);
+        const created = await pb
+          .collection("prescriptions")
+          .create(prescriptionPayload);
+        savedPrescriptionId = created?.id || null;
       }
     } catch (error) {
       console.log("prescriptions collection save error:", error);
+    }
+
+    // Step 7b: expand each line into concrete `medication_schedule` doses
+    // the patient can tick off. Wrapped in try/catch so a missing schedule
+    // collection never blocks the prescription itself.
+    if (savedPrescriptionId && patientId) {
+      try {
+        // Remove any old pending doses for this prescription so re-prescribing
+        // with a new plan doesn't leave stale doses behind.
+        try {
+          const staleDoses = await pb
+            .collection("medication_schedule")
+            .getFullList({
+              requestKey: null,
+              filter: `prescription="${savedPrescriptionId}" && status="pending"`,
+            });
+          for (const dose of staleDoses || []) {
+            await pb
+              .collection("medication_schedule")
+              .delete(dose.id)
+              .catch(() => {});
+          }
+        } catch (cleanupError) {
+          console.log(
+            "medication_schedule cleanup skipped:",
+            cleanupError?.message,
+          );
+        }
+        const context = {
+          patientId,
+          prescriptionId: savedPrescriptionId,
+          woundId,
+        };
+        for (const line of linesForStorage) {
+          const rows = buildScheduleRowsForLine(line, context);
+          for (const row of rows) {
+            try {
+              const createdDose = await pb
+                .collection("medication_schedule")
+                .create(row);
+              // Best-effort local reminder. Doctor-side devices will silently
+              // skip because they never requested patient permissions, but
+              // on the patient device this schedules a dated notification.
+              scheduleDoseReminder(createdDose).catch(() => {});
+            } catch (rowError) {
+              console.log(
+                "medication_schedule row skipped:",
+                rowError?.message,
+              );
+            }
+          }
+        }
+      } catch (scheduleError) {
+        console.log(
+          "medication_schedule expansion skipped:",
+          scheduleError?.message,
+        );
+      }
     }
 
     const medicationSummary = lines
@@ -20184,6 +22055,310 @@ export default function App() {
     await refreshAllData();
   };
 
+  // -------------------------------------------------------------------------
+  // Step 6 — Patient → Pharmacy direct order.
+  // Creates an `orders` row linked to the pharmacy user, re-uses (or opens) an
+  // encrypted direct conversation with them, and posts a system message that
+  // summarizes the order so both sides see it in chat. The app itself does not
+  // handle money or delivery — those are negotiated inside the chat.
+  // -------------------------------------------------------------------------
+  const createPharmacyOrder = async ({
+    pharmacyUserId,
+    items,
+    note,
+  } = {}) => {
+    if (!currentUser?.id) {
+      throw new Error("Please login again.");
+    }
+    if (!pharmacyUserId) {
+      throw new Error("Pharmacy is not available for ordering.");
+    }
+    const cleanItems = safeArray(items)
+      .map((item) => ({
+        name: String(item?.name || "").trim(),
+        qty: String(item?.qty || "").trim(),
+        notes: String(item?.notes || "").trim(),
+      }))
+      .filter((item) => item.name);
+    if (!cleanItems.length) {
+      throw new Error("Add at least one medicine to the order.");
+    }
+    const trimmedNote = String(note || "").trim();
+
+    // 1. Ensure a persistent encrypted conversation with the pharmacy.
+    const conversation = await ensureDirectConversation(pharmacyUserId);
+    if (!conversation?.id) {
+      throw new Error("Unable to open a chat with this pharmacy.");
+    }
+
+    // 2. Create the order. We retry with a legacy string[] items shape if
+    //    PocketBase rejects the structured JSON (older schemas).
+    const totalAmount = sumMedicationAmount(cleanItems);
+    const basePayload = {
+      patient: currentUser.id,
+      pharmacy: pharmacyUserId,
+      conversation: conversation.id,
+      totalAmount,
+      status: "pending",
+    };
+    let orderRecord = null;
+    try {
+      orderRecord = await pb.collection("orders").create({
+        ...basePayload,
+        items: cleanItems,
+        note: trimmedNote,
+      });
+    } catch (structuredError) {
+      console.log("createPharmacyOrder structured error:", structuredError);
+      try {
+        orderRecord = await pb.collection("orders").create({
+          ...basePayload,
+          items: cleanItems.map((item) =>
+            [item.name, item.qty && `x${item.qty}`, item.notes]
+              .filter(Boolean)
+              .join(" "),
+          ),
+        });
+      } catch (legacyError) {
+        const detailed =
+          legacyError?.data?.message ||
+          legacyError?.message ||
+          "Unable to place order. Check that the orders collection allows a `pharmacy` relation and items JSON.";
+        throw new Error(detailed);
+      }
+    }
+
+    // 3. Post a system message so both sides see the order in chat.
+    const summary = cleanItems
+      .map((item) =>
+        [item.name, item.qty && `x${item.qty}`, item.notes]
+          .filter(Boolean)
+          .join(" "),
+      )
+      .join("; ");
+    const systemText =
+      `Medicine order placed:\n${summary}` +
+      (trimmedNote ? `\nNote: ${trimmedNote}` : "");
+    try {
+      await pb.collection("messages").create({
+        conversation: conversation.id,
+        kind: "system",
+        text: systemText,
+      });
+      await pb.collection("conversations").update(conversation.id, {
+        lastMessageAt: new Date().toISOString(),
+      });
+    } catch (msgError) {
+      console.log("createPharmacyOrder system message skipped:", msgError);
+    }
+
+    void refreshAllData();
+    return { order: orderRecord, conversationId: conversation.id };
+  };
+
+  // -------------------------------------------------------------------------
+  // Step 8 — Appointment payment.
+  // In "stub" mode (the default) this just flips the status to "paid" and
+  // writes a system message via the existing appointment helper. A real
+  // gateway (Stripe / Razorpay) can be wired here when keys are configured.
+  // -------------------------------------------------------------------------
+  const payForAppointment = async (appointment) => {
+    if (!appointment?.id) {
+      throw new Error("Appointment not found.");
+    }
+    if (PAYMENT_MODE === "stripe" && PAYMENT_STRIPE_KEY) {
+      // Real gateway integration would open a checkout session here and then
+      // set status=paid from the success callback. Left as a stub hook.
+      console.log("payForAppointment: stripe flow would run here");
+    }
+    if (PAYMENT_MODE === "razorpay" && PAYMENT_RAZORPAY_KEY_ID) {
+      console.log("payForAppointment: razorpay flow would run here");
+    }
+    await updateAppointmentStatus({
+      appointmentId: appointment.id,
+      nextStatus: "paid",
+    });
+  };
+
+  // -------------------------------------------------------------------------
+  // Step 7b — medication schedule helpers used by MedicationTrackerScreen.
+  // -------------------------------------------------------------------------
+  const fetchMedicationSchedule = async ({ patientId, daysPast = 30 } = {}) => {
+    const activePatientId = patientId || currentUser?.id;
+    if (!activePatientId) return [];
+    const since = new Date();
+    since.setDate(since.getDate() - daysPast);
+    try {
+      const records = await pb.collection("medication_schedule").getFullList({
+        requestKey: null,
+        sort: "due_at",
+        filter: `patient="${activePatientId}" && due_at>="${since
+          .toISOString()
+          .replace("T", " ")
+          .slice(0, 19)}"`,
+      });
+      return records;
+    } catch (error) {
+      console.log("fetchMedicationSchedule error:", error?.message);
+      return [];
+    }
+  };
+
+  const markScheduleDoseTaken = async (scheduleId) => {
+    if (!scheduleId) return null;
+    try {
+      const updated = await pb
+        .collection("medication_schedule")
+        .update(scheduleId, {
+          status: "taken",
+          taken_at: new Date().toISOString(),
+        });
+      cancelDoseReminder(scheduleId).catch(() => {});
+      return updated;
+    } catch (error) {
+      console.log("markScheduleDoseTaken error:", error?.message);
+      throw new Error(
+        error?.data?.message ||
+          error?.message ||
+          "Unable to mark dose as taken.",
+      );
+    }
+  };
+
+  const markScheduleDoseMissed = async (scheduleId) => {
+    if (!scheduleId) return null;
+    try {
+      return await pb.collection("medication_schedule").update(scheduleId, {
+        status: "missed",
+      });
+    } catch (error) {
+      console.log("markScheduleDoseMissed error:", error?.message);
+      return null;
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Step 9 — AI assistant conversation helpers.
+  // We store assistant conversations as regular PocketBase `conversations`
+  // rows with `kind="assistant"` and a single member (the patient). Messages
+  // in these conversations are stored as PLAIN TEXT so a missing encryption
+  // key (or an AI response) is not mangled. Human↔human conversations still
+  // go through the normal encrypted `sendConversationMessage` flow.
+  // -------------------------------------------------------------------------
+  const ensureAssistantConversation = async () => {
+    if (!currentUser?.id) return null;
+    // Fast-path: check in-memory conversations first.
+    const cached = conversations.find(
+      (conv) => conv.kind === ASSISTANT_CONVERSATION_KIND,
+    );
+    if (cached) return cached;
+    // Otherwise query PB. Some schemas may not have `kind` yet; catch and
+    // fall back to creating one.
+    try {
+      const list = await pb.collection("conversations").getFullList({
+        requestKey: null,
+        filter: `members~"${currentUser.id}" && kind="${ASSISTANT_CONVERSATION_KIND}"`,
+        expand: "members",
+      });
+      if (list?.length) {
+        return mapConversationRecord(list[0], currentUser.id, {});
+      }
+    } catch (error) {
+      console.log("ensureAssistantConversation lookup skipped:", error?.message);
+    }
+    try {
+      const payload = {
+        members: [currentUser.id],
+        title: "Health Assistant",
+        kind: ASSISTANT_CONVERSATION_KIND,
+        lastMessageAt: new Date().toISOString(),
+      };
+      const created = await pb.collection("conversations").create(payload);
+      // Seed with a welcome message (plain text).
+      try {
+        await pb.collection("messages").create({
+          conversation: created.id,
+          kind: ASSISTANT_REPLY_MESSAGE_KIND,
+          text:
+            "Hi! I'm your Nvoisys Health Assistant. Ask me about symptoms, medicines, or your prescriptions at any time.",
+        });
+      } catch (seedError) {
+        console.log("assistant seed message skipped:", seedError?.message);
+      }
+      const hydrated = await pb
+        .collection("conversations")
+        .getOne(created.id, { requestKey: null, expand: "members" });
+      return mapConversationRecord(hydrated, currentUser.id, {});
+    } catch (error) {
+      console.log("ensureAssistantConversation create error:", error?.message);
+      return null;
+    }
+  };
+
+  const sendAssistantMessage = async (conversationId, text) => {
+    if (!conversationId || !currentUser?.id) return null;
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return null;
+    // 1. Post the user's question as a plain-text assistant_user message.
+    let userRecord = null;
+    try {
+      userRecord = await pb.collection("messages").create({
+        conversation: conversationId,
+        sender: currentUser.id,
+        kind: ASSISTANT_USER_MESSAGE_KIND,
+        text: trimmed,
+      });
+    } catch (error) {
+      console.log("sendAssistantMessage user write error:", error?.message);
+      return null;
+    }
+
+    // 2. Call the AI endpoint or fall back to a friendly stub.
+    const aiResult = await callAIEndpoint({
+      kind: "chat",
+      question: trimmed,
+      patient: patientProfile || null,
+    });
+    const replyText =
+      (aiResult && typeof aiResult.reply === "string"
+        ? aiResult.reply
+        : null) || aiChatStubReply(trimmed);
+
+    // 3. Persist the AI reply as a plain-text assistant_reply message.
+    let replyRecord = null;
+    try {
+      replyRecord = await pb.collection("messages").create({
+        conversation: conversationId,
+        kind: ASSISTANT_REPLY_MESSAGE_KIND,
+        text: replyText,
+      });
+      await pb.collection("conversations").update(conversationId, {
+        lastMessageAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.log("sendAssistantMessage reply error:", error?.message);
+    }
+    return {
+      userMessage: mapMessageRecord(userRecord),
+      replyMessage: replyRecord ? mapMessageRecord(replyRecord) : null,
+    };
+  };
+
+  // -------------------------------------------------------------------------
+  // Step 9 — Side-effect check used by PrescriptionModal.
+  // Accepts lines + patient health profile and returns a list of warnings.
+  // Uses the configured AI endpoint if available, otherwise a local stub.
+  // -------------------------------------------------------------------------
+  const runSideEffectCheck = async ({ items, patient } = {}) => {
+    const patientFields = patient || patientProfile || {};
+    const payload = { kind: "side_effect_check", items, patient: patientFields };
+    const aiResult = await callAIEndpoint(payload);
+    if (aiResult && Array.isArray(aiResult.warnings)) {
+      return aiResult.warnings;
+    }
+    return aiSideEffectStubWarnings(items, patientFields);
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -20230,6 +22405,34 @@ export default function App() {
     }
     refreshAllData(currentUser, userRole);
   }, [currentUser?.id, userRole, patientProfile?.status]);
+
+  // Step 7b: when a patient logs in, request notification permission up-front
+  // so later dose reminders can be scheduled silently. Best-effort.
+  useEffect(() => {
+    if (!currentUser?.id || userRole !== "patient") return;
+    ensureReminderPermissions().catch(() => {});
+  }, [currentUser?.id, userRole]);
+
+  // Step 9: give every patient a pinned "Health Assistant" conversation the
+  // first time they sign in. The call is best-effort — if PocketBase doesn't
+  // have the `kind` field or blocks the create, login still proceeds.
+  useEffect(() => {
+    if (!currentUser?.id || userRole !== "patient") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await ensureAssistantConversation();
+        if (!cancelled) {
+          void refreshAllData(currentUser, userRole).catch(() => {});
+        }
+      } catch (error) {
+        console.log("assistant conversation setup skipped:", error?.message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, userRole]);
 
   useEffect(() => {
     if (!currentUser?.id || !userRole) return;
@@ -20355,9 +22558,18 @@ export default function App() {
     createWoundReport,
     prescribeForWound,
     updateOrderStatus,
+    createPharmacyOrder,
     fetchApprovedDoctors,
     createAppointment,
     updateAppointmentStatus,
+    payForAppointment,
+    fetchMedicationSchedule,
+    markScheduleDoseTaken,
+    markScheduleDoseMissed,
+    ensureAssistantConversation,
+    sendAssistantMessage,
+    runSideEffectCheck,
+    paymentMode: PAYMENT_MODE,
     hospitals,
     hospitalsLoading,
     fetchHospitals,

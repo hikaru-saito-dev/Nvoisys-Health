@@ -61,6 +61,7 @@
         }
       ],
       "expo-web-browser",
+      "expo-notifications",
       "@livekit/react-native-expo-plugin"
     ],
     "experiments": {
@@ -71,6 +72,11 @@
       "router": {},
       "pbAppointmentsCollection": "appointments",
       "pbAppointmentDoctorIsProfile": false,
+      "paymentMode": "stub",
+      "stripePublishableKey": "",
+      "razorpayKeyId": "",
+      "aiBaseUrl": "",
+      "aiApiKey": "",
       "eas": {
         "projectId": "7726d1ea-0781-416e-b26f-6fa676d403fb"
       }
