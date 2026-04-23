@@ -260,12 +260,23 @@ const WOUND_STATUS_LABELS = {
   closed: "Closed",
 };
 
+// Step 6 — Order lifecycle (roadmap v1.0). Legacy PB values are normalized
+// for display and pharmacy actions map to the canonical chain only.
 const ORDER_STATUS_LABELS = {
   pending: "Pending",
+  confirmed: "Confirmed",
+  out_for_delivery: "Out for delivery",
+  fulfilled: "Fulfilled",
+  cancelled: "Cancelled",
   packed: "Packed",
   dispatched: "Dispatched",
   delivered: "Delivered",
-  cancelled: "Cancelled",
+};
+
+const LEGACY_ORDER_STATUS_TO_CANONICAL = {
+  packed: "confirmed",
+  dispatched: "out_for_delivery",
+  delivered: "fulfilled",
 };
 
 const MEDICINE_PRICE_MAP = {
@@ -314,13 +325,18 @@ const normalizeWoundStatus = (value) => {
 
 const humanizeOrderStatus = (value) => {
   if (!value) return "Pending";
-  return ORDER_STATUS_LABELS[value] || value;
+  const key = normalizeOrderStatus(value);
+  return ORDER_STATUS_LABELS[key] || String(value);
 };
 
 const normalizeOrderStatus = (value) => {
   if (!value) return "pending";
   const normalized = String(value).trim().toLowerCase().replace(/\s+/g, "_");
-  return ORDER_STATUS_LABELS[normalized] ? normalized : "pending";
+  if (LEGACY_ORDER_STATUS_TO_CANONICAL[normalized]) {
+    return LEGACY_ORDER_STATUS_TO_CANONICAL[normalized];
+  }
+  if (ORDER_STATUS_LABELS[normalized]) return normalized;
+  return "pending";
 };
 
 const formatCurrency = (amount) => `₹${Number(amount || 0)}`;
@@ -1256,6 +1272,42 @@ const buildPatientHealthPayload = (values) => {
   return payload;
 };
 
+// Step 1 — Launch v1.0: patient signup / profile save must collect every field
+// the client spec lists (allergies remain optional for PB compatibility).
+const validatePatientHealthProfileComplete = (values) => {
+  const v = values || {};
+  const missingLabels = [];
+  const need = (key, label) => {
+    const s = String(v[key] ?? "").trim();
+    if (!s) missingLabels.push(label);
+  };
+  need("age", "age");
+  need("weight_kg", "weight (kg)");
+  need("height_cm", "height (cm)");
+  need("marital_status", "marital status");
+  need("district", "district");
+  need("state", "state");
+  need("smoking", "smoking");
+  need("alcohol", "alcohol use");
+  need("medical_conditions", "medical conditions");
+  if (missingLabels.length) {
+    return `Please complete your profile: ${missingLabels.join(", ")}.`;
+  }
+  const ageNum = Number(String(v.age).trim());
+  if (!Number.isFinite(ageNum) || ageNum < 1 || ageNum > 130) {
+    return "Please enter a valid age.";
+  }
+  const w = Number(String(v.weight_kg).trim());
+  if (!Number.isFinite(w) || w < 1 || w > 500) {
+    return "Please enter a valid weight in kg.";
+  }
+  const h = Number(String(v.height_cm).trim());
+  if (!Number.isFinite(h) || h < 30 || h > 280) {
+    return "Please enter a valid height in cm.";
+  }
+  return null;
+};
+
 // Pull stored values back out of a PocketBase patient_profile record into the
 // shape the form uses (strings, so TextInput can render them).
 const patientHealthValuesFromProfile = (profile) => ({
@@ -1414,8 +1466,8 @@ const PatientHealthProfileFields = ({
       <Text style={sectionStyle}>Medical</Text>
       {renderText(
         "medical_conditions",
-        "Other conditions (optional)",
-        "e.g. hypertension, asthma",
+        "Medical conditions",
+        "e.g. diabetes, hypertension, asthma",
       )}
       {renderText(
         "allergies",
@@ -6569,6 +6621,12 @@ const PatientEditProfileScreen = ({
       setError("Please enter your full name.");
       return;
     }
+    const healthProfileError =
+      validatePatientHealthProfileComplete(healthValues);
+    if (healthProfileError) {
+      setError(healthProfileError);
+      return;
+    }
     try {
       setSaving(true);
       setError("");
@@ -10199,6 +10257,11 @@ const AuthScreen = ({ onLogin }) => {
           if (!patientGender) {
             throw new Error("Please select Male or Female (or Other)");
           }
+          const healthProfileError =
+            validatePatientHealthProfileComplete(patientHealthValues);
+          if (healthProfileError) {
+            throw new Error(healthProfileError);
+          }
         }
         if (role === "doctor") {
           if (!doctorSpecialtyField.trim()) {
@@ -12412,7 +12475,93 @@ const DoctorEmergencyScreen = ({ navigation }) => {
 };
 
 const DoctorProfileScreen = ({ onLogout }) => {
+  const { currentUser, refreshAllData } = useAppData();
   const [showTheme, setShowTheme] = useState(false);
+  const [doctorProfileId, setDoctorProfileId] = useState(null);
+  const [concerns, setConcerns] = useState([]);
+  const [customTag, setCustomTag] = useState("");
+  const [loadingConcerns, setLoadingConcerns] = useState(true);
+  const [savingConcerns, setSavingConcerns] = useState(false);
+  const [concernsError, setConcernsError] = useState("");
+  const [concernsSavedFlash, setConcernsSavedFlash] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!currentUser?.id) {
+        setLoadingConcerns(false);
+        return;
+      }
+      try {
+        const record = await pb
+          .collection("doctor_profile")
+          .getFirstListItem(`user="${currentUser.id}"`, { requestKey: null });
+        if (!active || !record) return;
+        setDoctorProfileId(record.id);
+        setConcerns(
+          parseDoctorConcerns(record.concerns || record.health_concerns),
+        );
+        setConcernsError("");
+      } catch (loadError) {
+        if (active) {
+          setConcernsError(
+            loadError?.message ||
+              "Could not load doctor profile. Add a doctor_profile row for this user.",
+          );
+        }
+      } finally {
+        if (active) setLoadingConcerns(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.id]);
+
+  const toggleConcernChip = (chipId) => {
+    const tag = normalizeConcernTag(chipId);
+    if (!tag) return;
+    setConcerns((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  };
+
+  const addCustomConcern = () => {
+    const tag = normalizeConcernTag(customTag);
+    if (!tag) return;
+    setConcerns((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
+    setCustomTag("");
+  };
+
+  const saveDoctorConcerns = async () => {
+    if (!doctorProfileId) {
+      Alert.alert(
+        "Profile",
+        "Your doctor profile record was not found yet. Try again after login.",
+      );
+      return;
+    }
+    setConcernsError("");
+    setSavingConcerns(true);
+    try {
+      await pb.collection("doctor_profile").update(doctorProfileId, {
+        concerns,
+      });
+      setConcernsSavedFlash(true);
+      setTimeout(() => setConcernsSavedFlash(false), 2200);
+      if (typeof refreshAllData === "function") {
+        await refreshAllData().catch(() => {});
+      }
+    } catch (saveError) {
+      setConcernsError(
+        saveError?.data?.message ||
+          saveError?.message ||
+          "Could not save. Ensure PocketBase has a JSON field `concerns` on doctor_profile.",
+      );
+    } finally {
+      setSavingConcerns(false);
+    }
+  };
 
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
 
@@ -12456,7 +12605,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
               color: "#1E1B4B",
             }}
           >
-            Doctor Name
+            {currentUser?.name || "Doctor"}
           </Text>
           <Text
             style={{
@@ -12492,6 +12641,153 @@ const DoctorProfileScreen = ({ onLogout }) => {
             >
               Available
             </Text>
+          </View>
+        </View>
+
+        {/* Step 3a — Health concerns for Find Doctor search */}
+        <View style={{ paddingHorizontal: RFValue(16), paddingTop: RFValue(12) }}>
+          <View
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: RFValue(18),
+              padding: RFValue(16),
+              marginBottom: RFValue(12),
+              shadowColor: "#000",
+              shadowOpacity: 0.06,
+              shadowOffset: { width: 0, height: 4 },
+              shadowRadius: 12,
+              elevation: 3,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: RFValue(16),
+                fontWeight: "800",
+                color: "#1E1B4B",
+                marginBottom: RFValue(6),
+              }}
+            >
+              Health concerns you treat
+            </Text>
+            <Text style={{ fontSize: RFValue(12), color: "#6B7280", marginBottom: RFValue(12) }}>
+              Patients use these tags in Find Doctor. Tap to select; add your own below.
+            </Text>
+            {loadingConcerns ? (
+              <ActivityIndicator color="#059669" />
+            ) : (
+              <>
+                <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                  {CONCERN_CHIP_OPTIONS.map((chip) => {
+                    const active = concerns.includes(chip.id);
+                    return (
+                      <TouchableOpacity
+                        key={chip.id}
+                        onPress={() => toggleConcernChip(chip.id)}
+                        style={{
+                          paddingHorizontal: RFValue(12),
+                          paddingVertical: RFValue(8),
+                          borderRadius: RFValue(12),
+                          backgroundColor: active ? "#059669" : "#F3F4F6",
+                          borderWidth: 1,
+                          borderColor: active ? "#059669" : "#E5E7EB",
+                          marginRight: RFValue(8),
+                          marginBottom: RFValue(8),
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            fontWeight: "700",
+                            color: active ? "#FFF" : "#374151",
+                          }}
+                        >
+                          {chip.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    fontWeight: "700",
+                    color: "#6B7280",
+                    marginTop: RFValue(8),
+                    marginBottom: RFValue(6),
+                  }}
+                >
+                  Custom tag
+                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <TextInput
+                    value={customTag}
+                    onChangeText={setCustomTag}
+                    placeholder="e.g. thyroid"
+                    placeholderTextColor="#9CA3AF"
+                    style={{
+                      flex: 1,
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: RFValue(12),
+                      paddingHorizontal: RFValue(12),
+                      paddingVertical: RFValue(10),
+                      fontSize: RFValue(14),
+                      color: "#1E1B4B",
+                      marginRight: RFValue(8),
+                    }}
+                  />
+                  <TouchableOpacity
+                    onPress={addCustomConcern}
+                    style={{
+                      backgroundColor: "#1E1B4B",
+                      paddingHorizontal: RFValue(14),
+                      paddingVertical: RFValue(10),
+                      borderRadius: RFValue(12),
+                    }}
+                  >
+                    <Text style={{ color: "#FFF", fontWeight: "800", fontSize: RFValue(12) }}>
+                      Add
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {concerns.length > 0 ? (
+                  <Text
+                    style={{
+                      marginTop: RFValue(10),
+                      fontSize: RFValue(11),
+                      color: "#374151",
+                    }}
+                  >
+                    Selected: {concerns.join(", ")}
+                  </Text>
+                ) : null}
+                {concernsError ? (
+                  <Text style={{ color: "#DC2626", fontSize: RFValue(12), marginTop: RFValue(8) }}>
+                    {concernsError}
+                  </Text>
+                ) : null}
+                {concernsSavedFlash ? (
+                  <Text style={{ color: "#059669", fontSize: RFValue(12), marginTop: RFValue(6), fontWeight: "700" }}>
+                    Saved.
+                  </Text>
+                ) : null}
+                <TouchableOpacity
+                  onPress={saveDoctorConcerns}
+                  disabled={savingConcerns || loadingConcerns}
+                  style={{
+                    marginTop: RFValue(14),
+                    backgroundColor: savingConcerns ? "#9CA3AF" : "#059669",
+                    paddingVertical: RFValue(12),
+                    borderRadius: RFValue(14),
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: "#FFF", fontWeight: "800", fontSize: RFValue(14) }}>
+                    {savingConcerns ? "Saving…" : "Save concerns"}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
 
@@ -14821,9 +15117,13 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   const {
     prescriptions: prescriptionRecords,
     wounds: woundRecords,
+    runSideEffectCheck,
+    patientProfile,
   } = useAppData();
   const scrollRef = React.useRef(null);
   const cardOffsetsRef = React.useRef({});
+  const [rxSideWarnings, setRxSideWarnings] = useState({});
+  const [rxSideLoading, setRxSideLoading] = useState(false);
 
   const cards = React.useMemo(() => {
     const list = [...(prescriptionRecords || [])].sort(
@@ -14867,6 +15167,48 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
       };
     });
   }, [prescriptionRecords, woundRecords]);
+
+  // Step 9 — Same AI side-effect check as PrescriptionModal, debounced per load.
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!runSideEffectCheck || !cards.length) {
+      setRxSideWarnings({});
+      setRxSideLoading(false);
+      return undefined;
+    }
+    setRxSideLoading(true);
+    const timer = setTimeout(async () => {
+      const next = {};
+      await Promise.all(
+        cards.map(async (rx) => {
+          const items = rx.medicines
+            .map((m) => ({ name: String(m.name || "").trim() }))
+            .filter((item) => item.name);
+          if (!items.length) {
+            next[rx.id] = [];
+            return;
+          }
+          try {
+            const w = await runSideEffectCheck({
+              items,
+              patient: patientProfile || {},
+            });
+            next[rx.id] = Array.isArray(w) ? w : [];
+          } catch {
+            next[rx.id] = [];
+          }
+        }),
+      );
+      if (!cancelled) {
+        setRxSideWarnings(next);
+        setRxSideLoading(false);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [cards, patientProfile, runSideEffectCheck]);
 
   // Jump to the highlighted prescription when arriving via deep-link from the
   // wound detail screen or a chat prescription reference.
@@ -15096,6 +15438,61 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     }}
                   >
                     {rx.diagnosis}
+                  </Text>
+                </View>
+              ) : null}
+
+              {rxSideLoading ? (
+                <View style={{ paddingHorizontal: RFValue(16), paddingVertical: RFValue(10) }}>
+                  <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
+                    Checking prescriptions for interactions with your profile…
+                  </Text>
+                </View>
+              ) : (rxSideWarnings[rx.id] || []).length > 0 ? (
+                <View
+                  style={{
+                    marginHorizontal: RFValue(16),
+                    marginBottom: RFValue(10),
+                    padding: RFValue(12),
+                    borderRadius: RFValue(12),
+                    backgroundColor: "#FEF3C7",
+                    borderWidth: 1,
+                    borderColor: "#F59E0B",
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      marginBottom: RFValue(6),
+                    }}
+                  >
+                    <Ionicons name="alert-circle" size={18} color="#B45309" />
+                    <Text
+                      style={{
+                        marginLeft: 6,
+                        fontWeight: "800",
+                        color: "#B45309",
+                        fontSize: RFValue(12),
+                      }}
+                    >
+                      AI side-effect check ({(rxSideWarnings[rx.id] || []).length})
+                    </Text>
+                  </View>
+                  {(rxSideWarnings[rx.id] || []).map((w, widx) => (
+                    <Text
+                      key={`${rx.id}-warn-${widx}`}
+                      style={{
+                        fontSize: RFValue(11),
+                        color: "#92400E",
+                        marginBottom: 4,
+                      }}
+                    >
+                      • {w.medicine}: {w.message}
+                    </Text>
+                  ))}
+                  <Text style={{ fontSize: RFValue(10), color: "#92400E", marginTop: 4 }}>
+                    Ask your doctor or pharmacist if you have questions.
                   </Text>
                 </View>
               ) : null}
@@ -20578,7 +20975,7 @@ const PharmacyDashboard = ({ orders }) => {
             {activeTab === "Pending" ? (
               <View style={{ flexDirection: "row" }}>
                 <TouchableOpacity
-                  onPress={() => updateOrderStatus(o, "dispatched")}
+                  onPress={() => updateOrderStatus(o, "confirmed")}
                   style={{
                     flex: 1,
                     backgroundColor: "#8B5CF6",
@@ -20625,10 +21022,10 @@ const PharmacyDashboard = ({ orders }) => {
 };
 
 const PHARMACY_STATUS_STEPS = [
-  { id: "pending", label: "Pending", next: "packed" },
-  { id: "packed", label: "Packed", next: "dispatched" },
-  { id: "dispatched", label: "Dispatched", next: "delivered" },
-  { id: "delivered", label: "Delivered", next: null },
+  { id: "pending", label: "Pending", next: "confirmed" },
+  { id: "confirmed", label: "Confirmed", next: "out_for_delivery" },
+  { id: "out_for_delivery", label: "Out for delivery", next: "fulfilled" },
+  { id: "fulfilled", label: "Fulfilled", next: null },
   { id: "cancelled", label: "Cancelled", next: null },
 ];
 
@@ -20705,8 +21102,11 @@ const PharmacyOrdersScreen = ({ orders }) => {
             const canCancel =
               userRole === "pharmacy" &&
               statusKey !== "cancelled" &&
+              statusKey !== "fulfilled" &&
               statusKey !== "delivered";
             const isBusy = busyId === o.id;
+            const isFulfilled =
+              statusKey === "fulfilled" || statusKey === "delivered";
             return (
               <View
                 key={o.id || idx}
@@ -20716,7 +21116,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
                   padding: RFValue(16),
                   borderLeftWidth: 4,
                   borderLeftColor:
-                    statusKey === "delivered"
+                    isFulfilled
                       ? "#059669"
                       : statusKey === "cancelled"
                         ? "#DC2626"
@@ -20734,7 +21134,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
                   <Text
                     style={{
                       color:
-                        statusKey === "delivered"
+                        isFulfilled
                           ? "#059669"
                           : statusKey === "cancelled"
                             ? "#DC2626"

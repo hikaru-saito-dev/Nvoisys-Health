@@ -57,6 +57,13 @@ export function getPbAppointmentsCollection() {
   );
 }
 
+/**
+ * PocketBase **`orders`** collection (Step 6) — align `status` select with the app:
+ * `pending`, `confirmed`, `out_for_delivery`, `fulfilled`, `cancelled`.
+ * Legacy values `packed`, `dispatched`, `delivered` are still accepted when reading
+ * old rows; new updates use the canonical chain above.
+ */
+
 /** @returns {boolean} True when `appointments.doctor` relates to doctor_profile, not auth user id. */
 export function isPbAppointmentDoctorProfileRelation() {
   return (
@@ -207,6 +214,10 @@ async function createPatientProfileRecord(userId, merged) {
 /**
  * Matches PocketBase `doctor_profile`: user, status, specialty, clinic_or_hospital.
  * Status select: pending | approved | rejection
+ *
+ * Launch v1.0 — Step 3a: add optional JSON field **`concerns`** (string array of
+ * tags, e.g. `["diabetes","hypertension"]`). Doctors edit this in-app on the
+ * Doctor Profile screen so Find Doctor concern chips can filter accurately.
  */
 async function createDoctorProfileRecord(userId, merged) {
   const specialty = String(merged.specialty || "").trim();
