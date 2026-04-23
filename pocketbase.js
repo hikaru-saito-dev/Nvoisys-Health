@@ -176,6 +176,64 @@ async function createDoctorProfileRecord(userId, merged) {
   });
 }
 
+/**
+ * Matches PocketBase `pharmacy_profile` (Launch v1.0):
+ *   Required: user (relation -> UsersAuth)
+ *   Optional: store_name, tagline, address, district, state, phone,
+ *             opening_hours (JSON), closing_days (JSON), products (JSON)
+ *
+ * The pharmacy fills out the rest of these via PharmacyProfileScreen after
+ * logging in. We seed `store_name` with the auth user's name when available
+ * so the row is never empty. If PocketBase rejects the create because a
+ * field has been marked required/unique on the server, we retry with a
+ * minimal payload so signup/login can still succeed.
+ */
+async function createPharmacyProfileRecord(userId, merged) {
+  const authUser = getAuthUser();
+  const fallbackStoreName = String(merged.store_name || authUser?.name || "")
+    .trim();
+
+  const payload = { user: userId };
+  if (fallbackStoreName) payload.store_name = fallbackStoreName;
+
+  const textKeys = ["tagline", "address", "district", "state", "phone"];
+  for (const key of textKeys) {
+    const value = String(merged[key] || "").trim();
+    if (value) payload[key] = value;
+  }
+  if (merged.opening_hours && typeof merged.opening_hours === "object") {
+    payload.opening_hours = merged.opening_hours;
+  }
+  if (Array.isArray(merged.closing_days)) {
+    payload.closing_days = merged.closing_days;
+  }
+  if (Array.isArray(merged.products)) {
+    payload.products = merged.products;
+  }
+
+  try {
+    return await pb.collection("pharmacy_profile").create(payload);
+  } catch (error) {
+    // If the schema rejects an unknown/required column we don't know about,
+    // try the minimal `{ user }` payload so the user can still complete
+    // signup. They will fill the rest from PharmacyProfileScreen.
+    if (error?.status === 400) {
+      try {
+        return await pb
+          .collection("pharmacy_profile")
+          .create({ user: userId });
+      } catch (innerError) {
+        console.log(
+          "Pharmacy profile minimal create also failed:",
+          innerError?.message || innerError,
+        );
+        throw innerError;
+      }
+    }
+    throw error;
+  }
+}
+
 export function formatPocketBaseClientError(error) {
   const fieldBlock = error?.response?.data?.data || error?.data?.data || null;
   if (fieldBlock && typeof fieldBlock === "object") {
@@ -239,6 +297,20 @@ export async function ensureRoleProfile(roleOverride = null, extraFields = {}) {
       }
       if (role === "patient") {
         return await createPatientProfileRecord(user.id, merged);
+      }
+      if (role === "pharmacy") {
+        // Pharmacy profile creation should never block login. If the schema
+        // has unexpected required/unique fields, we log and return null;
+        // the user can finish their profile from PharmacyProfileScreen.
+        try {
+          return await createPharmacyProfileRecord(user.id, merged);
+        } catch (createError) {
+          console.log(
+            "Pharmacy profile create skipped:",
+            createError?.message || createError,
+          );
+          return null;
+        }
       }
       return await pb.collection(collection).create({
         user: user.id,
@@ -355,7 +427,23 @@ export async function loginWithEmail({ email, password }) {
     throw buildEmailVerificationRequiredError(normalizedEmail);
   }
 
-  const profile = await ensureRoleProfile();
+  // Pharmacy profile setup is best-effort: if the row doesn't exist yet and
+  // the create fails (API rules / required fields), still let the pharmacy
+  // log in. They can finish setup from PharmacyProfileScreen.
+  let profile = null;
+  try {
+    profile = await ensureRoleProfile();
+  } catch (profileError) {
+    if (normalizeRole(user?.role) === "pharmacy") {
+      console.log(
+        "Pharmacy profile setup failed during login:",
+        profileError?.message || profileError,
+      );
+      profile = null;
+    } else {
+      throw profileError;
+    }
+  }
   return getSessionPayload(profile);
 }
 

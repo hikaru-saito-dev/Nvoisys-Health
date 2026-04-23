@@ -19164,49 +19164,88 @@ export default function App() {
   // Save edits to the current pharmacy user's `pharmacy_profile` row. Written
   // so old PB schemas without the new columns still work — each optional
   // field is only written if truthy/non-empty. JSON fields are sent as native
-  // objects/arrays and PocketBase will serialize them for storage.
+  // objects/arrays and PocketBase will serialize them for storage. If the
+  // row doesn't exist yet (signup couldn't create it because of API rules
+  // or required fields), this falls back to creating it.
   const savePharmacyProfile = async (values) => {
     if (userRole !== "pharmacy" || !currentUser?.id) {
       throw new Error("Only a logged-in pharmacy can edit this profile.");
     }
-    const profile = await pb
-      .collection("pharmacy_profile")
-      .getFirstListItem(`user="${currentUser.id}"`, { requestKey: null });
-    const payload = {};
-    const textKeys = [
-      "store_name",
-      "tagline",
-      "address",
-      "district",
-      "state",
-      "phone",
-    ];
-    for (const key of textKeys) {
-      const value = String(values?.[key] || "").trim();
-      if (value) payload[key] = value;
+
+    const buildPayload = (extra = {}) => {
+      const payload = { ...extra };
+      const textKeys = [
+        "store_name",
+        "tagline",
+        "address",
+        "district",
+        "state",
+        "phone",
+      ];
+      for (const key of textKeys) {
+        const value = String(values?.[key] || "").trim();
+        if (value) payload[key] = value;
+      }
+      if (values?.opening_hours && typeof values.opening_hours === "object") {
+        payload.opening_hours = values.opening_hours;
+      }
+      if (Array.isArray(values?.closing_days)) {
+        payload.closing_days = values.closing_days;
+      }
+      if (Array.isArray(values?.products)) {
+        payload.products = values.products;
+      }
+      return payload;
+    };
+
+    let existingProfile = null;
+    try {
+      existingProfile = await pb
+        .collection("pharmacy_profile")
+        .getFirstListItem(`user="${currentUser.id}"`, { requestKey: null });
+    } catch (lookupError) {
+      if (lookupError?.status !== 404) {
+        const message =
+          formatPocketBaseClientError(lookupError) ||
+          "Unable to load your pharmacy profile. Please try again.";
+        throw new Error(message);
+      }
     }
-    if (values?.opening_hours && typeof values.opening_hours === "object") {
-      payload.opening_hours = values.opening_hours;
+
+    let saved;
+    try {
+      if (existingProfile) {
+        saved = await pb
+          .collection("pharmacy_profile")
+          .update(existingProfile.id, buildPayload());
+      } else {
+        // Row didn't exist yet — create it now with the form values.
+        saved = await pb
+          .collection("pharmacy_profile")
+          .create(buildPayload({ user: currentUser.id }));
+      }
+    } catch (writeError) {
+      const detailed = formatPocketBaseClientError(writeError);
+      throw new Error(
+        detailed ||
+          writeError?.message ||
+          "Pharmacy profile could not be saved. Please check the API rules on the pharmacy_profile collection in PocketBase admin (Create/Update should allow the logged-in pharmacy).",
+      );
     }
-    if (Array.isArray(values?.closing_days)) {
-      payload.closing_days = values.closing_days;
-    }
-    if (Array.isArray(values?.products)) {
-      payload.products = values.products;
-    }
-    const updated = await pb
-      .collection("pharmacy_profile")
-      .update(profile.id, payload);
+
     // Keep the in-memory pharmacies list in sync for patient views.
     setPharmacies((prev) => {
-      const mapped = mapPharmacyListingRecord(updated);
-      const existingIdx = prev.findIndex((item) => item.id === updated.id);
+      const mapped = mapPharmacyListingRecord({
+        ...saved,
+        expand: { user: currentUser },
+      });
+      const existingIdx = prev.findIndex((item) => item.id === saved.id);
       if (existingIdx === -1) return [mapped, ...prev];
       const next = prev.slice();
       next[existingIdx] = mapped;
       return next;
     });
-    return updated;
+    return saved;
   };
 
   const refreshAllData = async (
