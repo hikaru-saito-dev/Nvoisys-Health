@@ -72,9 +72,9 @@
       "pbAppointmentsCollection": "appointments",
       "pbAppointmentDoctorIsProfile": false,
       "eas": {
-        "projectId": "b8650bf1-168b-4698-820e-16a085b5f543"
+        "projectId": "7726d1ea-0781-416e-b26f-6fa676d403fb"
       }
     },
-    "owner": "kokoshiro"
+    "owner": "kokoshiro_dev"
   }
 }
