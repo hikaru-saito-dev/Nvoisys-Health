@@ -8502,7 +8502,7 @@ const chipTextStyle = {
   fontWeight: "600",
 };
 
-const RoleScreen = ({ onNext, onBack }) => {
+const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
   const [selectedRole, setSelectedRole] = useState("patient");
   const insets = useSafeAreaInsets();
 
@@ -8981,16 +8981,22 @@ const RoleScreen = ({ onNext, onBack }) => {
             Continue
           </Text>
         </TouchableOpacity>
-        <Text
-          style={{
-            textAlign: "center",
-            color: "#6B7280",
-            fontSize: RFValue(14),
-          }}
+        <TouchableOpacity
+          onPress={() => onGoToLogin?.(selectedRole)}
+          activeOpacity={0.7}
+          style={{ alignItems: "center", paddingVertical: RFValue(8) }}
         >
-          Already have an account?{" "}
-          <Text style={{ color: "#4338CA", fontWeight: "700" }}>Login</Text>
-        </Text>
+          <Text
+            style={{
+              textAlign: "center",
+              color: "#6B7280",
+              fontSize: RFValue(14),
+            }}
+          >
+            Already have an account?{" "}
+            <Text style={{ color: "#4338CA", fontWeight: "700" }}>Login</Text>
+          </Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -10469,6 +10475,17 @@ const AuthScreen = ({ onLogin }) => {
       <RoleScreen
         onNext={(r) => {
           setRole(r);
+          setStep("REG");
+        }}
+        onGoToLogin={(r) => {
+          setRole(r);
+          setAuthMode("login");
+          setAuthError("");
+          setAuthSuccess("");
+          setPassword("");
+          setPasswordConfirm("");
+          setShowPassword(false);
+          setShowPasswordConfirm(false);
           setStep("REG");
         }}
         onBack={() => setStep("CAROUSEL")}
@@ -23210,8 +23227,8 @@ const AppContent = ({
     setPatientProfile(profile || null);
   };
 
-  const handleLogout = () => {
-    logoutUser();
+  const handleLogout = async () => {
+    await logoutUser();
     setCurrentUser(null);
     setPatientProfile(null);
     setUserRole(null);

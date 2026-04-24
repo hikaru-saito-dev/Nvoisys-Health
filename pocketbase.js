@@ -113,14 +113,70 @@ function ensureVerifiedAuthUser(email = "") {
   return user;
 }
 
+/** True when authRefresh failed for invalid/expired credentials — safe to drop the local session. */
+function shouldClearAuthOnRefreshFailure(error) {
+  if (!error) return false;
+  if (error.isAbort) return false;
+  const status =
+    typeof error.status === "number"
+      ? error.status
+      : typeof error?.response?.status === "number"
+        ? error.response.status
+        : null;
+  return status === 401 || status === 403;
+}
+
+/**
+ * Loads persisted PocketBase auth from AsyncStorage into memory, then optionally refreshes.
+ * AsyncAuthStore hydrates `initial` asynchronously, so on cold start `isValid` can be false
+ * until we explicitly load — without this, users always see the login flow after killing the app.
+ */
 export async function restoreAuth() {
   try {
-    if (pb.authStore.isValid) {
+    const raw = await AsyncStorage.getItem("pb_auth");
+    if (raw && typeof raw === "string" && raw.trim()) {
+      const trimmed = raw.trim();
+      try {
+        // AsyncAuthStore persists JSON `{ token, record }` (see pocketbase AsyncAuthStore.save).
+        const parsed = JSON.parse(trimmed);
+        const token = parsed?.token || "";
+        const model = parsed?.record || parsed?.model || null;
+        if (token) {
+          pb.authStore.save(token, model);
+        }
+      } catch (_) {
+        try {
+          pb.authStore.loadFromCookie(trimmed);
+        } catch (e) {
+          console.log("restoreAuth hydrate:", e?.message);
+        }
+      }
+    }
+
+    if (!pb.authStore.isValid || !pb.authStore.token) {
+      return;
+    }
+
+    try {
       await pb.collection("UsersAuth").authRefresh();
       ensureVerifiedAuthUser();
+    } catch (error) {
+      if (shouldClearAuthOnRefreshFailure(error)) {
+        pb.authStore.clear();
+        try {
+          await AsyncStorage.removeItem("pb_auth");
+        } catch (_) {
+          // ignore
+        }
+      } else {
+        console.log(
+          "restoreAuth authRefresh skipped clear (likely offline):",
+          error?.message || error,
+        );
+      }
     }
   } catch (error) {
-    pb.authStore.clear();
+    console.log("restoreAuth error:", error?.message || error);
   }
 }
 
@@ -649,6 +705,11 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
   }
 }
 
-export function logoutUser() {
+export async function logoutUser() {
   pb.authStore.clear();
+  try {
+    await AsyncStorage.removeItem("pb_auth");
+  } catch (_) {
+    // ignore
+  }
 }
