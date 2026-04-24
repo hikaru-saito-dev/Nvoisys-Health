@@ -37,6 +37,7 @@ import {
   mediaDevices,
 } from "@livekit/react-native-webrtc";
 import Constants from "expo-constants";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import {
@@ -514,9 +515,11 @@ const PAYMENT_RAZORPAY_KEY_ID =
 // ---------------------------------------------------------------------------
 // Step 9 — AI assistant configuration.
 // A JSON endpoint (POST) that takes { kind: "chat" | "side_effect_check",
-// messages?, items?, patient? } and responds with { reply } or
-// { warnings: [{ medicine, message, severity }] }. When aiBaseUrl/apiKey are
-// missing the app falls back to a friendly stub so the screen always works.
+// messages?, items?, patient?, prescriptions? } and responds with { reply } or
+// { warnings: [{ medicine, message, severity }] }. `prescriptions` on chat is a
+// compact list of active doctor prescriptions so the model can answer about
+// medicines and side effects in context. When aiBaseUrl/apiKey are missing the
+// app falls back to a friendly stub so the screen always works.
 // ---------------------------------------------------------------------------
 const AI_BASE_URL = String(
   Constants.expoConfig?.extra?.aiBaseUrl || "",
@@ -1002,13 +1005,23 @@ const callAIEndpoint = async (payload) => {
   }
 };
 
-const aiChatStubReply = (text) => {
+const aiChatStubReply = (text, { prescriptionsContext = [] } = {}) => {
   const clean = String(text || "").trim();
+  const medNames = prescriptionsContext
+    .flatMap((rx) => safeArray(rx.medicines).map((m) => String(m.name || "").trim()))
+    .filter(Boolean);
+  const medSummary =
+    medNames.length > 0
+      ? ` I can see ${medNames.length} medicine line(s) on your recent prescriptions (${medNames.slice(0, 6).join(", ")}${medNames.length > 6 ? "…" : ""}).`
+      : "";
   if (!clean) {
-    return "Hi! I'm your Nvoisys Health Assistant. Ask me about symptoms, medicines, or your prescriptions.";
+    return `Hi! I'm your Nvoisys Health Assistant. Ask me about symptoms, medicines, or your prescriptions.${medSummary}`;
   }
   const lower = clean.toLowerCase();
   if (lower.includes("side effect") || lower.includes("side-effect")) {
+    if (medNames.length) {
+      return `Here is a quick lay summary:${medSummary} Typical side effects vary by drug class — ask about a specific name from your list for more detail. This is general information, not medical advice; always confirm with your doctor or pharmacist before changing any medicine.`;
+    }
     return "Common side effects depend on the specific medicine and your health profile. Please share the medicine name and I'll list the typical ones. Always confirm with your doctor before stopping any medicine.";
   }
   if (lower.includes("fever") || lower.includes("temperature")) {
@@ -1017,7 +1030,7 @@ const aiChatStubReply = (text) => {
   if (lower.includes("diet") || lower.includes("food")) {
     return "A balanced plate with vegetables, whole grains, and lean protein supports recovery. If you have diabetes or hypertension, your doctor's plan should guide portions and timing.";
   }
-  return `I hear you. For your question about "${clean.slice(0, 80)}": always combine general guidance with your doctor's advice. Share symptoms, duration, and medicines you take so I can give a more useful answer.`;
+  return `I hear you. For your question about "${clean.slice(0, 80)}": always combine general guidance with your doctor's advice.${medSummary || " Share symptoms, duration, and medicines you take so I can give a more useful answer."}`;
 };
 
 const aiSideEffectStubWarnings = (items, patientFields) => {
@@ -1059,6 +1072,89 @@ const aiSideEffectStubWarnings = (items, patientFields) => {
     }
   }
   return warnings;
+};
+
+const rxAssistantNotifiedStorageKey = (userId) =>
+  `nvoisys_rx_assistant_notified_v1:${userId || "anon"}`;
+/** Skip auto-posting insights for prescriptions older than this (avoids spamming old history). */
+const RX_INSIGHT_MAX_AGE_MS = 21 * 24 * 60 * 60 * 1000;
+
+const prescriptionRecordCreatedMs = (rx) => {
+  const raw = rx?.raw;
+  const stamp = raw?.created || raw?.updated;
+  if (!stamp) return Date.now();
+  const ms = new Date(stamp).getTime();
+  return Number.isFinite(ms) ? ms : Date.now();
+};
+
+/** Compact payload for `kind: "chat"` so the AI can reason about current prescriptions. */
+const buildPrescriptionsContextForAI = (prescriptionRecords) => {
+  const list = safeArray(prescriptionRecords).slice(0, 15);
+  return list.map((rx) => {
+    const lines =
+      rx.itemsList?.length > 0
+        ? rx.itemsList
+        : [
+            {
+              name: String(rx.items || "Medicine").trim(),
+              dosage: "",
+              whenToTake: "",
+              duration: "",
+            },
+          ];
+    return {
+      id: rx.id,
+      doctorName: rx.doctorName || "Doctor",
+      date: rx.date || null,
+      diagnosis: String(rx.diagnosis || "").trim() || null,
+      medicines: lines
+        .map((m) => ({
+          name: String(m.name || "").trim(),
+          dosage: String(m.dosage || "").trim(),
+          whenToTake: String(m.whenToTake || "").trim(),
+          duration: String(m.duration || "").trim(),
+        }))
+        .filter((m) => m.name),
+    };
+  });
+};
+
+const formatAssistantPrescriptionInsightMessage = (rx, warnings) => {
+  const lines =
+    rx.itemsList?.length > 0
+      ? rx.itemsList
+      : [
+          {
+            name: String(rx.items || "Medicine").trim(),
+            dosage: "",
+          },
+        ];
+  const meds = lines
+    .map((m) => ({
+      name: String(m.name || "").trim(),
+      dosage: String(m.dosage || "").trim(),
+    }))
+    .filter((m) => m.name);
+  const medBlock = meds
+    .map((m) => (m.dosage ? `• ${m.name} (${m.dosage})` : `• ${m.name}`))
+    .join("\n");
+  let text = `Your doctor ${rx.doctorName || "your care team"} sent a new prescription (${rx.date || "recent"}):\n${medBlock}`;
+  const note = String(rx.diagnosis || "").trim();
+  if (note) {
+    text += `\n\nNote on file: ${note}`;
+  }
+  if (warnings && warnings.length) {
+    text +=
+      "\n\nSide-effect & safety notes (AI quick check — not a diagnosis; confirm with your doctor or pharmacist):";
+    for (const w of warnings) {
+      const label = w.medicine ? `${w.medicine}: ` : "";
+      text += `\n• ${label}${String(w.message || "").trim()}`;
+    }
+  } else {
+    text +=
+      "\n\nOur quick check did not highlight common interaction issues for these medicines. Still read your leaflet and follow your clinician's instructions.";
+  }
+  return text;
 };
 
 const resolveMessageText = (record) => {
@@ -6104,26 +6200,39 @@ const PatientChatScreen = () => {
                   }}
                 />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <View
                   style={{
                     flexDirection: "row",
-                    justifyContent: "space-between",
                     alignItems: "center",
                     marginBottom: 4,
                   }}
                 >
-                  <Text
+                  <View
                     style={{
-                      fontSize: RFValue(15),
-                      fontWeight: "800",
-                      color: theme.textPrimary,
+                      flex: 1,
+                      minWidth: 0,
+                      paddingRight: RFValue(10),
                     }}
                   >
-                    {contact.displayName}
-                  </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(15),
+                        fontWeight: "800",
+                        color: theme.textPrimary,
+                      }}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {contact.displayName}
+                    </Text>
+                  </View>
                   <Text
-                    style={{ fontSize: RFValue(11), color: theme.textTertiary }}
+                    style={{
+                      fontSize: RFValue(11),
+                      color: theme.textTertiary,
+                      flexShrink: 0,
+                    }}
                   >
                     {contact.time}
                   </Text>
@@ -6131,11 +6240,10 @@ const PatientChatScreen = () => {
                 <View
                   style={{
                     flexDirection: "row",
-                    justifyContent: "space-between",
                     alignItems: "center",
                   }}
                 >
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text
                       style={{
                         fontSize: RFValue(12),
@@ -6144,6 +6252,7 @@ const PatientChatScreen = () => {
                         marginBottom: 2,
                       }}
                       numberOfLines={1}
+                      ellipsizeMode="tail"
                     >
                       {contact.roleLabel}
                     </Text>
@@ -6152,7 +6261,8 @@ const PatientChatScreen = () => {
                         fontSize: RFValue(12),
                         color: theme.textSecondary,
                       }}
-                      numberOfLines={1}
+                      numberOfLines={2}
+                      ellipsizeMode="tail"
                     >
                       {contact.lastMsg}
                     </Text>
@@ -22906,16 +23016,18 @@ export default function App() {
       return null;
     }
 
-    // 2. Call the AI endpoint or fall back to a friendly stub.
+    // 2. Call the AI endpoint or fall back to a friendly stub (includes active Rx context).
+    const prescriptionsContext = buildPrescriptionsContextForAI(prescriptions);
     const aiResult = await callAIEndpoint({
       kind: "chat",
       question: trimmed,
       patient: patientProfile || null,
+      prescriptions: prescriptionsContext,
     });
     const replyText =
       (aiResult && typeof aiResult.reply === "string"
         ? aiResult.reply
-        : null) || aiChatStubReply(trimmed);
+        : null) || aiChatStubReply(trimmed, { prescriptionsContext });
 
     // 3. Persist the AI reply as a plain-text assistant_reply message.
     let replyRecord = null;
@@ -22951,6 +23063,119 @@ export default function App() {
     }
     return aiSideEffectStubWarnings(items, patientFields);
   };
+
+  // When the doctor adds a prescription, post an AI side-effect insight into the
+  // Health Assistant thread once per prescription (persisted id list per user).
+  useEffect(() => {
+    if (!currentUser?.id || userRole !== "patient") return undefined;
+    if (!prescriptions?.length) return undefined;
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      (async () => {
+        const storageKey = rxAssistantNotifiedStorageKey(currentUser.id);
+        let notified = [];
+        try {
+          const raw = await AsyncStorage.getItem(storageKey);
+          const parsed = raw ? JSON.parse(raw) : [];
+          notified = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          notified = [];
+        }
+        const notifiedSet = new Set(notified.map(String));
+
+        let assistantConv =
+          conversations.find((c) => c.kind === ASSISTANT_CONVERSATION_KIND) ||
+          null;
+        if (!assistantConv?.id) {
+          try {
+            assistantConv = await ensureAssistantConversation();
+          } catch {
+            assistantConv = null;
+          }
+        }
+        const conversationId = assistantConv?.id;
+        if (!conversationId || cancelled) return;
+
+        const now = Date.now();
+        let dirty = false;
+
+        const persistNotified = async () => {
+          if (cancelled || !dirty) return;
+          try {
+            await AsyncStorage.setItem(
+              storageKey,
+              JSON.stringify([...notifiedSet]),
+            );
+            void refreshAllData(currentUser, userRole).catch(() => {});
+          } catch (error) {
+            console.log("rx assistant notified persist error:", error?.message);
+          }
+        };
+
+        for (const rx of prescriptions) {
+          if (!rx?.id || cancelled) break;
+          const idStr = String(rx.id);
+          if (notifiedSet.has(idStr)) continue;
+
+          const createdMs = prescriptionRecordCreatedMs(rx);
+          if (now - createdMs > RX_INSIGHT_MAX_AGE_MS) {
+            notifiedSet.add(idStr);
+            dirty = true;
+            continue;
+          }
+
+          const items =
+            rx.itemsList?.length > 0
+              ? rx.itemsList
+                  .map((m) => ({ name: String(m.name || "").trim() }))
+                  .filter((m) => m.name)
+              : [{ name: String(rx.items || "Medicine").trim() }].filter(
+                  (m) => m.name,
+                );
+          if (!items.length) {
+            notifiedSet.add(idStr);
+            dirty = true;
+            continue;
+          }
+
+          let warnings = [];
+          try {
+            warnings = await runSideEffectCheck({
+              items,
+              patient: patientProfile || {},
+            });
+          } catch {
+            warnings = [];
+          }
+          if (cancelled) break;
+
+          const body = formatAssistantPrescriptionInsightMessage(rx, warnings);
+          try {
+            await pb.collection("messages").create({
+              conversation: conversationId,
+              kind: ASSISTANT_REPLY_MESSAGE_KIND,
+              text: body,
+            });
+            await pb.collection("conversations").update(conversationId, {
+              lastMessageAt: new Date().toISOString(),
+            });
+            notifiedSet.add(idStr);
+            dirty = true;
+          } catch (error) {
+            console.log("rx assistant insight message skipped:", error?.message);
+          }
+        }
+
+        await persistNotified();
+      })();
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [prescriptions, currentUser, userRole, patientProfile, conversations]);
 
   useEffect(() => {
     (async () => {
