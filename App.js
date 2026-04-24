@@ -59,6 +59,7 @@ import {
   restoreAuth,
   ensureRoleProfile,
   formatPocketBaseClientError,
+  getAuthUser,
   getPbAppointmentsCollection,
   isPbAppointmentDoctorProfileRelation,
   signUpWithEmail,
@@ -22956,8 +22957,8 @@ export default function App() {
       try {
         await restoreAuth();
 
-        if (pb.authStore.isValid && pb.authStore.record) {
-          const user = pb.authStore.record;
+        const user = getAuthUser();
+        if (pb.authStore.isValid && user?.id) {
           setCurrentUser(user);
           setUserRole(user.role || "patient");
 
@@ -23243,8 +23244,9 @@ const AppContent = ({
       if (pb.authStore.isValid) {
         await pb.collection("UsersAuth").authRefresh();
       }
-      if (pb.authStore.record) {
-        setCurrentUser(pb.authStore.record);
+      const refreshedUser = getAuthUser();
+      if (refreshedUser?.id) {
+        setCurrentUser(refreshedUser);
       }
       if (currentUser?.role === "doctor" || userRole === "doctor") {
         const profile = await ensureRoleProfile("doctor");
@@ -23534,8 +23536,9 @@ const AppContent = ({
                     if (pb.authStore.isValid) {
                       await pb.collection("UsersAuth").authRefresh();
                     }
-                    if (pb.authStore.record) {
-                      setCurrentUser(pb.authStore.record);
+                    const refreshedUser = getAuthUser();
+                    if (refreshedUser?.id) {
+                      setCurrentUser(refreshedUser);
                     }
                     const refreshedProfile = await ensureRoleProfile("patient");
                     setPatientProfile(refreshedProfile);

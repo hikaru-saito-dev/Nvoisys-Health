@@ -153,7 +153,8 @@ export async function restoreAuth() {
       }
     }
 
-    if (!pb.authStore.isValid || !pb.authStore.token) {
+    // Refresh whenever we have a token (JWT may be past local `exp` but still refreshable).
+    if (!String(pb.authStore.token || "").trim()) {
       return;
     }
 
@@ -180,8 +181,9 @@ export async function restoreAuth() {
   }
 }
 
-function getAuthUser() {
-  return pb.authStore.record || pb.authStore.model || null;
+/** Current PocketBase JS SDK exposes the auth record as `model` only (`record` is undefined). */
+export function getAuthUser() {
+  return pb.authStore.model || pb.authStore.record || null;
 }
 
 function getSessionPayload(profile) {
