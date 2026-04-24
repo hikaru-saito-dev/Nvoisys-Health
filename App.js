@@ -2120,66 +2120,70 @@ const DoctorApplicationStatusScreen = ({ status, onRefresh, onLogout }) => {
 };
 
 // --- RESPONSIVE SCALING ---
-// Device type detection
-const getDeviceType = () => {
-  const { width, height } = Dimensions.get("window");
+// Scale from the *smaller* of width/height vs design baseline so tablets do not
+// pick up huge typography from the long edge. Tight caps on tablets/foldables.
+const getDeviceTypeForWindow = (width, height) => {
   const smallestSide = Math.min(width, height);
   const largestSide = Math.max(width, height);
-
   if (smallestSide >= 600) return "tablet";
   if (largestSide >= 850 && smallestSide >= 400) return "foldable";
   return "phone";
 };
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-const DEVICE_TYPE = getDeviceType();
+const SHORT_SIDE = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
+const DEVICE_TYPE = getDeviceTypeForWindow(SCREEN_WIDTH, SCREEN_HEIGHT);
 
-// Dynamic scaling calculations
-const baseWidth = 375;
-const baseHeight = 812;
+const DESIGN_WIDTH = 375;
+const DESIGN_HEIGHT = 812;
+const scaleByWidth = SCREEN_WIDTH / DESIGN_WIDTH;
+const scaleByHeight = SCREEN_HEIGHT / DESIGN_HEIGHT;
+const rawScale = Math.min(scaleByWidth, scaleByHeight);
 
-const widthScale = SCREEN_WIDTH / baseWidth;
-const heightScale = SCREEN_HEIGHT / baseHeight;
-const avgScale = (widthScale + heightScale) / 2;
-
-// Device-specific adjustments
-const spacingMultiplier = DEVICE_TYPE === "tablet" ? 1.2 : 1;
-const iconMultiplier = DEVICE_TYPE === "tablet" ? 1.15 : 1;
-
-// Capped scaling to prevent extreme sizes
-const cappedScale = Math.min(Math.max(avgScale, 0.75), 1.4);
-
-// Main responsive value function - auto-adjusts for any screen
-const RFValue = (size) =>
-  Math.round(
-    PixelRatio.roundToNearestPixel(size * cappedScale * spacingMultiplier),
-  );
-
-// Responsive font function - averages width/height scaling for better text fit
-const RFText = (size, options = {}) => {
-  const { min = 0.75, max = 1.4 } = options;
-  const scale = Math.min(Math.max(avgScale, min), max);
-  return Math.round(PixelRatio.roundToNearestPixel(size * scale));
+const getUIScale = () => {
+  if (DEVICE_TYPE === "tablet") {
+    return Math.min(Math.max(rawScale, 0.9), 1.06);
+  }
+  if (DEVICE_TYPE === "foldable") {
+    return Math.min(Math.max(rawScale, 0.85), 1.12);
+  }
+  return Math.min(Math.max(rawScale, 0.82), 1.18);
 };
 
-// Helper: Calculate value as percentage of screen width
-const rw = (percentage) => Math.round(SCREEN_WIDTH * (percentage / 100));
+const UI_SCALE = getUIScale();
 
-// Helper: Calculate value as percentage of screen height
+const RFValue = (size) =>
+  Math.round(PixelRatio.roundToNearestPixel(size * UI_SCALE));
+
+const RFText = (size, options = {}) => {
+  const min = options.min ?? 0.82;
+  const cap =
+    options.max ??
+    (DEVICE_TYPE === "tablet" ? 1.06 : DEVICE_TYPE === "foldable" ? 1.12 : 1.18);
+  const s = Math.min(Math.max(UI_SCALE, min), cap);
+  return Math.round(PixelRatio.roundToNearestPixel(size * s));
+};
+
+const rw = (percentage) => Math.round(SCREEN_WIDTH * (percentage / 100));
 const rh = (percentage) => Math.round(SCREEN_HEIGHT * (percentage / 100));
 
-// Helper: Responsive spacing that scales with device type
-const rs = (size) => Math.round(size * cappedScale * spacingMultiplier);
+const rs = (size) => Math.round(size * UI_SCALE);
 
-// Helper: Responsive icon size
-const ri = (size) => Math.round(size * cappedScale * iconMultiplier);
+const ri = (size) => {
+  const iconCap = DEVICE_TYPE === "tablet" ? 1.06 : 1.14;
+  const s = Math.min(UI_SCALE * 1.04, iconCap);
+  return Math.round(PixelRatio.roundToNearestPixel(size * s));
+};
 
-// Responsive breakpoints info (for debugging/logging if needed)
+/** Bottom padding for ScrollViews on routes that sit above the custom tab bar. */
+const tabScrollBottomPadding = () => Math.round(Math.max(88, 72 * UI_SCALE + 28));
+
 const ResponsiveInfo = {
   deviceType: DEVICE_TYPE,
   screenWidth: SCREEN_WIDTH,
   screenHeight: SCREEN_HEIGHT,
-  scale: cappedScale,
+  shortSide: SHORT_SIDE,
+  scale: UI_SCALE,
   isTablet: DEVICE_TYPE === "tablet",
   isFoldable: DEVICE_TYPE === "foldable",
   isPhone: DEVICE_TYPE === "phone",
@@ -2927,7 +2931,8 @@ const PatientHomeScreen = () => {
       <StatusBar barStyle="light-content" backgroundColor={theme.accent} />
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: RFValue(100), flexGrow: 1 }}
+        style={{ flex: 1, minHeight: 0 }}
+        contentContainerStyle={{ paddingBottom: tabScrollBottomPadding(), flexGrow: 1 }}
       >
         <FadeInView delay={100}>
           {/* Modern Gradient Header */}
@@ -3032,7 +3037,9 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
+                  flexWrap: "wrap",
                   justifyContent: "space-between",
+                  rowGap: RFValue(8),
                 }}
               >
                 {["Great", "Good", "Neutral", "Bad", "Awful"].map(
@@ -3046,12 +3053,14 @@ const PatientHomeScreen = () => {
                             ? "rgba(255,255,255,0.3)"
                             : "rgba(255,255,255,0.1)",
                         paddingHorizontal: RFValue(10),
-                        height: RFValue(36),
+                        minHeight: RFValue(36),
                         borderRadius: RFValue(14),
                         justifyContent: "center",
                         alignItems: "center",
                         borderWidth: selectedEmoji === mood ? 2 : 0,
                         borderColor: "#FFF",
+                        marginBottom: RFValue(6),
+                        minWidth: "18%",
                       }}
                     >
                       <Text
@@ -3825,7 +3834,7 @@ const PatientEmergencyScreen = ({ navigation }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {/* SOS Block */}
@@ -5039,6 +5048,7 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
 
 const PatientChatScreen = () => {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const {
     currentUserId,
     conversations,
@@ -5464,15 +5474,16 @@ const PatientChatScreen = () => {
 
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={{ flex: 1 }}
-          keyboardVerticalOffset={0}
+          style={{ flex: 1, minHeight: 0 }}
+          keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
         >
           <ScrollView
             contentContainerStyle={{
               padding: RFValue(16),
-              paddingBottom: RFValue(80),
+              paddingBottom:
+                Math.max(insets.bottom, 8) + Math.round(72 * UI_SCALE) + RFValue(12),
             }}
-            style={{ flex: 1 }}
+            style={{ flex: 1, minHeight: 0 }}
             keyboardShouldPersistTaps="handled"
           >
             {loadingMessages ? (
@@ -5680,12 +5691,13 @@ const PatientChatScreen = () => {
           <View
             style={{
               backgroundColor: theme.card,
-              padding: RFValue(12),
-              paddingBottom: Platform.OS === "ios" ? 30 : 12,
+              paddingHorizontal: RFValue(12),
+              paddingTop: RFValue(8),
+              paddingBottom: Math.max(insets.bottom, RFValue(8)),
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
-              alignItems: "center",
+              alignItems: "flex-end",
             }}
           >
             {!isAssistantConversation(selectedContact) && (
@@ -5747,7 +5759,8 @@ const PatientChatScreen = () => {
               <TextInput
                 style={{
                   flex: 1,
-                  paddingVertical: RFValue(10),
+                  maxHeight: Math.min(RFValue(120), Math.round(SHORT_SIDE * 0.22)),
+                  paddingVertical: RFValue(8),
                   fontSize: RFValue(14),
                   color: theme.textPrimary,
                 }}
@@ -5763,6 +5776,7 @@ const PatientChatScreen = () => {
                 onChangeText={setMessage}
                 multiline
                 editable={!assistantThinking}
+                textAlignVertical="top"
               />
             </View>
             <TouchableOpacity
@@ -5805,6 +5819,7 @@ const PatientChatScreen = () => {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
 
+      <View style={{ flex: 1, minHeight: 0 }}>
       <View
         style={{
           backgroundColor: theme.card,
@@ -5856,7 +5871,13 @@ const PatientChatScreen = () => {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: RFValue(16) }}>
+      <ScrollView
+        style={{ flex: 1, minHeight: 0 }}
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: tabScrollBottomPadding() + RFValue(8),
+        }}
+      >
         {showDirectoryResults ? (
           <View style={{ marginBottom: RFValue(18) }}>
             <Text
@@ -6153,6 +6174,7 @@ const PatientChatScreen = () => {
           </View>
         )}
       </ScrollView>
+      </View>
     </SafeAreaView>
   );
 };
@@ -6283,7 +6305,7 @@ const ThemeScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {/* Live Preview */}
@@ -6723,7 +6745,7 @@ const PatientEditProfileScreen = ({
         <ScrollView
           contentContainerStyle={{
             padding: RFValue(16),
-            paddingBottom: RFValue(120),
+            paddingBottom: tabScrollBottomPadding() + RFValue(48),
           }}
           keyboardShouldPersistTaps="handled"
         >
@@ -7032,7 +7054,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {rows.length === 0 ? (
@@ -7317,7 +7339,7 @@ const PatientProfileScreen = ({
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
-      <ScrollView contentContainerStyle={{ paddingBottom: RFValue(100) }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}>
         <View
           style={{
             backgroundColor: theme.card,
@@ -7719,6 +7741,7 @@ const PatientProfileScreen = ({
 
 const SplashScreen = ({ onNext }) => {
   const [visible, setVisible] = useState(false);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     setTimeout(() => setVisible(true), 100);
@@ -7727,12 +7750,10 @@ const SplashScreen = ({ onNext }) => {
   }, []);
 
   return (
-    <View
+    <SafeAreaView
       style={{
         flex: 1,
         backgroundColor: "#FFFFFF",
-        justifyContent: "center",
-        alignItems: "center",
       }}
     >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -7775,10 +7796,14 @@ const SplashScreen = ({ onNext }) => {
         }}
       />
 
-      {/* Main content */}
+      {/* Main content — flex so it does not collide with footer dots */}
       <View
         style={{
+          flex: 1,
+          minHeight: 0,
+          justifyContent: "center",
           alignItems: "center",
+          paddingHorizontal: RFValue(20),
           opacity: visible ? 1 : 0,
           transform: [{ scale: visible ? 1 : 0.9 }],
         }}
@@ -7849,13 +7874,13 @@ const SplashScreen = ({ onNext }) => {
           Your Health Guardian
         </Text>
       </View>
-      {/* Bottom indicator */}
+
       <View
         style={{
-          position: "absolute",
-          bottom: RFValue(40),
           alignItems: "center",
-          width: "100%",
+          justifyContent: "center",
+          paddingBottom: Math.max(insets.bottom, RFValue(16)),
+          paddingTop: RFValue(8),
         }}
       >
         <View style={{ flexDirection: "row", gap: 6 }}>
@@ -7885,12 +7910,13 @@ const SplashScreen = ({ onNext }) => {
           />
         </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 };
 
 const LanguageScreen = ({ onNext, onBack }) => {
   const [selectedLanguage, setSelectedLanguage] = useState("English");
+  const insets = useSafeAreaInsets();
   const langs = [
     {
       title: "English",
@@ -7988,8 +8014,15 @@ const LanguageScreen = ({ onNext, onBack }) => {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FAFBFF" }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FAFBFF" />
-      <View style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+      <View style={{ flex: 1, minHeight: 0 }}>
+        <ScrollView
+          style={{ flex: 1, minHeight: 0 }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingBottom: Math.max(insets.bottom, RFValue(20)),
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
           <View
             style={{
               backgroundColor: "#FFFFFF",
@@ -8119,17 +8152,12 @@ const LanguageScreen = ({ onNext, onBack }) => {
             {renderLanguageCard(langs[0], 0)}
           </View>
 
-          <View
-            style={{
-              padding: RFValue(24),
-              paddingBottom: Platform.OS === "ios" ? 34 : 24,
-            }}
-          >
+          <View style={{ padding: RFValue(24), paddingBottom: RFValue(8) }}>
             <TouchableOpacity
               style={{
                 backgroundColor: "#4338CA",
                 borderRadius: RFValue(16),
-                paddingVertical: RFValue(18),
+                paddingVertical: RFValue(16),
                 alignItems: "center",
                 shadowColor: "#4338CA",
                 shadowOpacity: 0.3,
@@ -8168,6 +8196,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
 
 const OnboardingCarousel = ({ onNext, onBack }) => {
   const [slide, setSlide] = useState(0);
+  const insets = useSafeAreaInsets();
 
   const slides = [
     {
@@ -8226,13 +8255,14 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* Top buttons */}
+      {/* Top buttons — fixed height row */}
       <View
         style={{
           flexDirection: "row",
           justifyContent: "space-between",
-          padding: RFValue(24),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingHorizontal: RFValue(24),
+          paddingTop: Platform.OS === "android" ? Math.max(insets.top, 12) : 8,
+          paddingBottom: RFValue(12),
         }}
       >
         {onBack ? (
@@ -8274,15 +8304,23 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
         </TouchableOpacity>
       </View>
 
-      {/* Main content */}
-      <View style={{ flex: 1, paddingHorizontal: RFValue(24) }}>
-        {/* Icon container with gradient-like effect */}
-        <View style={{ alignItems: "center", marginBottom: RFValue(40) }}>
+      {/* Scrollable body: prevents bullets painting over footer (RN overflow) */}
+      <ScrollView
+        style={{ flex: 1, minHeight: 0 }}
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingHorizontal: RFValue(24),
+          paddingBottom: RFValue(16),
+        }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={{ alignItems: "center", marginBottom: RFValue(24) }}>
           <View
             style={{
-              width: RFValue(140),
-              height: RFValue(140),
-              borderRadius: RFValue(36),
+              width: Math.min(RFValue(120), SCREEN_WIDTH * 0.34),
+              height: Math.min(RFValue(120), SCREEN_WIDTH * 0.34),
+              borderRadius: RFValue(32),
               backgroundColor: current.iconBg,
               justifyContent: "center",
               alignItems: "center",
@@ -8295,58 +8333,60 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
           >
             <View
               style={{
-                width: RFValue(100),
-                height: RFValue(100),
-                borderRadius: RFValue(28),
+                width: "76%",
+                height: "76%",
+                borderRadius: RFValue(24),
                 backgroundColor: current.iconColor,
                 justifyContent: "center",
                 alignItems: "center",
               }}
             >
-              <Ionicons name={current.icon} size={RFValue(52)} color="#FFF" />
+              <Ionicons
+                name={current.icon}
+                size={Math.min(RFValue(44), 40)}
+                color="#FFF"
+              />
             </View>
           </View>
         </View>
 
-        {/* Title */}
         <Text
           style={{
-            fontSize: RFValue(26),
+            fontSize: RFValue(24),
             fontWeight: "800",
             color: "#1E1B4B",
             textAlign: "center",
-            marginBottom: RFValue(12),
-            lineHeight: RFValue(32),
+            marginBottom: RFValue(10),
+            lineHeight: RFValue(30),
           }}
         >
           {current.title}
         </Text>
 
-        {/* Subtitle */}
         <Text
           style={{
             fontSize: RFValue(14),
             color: "#6B7280",
             textAlign: "center",
-            marginBottom: RFValue(32),
+            marginBottom: RFValue(20),
             lineHeight: RFValue(22),
-            paddingHorizontal: RFValue(12),
+            paddingHorizontal: RFValue(4),
           }}
         >
           {current.subtitle}
         </Text>
 
-        {/* Feature bullets */}
         <View style={{ alignSelf: "stretch" }}>
           {current.bullets.map((bullet, idx) => (
             <View
               key={idx}
               style={{
                 flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(14),
+                alignItems: "flex-start",
+                marginBottom: RFValue(10),
                 backgroundColor: "#FAFBFF",
-                padding: RFValue(14),
+                paddingVertical: RFValue(12),
+                paddingHorizontal: RFValue(12),
                 borderRadius: RFValue(14),
               }}
             >
@@ -8358,16 +8398,20 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
                   backgroundColor: current.iconColor,
                   justifyContent: "center",
                   alignItems: "center",
-                  marginRight: RFValue(14),
+                  marginRight: RFValue(12),
+                  marginTop: 2,
                 }}
               >
                 <Ionicons name="checkmark" size={RFValue(16)} color="#FFF" />
               </View>
               <Text
                 style={{
+                  flex: 1,
+                  flexShrink: 1,
                   fontSize: RFValue(14),
                   color: "#374151",
                   fontWeight: "500",
+                  lineHeight: RFValue(20),
                 }}
               >
                 {bullet}
@@ -8375,44 +8419,47 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
             </View>
           ))}
         </View>
-      </View>
+      </ScrollView>
 
-      {/* Bottom section */}
+      {/* Footer pinned below scroll — never overlaps list */}
       <View
         style={{
-          padding: RFValue(24),
-          alignItems: "center",
-          paddingBottom: Platform.OS === "ios" ? 34 : 24,
+          paddingHorizontal: RFValue(24),
+          paddingTop: RFValue(12),
+          paddingBottom: Math.max(insets.bottom, RFValue(12)),
+          backgroundColor: "#FFFFFF",
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: "#E5E7EB",
         }}
       >
-        {/* Pagination dots */}
-        <View style={{ flexDirection: "row", marginBottom: RFValue(24) }}>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: RFValue(12),
+          }}
+        >
           {slides.map((_, idx) => (
             <View
               key={idx}
               style={{
                 width: idx === slide ? 28 : 8,
-                height: RFValue(8),
-                borderRadius: RFValue(4),
+                height: 8,
+                borderRadius: 4,
                 backgroundColor: idx === slide ? current.iconColor : "#E5E7EB",
                 marginHorizontal: 4,
-                shadowColor: idx === slide ? current.iconColor : "transparent",
-                shadowOpacity: idx === slide ? 0.3 : 0,
-                shadowOffset: { width: 0, height: 2 },
-                shadowRadius: 4,
-                elevation: idx === slide ? 3 : 0,
               }}
             />
           ))}
         </View>
 
-        {/* Next button */}
         <TouchableOpacity
           style={{
             width: "100%",
             backgroundColor: current.iconColor,
             borderRadius: RFValue(16),
-            paddingVertical: RFValue(18),
+            paddingVertical: RFValue(16),
             flexDirection: "row",
             justifyContent: "center",
             alignItems: "center",
@@ -8457,12 +8504,17 @@ const chipTextStyle = {
 
 const RoleScreen = ({ onNext, onBack }) => {
   const [selectedRole, setSelectedRole] = useState("patient");
+  const insets = useSafeAreaInsets();
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FAFBFF" }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FAFBFF" />
-      <View style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+      <View style={{ flex: 1, minHeight: 0 }}>
+        <ScrollView
+          style={{ flex: 1, minHeight: 0 }}
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: RFValue(8) }}
+          keyboardShouldPersistTaps="handled"
+        >
           {/* Header */}
           <View
             style={{
@@ -8886,10 +8938,11 @@ const RoleScreen = ({ onNext, onBack }) => {
 
       <View
         style={{
-          padding: RFValue(24),
-          paddingBottom: Platform.OS === "ios" ? 34 : 24,
+          paddingHorizontal: RFValue(24),
+          paddingTop: RFValue(12),
+          paddingBottom: Math.max(insets.bottom, RFValue(12)),
           backgroundColor: "#FFF",
-          borderTopWidth: 1,
+          borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: "#F3F4F6",
         }}
       >
@@ -8904,9 +8957,9 @@ const RoleScreen = ({ onNext, onBack }) => {
                     ? "#8B5CF6"
                     : "#E5E7EB",
             borderRadius: RFValue(16),
-            paddingVertical: RFValue(18),
+            paddingVertical: RFValue(16),
             alignItems: "center",
-            marginBottom: RFValue(14),
+            marginBottom: RFValue(10),
             shadowColor:
               selectedRole === "patient"
                 ? "#4338CA"
@@ -10101,6 +10154,7 @@ const OTPScreen = ({ mobileNumber, onVerify, onBack }) => {
 };
 
 const AuthScreen = ({ onLogin }) => {
+  const authInsets = useSafeAreaInsets();
   const [step, setStep] = useState("SPLASH");
   const [role, setRole] = useState("patient");
   const [mobileNumber, setMobileNumber] = useState("");
@@ -10550,11 +10604,14 @@ const AuthScreen = ({ onLogin }) => {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
         <ScrollView
+          style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={{
             flexGrow: 1,
             padding: RFValue(24),
+            paddingBottom: Math.max(authInsets.bottom, RFValue(24)),
             justifyContent: "center",
           }}
+          keyboardShouldPersistTaps="handled"
         >
           <View style={{ marginBottom: RFValue(24) }}>
             <TouchableOpacity
@@ -11635,7 +11692,8 @@ const DoctorDashboard = ({ wounds, patients }) => {
       <StatusBar barStyle="light-content" backgroundColor={theme.accent} />
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: RFValue(100), flexGrow: 1 }}
+        style={{ flex: 1, minHeight: 0 }}
+        contentContainerStyle={{ paddingBottom: tabScrollBottomPadding(), flexGrow: 1 }}
       >
         {/* Header Block */}
         <View
@@ -12131,7 +12189,7 @@ const DoctorPatientsScreen = ({ patients }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {patients.length > 0 ? (
@@ -12315,7 +12373,7 @@ const DoctorEmergencyScreen = ({ navigation }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {/* Active Emergency */}
@@ -12568,7 +12626,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      <ScrollView contentContainerStyle={{ paddingBottom: RFValue(100) }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}>
         {/* Profile Header */}
         <View
           style={{
@@ -13940,7 +13998,7 @@ const AppointmentBookingScreen = ({
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         <View
@@ -14344,6 +14402,7 @@ const AppointmentBookingScreen = ({
 
 const PatientDoctorBookingFlow = ({ onBack }) => {
   const { theme } = useTheme();
+  const bookingInsets = useSafeAreaInsets();
   const { fetchApprovedDoctors, patientProfile } = useAppData();
   const [step, setStep] = useState("browse");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
@@ -14445,6 +14504,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
         <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+        <View style={{ flex: 1, minHeight: 0 }}>
         <View
           style={{
             backgroundColor: theme.card,
@@ -14485,10 +14545,12 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
           </Text>
         </View>
         <ScrollView
+          style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={{
             padding: RFValue(16),
-            paddingBottom: RFValue(120),
+            paddingBottom: RFValue(12),
           }}
+          keyboardShouldPersistTaps="handled"
         >
           <View
             style={{
@@ -14642,14 +14704,11 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
         </ScrollView>
         <View
           style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            padding: RFValue(16),
-            paddingBottom: Platform.OS === "ios" ? RFValue(28) : RFValue(16),
+            paddingHorizontal: RFValue(16),
+            paddingTop: RFValue(10),
+            paddingBottom: Math.max(bookingInsets.bottom, RFValue(12)),
             backgroundColor: theme.card,
-            borderTopWidth: 1,
+            borderTopWidth: StyleSheet.hairlineWidth,
             borderTopColor: theme.cardBorder,
           }}
         >
@@ -14672,6 +14731,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
               Book appointment
             </Text>
           </TouchableOpacity>
+        </View>
         </View>
       </SafeAreaView>
     );
@@ -14887,7 +14947,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {loading ? (
@@ -15272,7 +15332,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
         ref={scrollRef}
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {cards.length === 0 ? (
@@ -16521,7 +16581,7 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: RFValue(16), paddingBottom: RFValue(80) }}>
+      <ScrollView contentContainerStyle={{ padding: RFValue(16), paddingBottom: tabScrollBottomPadding() }}>
         <View
           style={{
             backgroundColor: theme.card,
@@ -17163,7 +17223,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
@@ -18113,7 +18173,7 @@ const DoctorRootPlaceholder = () => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {/* Today's Appointments */}
@@ -18268,6 +18328,9 @@ const DoctorRootPlaceholder = () => {
 // --- CUSTOM TAB BAR ---
 const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 10 : 8);
+  const tabIconSize = Math.min(ri(22), DEVICE_TYPE === "tablet" ? 26 : 24);
+  const tabLabelSize = Math.min(RFValue(10), 12);
 
   return (
     <View
@@ -18276,8 +18339,9 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
         backgroundColor: "#FFFFFF",
         borderTopWidth: 1,
         borderTopColor: "#F3F4F6",
-        paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 8,
-        paddingTop: RFValue(8),
+        paddingBottom: bottomPad,
+        paddingTop: Math.min(RFValue(6), 8),
+        minHeight: Math.round(48 + bottomPad),
         shadowColor: "#000",
         shadowOpacity: 0.08,
         shadowOffset: { width: 0, height: -4 },
@@ -18292,7 +18356,7 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
         const icon = options.tabBarIcon
           ? options.tabBarIcon({
               color: isFocused ? activeColor : "#9CA3AF",
-              size: RFValue(24),
+              size: tabIconSize,
               focused: isFocused,
             })
           : null;
@@ -18311,15 +18375,28 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
           <TouchableOpacity
             key={route.key}
             onPress={onPress}
-            style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              alignItems: "center",
+              justifyContent: "center",
+              paddingVertical: 4,
+            }}
           >
             {icon}
             <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
               style={{
-                fontSize: RFValue(10),
+                fontSize: tabLabelSize,
                 fontWeight: isFocused ? "700" : "500",
                 color: isFocused ? activeColor : "#9CA3AF",
-                marginTop: RFValue(2),
+                marginTop: 2,
+                maxWidth: "100%",
+                paddingHorizontal: 2,
+                textAlign: "center",
               }}
             >
               {label}
@@ -18374,7 +18451,7 @@ const CustomTabNavigator = ({ routes, activeColor }) => {
 
   return (
     <View style={{ flex: 1 }}>
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, minHeight: 0 }}>
         <ActiveComponent navigation={navigation} />
       </View>
       <CustomTabBar
@@ -18571,7 +18648,7 @@ const PharmacyProfileScreen = ({ onLogout }) => {
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={{ padding: RFValue(20), paddingBottom: RFValue(80) }}
+          contentContainerStyle={{ padding: RFValue(20), paddingBottom: tabScrollBottomPadding() }}
           keyboardShouldPersistTaps="handled"
         >
           {loadingProfile ? (
@@ -19062,7 +19139,7 @@ const PatientWoundScreen = () => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         <TouchableOpacity
@@ -19824,7 +19901,7 @@ const WoundDetailScreen = ({
       >
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: RFValue(100) }}
+          contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}
           keyboardShouldPersistTaps="handled"
         >
           <View style={{ padding: RFValue(16) }}>
@@ -20746,7 +20823,7 @@ const DoctorWoundsScreen = () => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {wounds && wounds.length > 0 ? (
@@ -20904,7 +20981,7 @@ const PharmacyDashboard = ({ orders }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(100),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {filteredOrders.map((o) => (
