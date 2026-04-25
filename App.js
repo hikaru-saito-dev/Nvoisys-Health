@@ -2253,6 +2253,11 @@ const UI_SCALE = getUIScale();
 const RFValue = (size) =>
   Math.round(PixelRatio.roundToNearestPixel(size * UI_SCALE));
 
+const safeHeaderPaddingTop = (base = 16) => {
+  if (Platform.OS !== "android") return RFValue(base);
+  return Math.max(RFValue(base), (StatusBar.currentHeight || 0) + RFValue(8));
+};
+
 const RFText = (size, options = {}) => {
   const min = options.min ?? 0.82;
   const cap =
@@ -2275,7 +2280,7 @@ const ri = (size) => {
 
 /** Bottom padding for ScrollViews on routes that sit above the custom tab bar. */
 const tabScrollBottomPadding = () =>
-  Math.round(Math.max(108, 82 * UI_SCALE + 40));
+  Math.round(Math.max(118, 88 * UI_SCALE + 48));
 
 const ResponsiveInfo = {
   deviceType: DEVICE_TYPE,
@@ -3075,7 +3080,7 @@ const PatientHomeScreen = () => {
             style={{
               backgroundColor: theme.accent,
               padding: RFValue(24),
-              paddingTop: Platform.OS === "android" ? 48 : 20,
+              paddingTop: safeHeaderPaddingTop(20),
               paddingBottom: RFValue(28),
               borderBottomLeftRadius: RFValue(28),
               borderBottomRightRadius: RFValue(28),
@@ -3936,7 +3941,7 @@ const PatientEmergencyScreen = ({ navigation }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           flexDirection: "row",
           alignItems: "center",
           borderBottomWidth: 1,
@@ -4959,7 +4964,7 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(16),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -5511,7 +5516,7 @@ const PatientChatScreen = () => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(16),
-            paddingTop: Platform.OS === "android" ? 40 : 16,
+            paddingTop: safeHeaderPaddingTop(),
             flexDirection: "row",
             alignItems: "center",
             borderBottomWidth: 1,
@@ -5965,7 +5970,7 @@ const PatientChatScreen = () => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -6415,7 +6420,7 @@ const ThemeScreen = ({ onBack }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -6862,7 +6867,7 @@ const PatientEditProfileScreen = ({
           style={{
             backgroundColor: theme.card,
             padding: RFValue(20),
-            paddingTop: Platform.OS === "android" ? 40 : 16,
+            paddingTop: safeHeaderPaddingTop(),
             borderBottomWidth: 1,
             borderBottomColor: theme.cardBorder,
             flexDirection: "row",
@@ -7169,7 +7174,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
           flexDirection: "row",
@@ -7499,7 +7504,7 @@ const PatientProfileScreen = ({
           style={{
             backgroundColor: theme.card,
             padding: RFValue(24),
-            paddingTop: Platform.OS === "android" ? 40 : 16,
+            paddingTop: safeHeaderPaddingTop(),
             alignItems: "center",
             borderBottomLeftRadius: RFValue(32),
             borderBottomRightRadius: RFValue(32),
@@ -8054,7 +8059,7 @@ const SplashScreen = ({ onNext }) => {
         style={{
           alignItems: "center",
           justifyContent: "center",
-          paddingBottom: Math.max(insets.bottom, RFValue(16)),
+          paddingBottom: Math.max(insets.bottom + RFValue(6), RFValue(16)),
           paddingTop: RFValue(8),
           opacity: splashOpacity,
         }}
@@ -8195,7 +8200,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
           style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={{
             flexGrow: 1,
-            paddingBottom: Math.max(insets.bottom, RFValue(20)),
+            paddingBottom: Math.max(insets.bottom + RFValue(6), RFValue(20)),
           }}
           keyboardShouldPersistTaps="handled"
         >
@@ -8215,7 +8220,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
             <View
               style={{
                 padding: RFValue(24),
-                paddingTop: Platform.OS === "android" ? 36 : 16,
+                paddingTop: safeHeaderPaddingTop(),
               }}
             >
               <View
@@ -8437,7 +8442,7 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
           flexDirection: "row",
           justifyContent: "space-between",
           paddingHorizontal: RFValue(24),
-          paddingTop: Platform.OS === "android" ? Math.max(insets.top, 12) : 8,
+          paddingTop: Math.max(insets.top, safeHeaderPaddingTop(8)),
           paddingBottom: RFValue(12),
         }}
       >
@@ -8602,7 +8607,7 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
         style={{
           paddingHorizontal: RFValue(24),
           paddingTop: RFValue(12),
-          paddingBottom: Math.max(insets.bottom, RFValue(12)),
+          paddingBottom: Math.max(insets.bottom + RFValue(6), RFValue(16)),
           backgroundColor: "#FFFFFF",
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: "#E5E7EB",
@@ -8696,7 +8701,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
             style={{
               backgroundColor: "#FFFFFF",
               padding: RFValue(24),
-              paddingTop: Platform.OS === "android" ? 40 : 16,
+              paddingTop: safeHeaderPaddingTop(),
               borderBottomLeftRadius: RFValue(32),
               borderBottomRightRadius: RFValue(32),
               shadowColor: "#000",
@@ -8710,7 +8715,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
               <View
                 style={{
                   position: "absolute",
-                  top: Platform.OS === "android" ? 40 : 16,
+                  top: safeHeaderPaddingTop(),
                   left: RFValue(24),
                   zIndex: 1,
                 }}
@@ -9116,7 +9121,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
         style={{
           paddingHorizontal: RFValue(24),
           paddingTop: RFValue(12),
-          paddingBottom: Math.max(insets.bottom, RFValue(12)),
+          paddingBottom: Math.max(insets.bottom + RFValue(6), RFValue(16)),
           backgroundColor: "#FFF",
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: "#F3F4F6",
@@ -9179,6 +9184,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
 };
 
 const RegisterScreen = ({ onFinish, onBack }) => {
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
   const [email, setEmail] = useState("");
@@ -9216,7 +9222,7 @@ const RegisterScreen = ({ onFinish, onBack }) => {
               style={{
                 backgroundColor: "#FFFFFF",
                 padding: RFValue(24),
-                paddingTop: Platform.OS === "android" ? 40 : 16,
+                paddingTop: safeHeaderPaddingTop(),
                 borderBottomLeftRadius: RFValue(28),
                 borderBottomRightRadius: RFValue(28),
                 shadowColor: "#000",
@@ -9496,7 +9502,7 @@ const RegisterScreen = ({ onFinish, onBack }) => {
       <View
         style={{
           padding: RFValue(24),
-          paddingBottom: Platform.OS === "ios" ? 34 : 24,
+          paddingBottom: Math.max(insets.bottom + RFValue(8), RFValue(20)),
           backgroundColor: "#FFF",
           borderTopWidth: 1,
           borderTopColor: "#F3F4F6",
@@ -9529,6 +9535,7 @@ const RegisterScreen = ({ onFinish, onBack }) => {
 
 // --- DOCTOR SCREENS ---
 const DoctorRegisterScreen = ({ onFinish, onBack }) => {
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
   const [email, setEmail] = useState("");
@@ -9548,7 +9555,7 @@ const DoctorRegisterScreen = ({ onFinish, onBack }) => {
               style={{
                 backgroundColor: "#FFFFFF",
                 padding: RFValue(24),
-                paddingTop: Platform.OS === "android" ? 40 : 16,
+                paddingTop: safeHeaderPaddingTop(),
                 borderBottomLeftRadius: RFValue(28),
                 borderBottomRightRadius: RFValue(28),
                 shadowColor: "#000",
@@ -9869,7 +9876,7 @@ const DoctorRegisterScreen = ({ onFinish, onBack }) => {
       <View
         style={{
           padding: RFValue(24),
-          paddingBottom: Platform.OS === "ios" ? 34 : 24,
+          paddingBottom: Math.max(insets.bottom + RFValue(8), RFValue(20)),
           backgroundColor: "#FFF",
           borderTopWidth: 1,
           borderTopColor: "#F3F4F6",
@@ -9901,6 +9908,7 @@ const DoctorRegisterScreen = ({ onFinish, onBack }) => {
 };
 
 const PharmacyRegisterScreen = ({ onFinish, onBack }) => {
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
   const [email, setEmail] = useState("");
@@ -9925,7 +9933,7 @@ const PharmacyRegisterScreen = ({ onFinish, onBack }) => {
               style={{
                 backgroundColor: "#FFFFFF",
                 padding: RFValue(24),
-                paddingTop: Platform.OS === "android" ? 40 : 16,
+                paddingTop: safeHeaderPaddingTop(),
                 borderBottomLeftRadius: RFValue(28),
                 borderBottomRightRadius: RFValue(28),
                 shadowColor: "#000",
@@ -10135,7 +10143,7 @@ const PharmacyRegisterScreen = ({ onFinish, onBack }) => {
       <View
         style={{
           padding: RFValue(24),
-          paddingBottom: Platform.OS === "ios" ? 34 : 24,
+          paddingBottom: Math.max(insets.bottom + RFValue(8), RFValue(20)),
           backgroundColor: "#FFF",
           borderTopWidth: 1,
           borderTopColor: "#F3F4F6",
@@ -10168,8 +10176,14 @@ const PharmacyRegisterScreen = ({ onFinish, onBack }) => {
 
 // --- AUTH SCREEN ---
 const OTPScreen = ({ mobileNumber, onVerify, onBack }) => {
+  const insets = useSafeAreaInsets();
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [timer, setTimer] = useState(30);
+  const otpCellWidth = Math.min(
+    RFValue(46),
+    Math.floor((SCREEN_WIDTH - RFValue(72)) / 6),
+  );
+  const otpCellHeight = Math.max(RFValue(54), Math.round(otpCellWidth * 1.3));
   const inputRefs = [
     useRef(),
     useRef(),
@@ -10209,7 +10223,14 @@ const OTPScreen = ({ mobileNumber, onVerify, onBack }) => {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FAFBFF" }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FAFBFF" />
-      <View style={{ flex: 1, padding: RFValue(24) }}>
+      <View
+        style={{
+          flex: 1,
+          paddingHorizontal: RFValue(24),
+          paddingTop: Math.max(insets.top, RFValue(24)),
+          paddingBottom: Math.max(insets.bottom, RFValue(24)),
+        }}
+      >
         <TouchableOpacity
           onPress={onBack}
           style={{
@@ -10264,8 +10285,8 @@ const OTPScreen = ({ mobileNumber, onVerify, onBack }) => {
               key={index}
               ref={inputRefs[index]}
               style={{
-                width: RFValue(46),
-                height: RFValue(60),
+                width: otpCellWidth,
+                height: otpCellHeight,
                 backgroundColor: "#FFFFFF",
                 borderRadius: RFValue(14),
                 borderWidth: 2,
@@ -10676,6 +10697,8 @@ const AuthScreen = ({ onLogin }) => {
           contentContainerStyle={{
             flexGrow: 1,
             padding: RFValue(24),
+            paddingTop: Math.max(authInsets.top, RFValue(24)),
+            paddingBottom: Math.max(authInsets.bottom, RFValue(24)),
             justifyContent: "center",
           }}
           keyboardShouldPersistTaps="handled"
@@ -10801,6 +10824,7 @@ const AuthScreen = ({ onLogin }) => {
           contentContainerStyle={{
             flexGrow: 1,
             padding: RFValue(24),
+            paddingTop: Math.max(authInsets.top, RFValue(24)),
             paddingBottom: Math.max(authInsets.bottom, RFValue(24)),
             justifyContent: "center",
           }}
@@ -11895,7 +11919,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
             borderBottomLeftRadius: RFValue(28),
             borderBottomRightRadius: RFValue(28),
             padding: RFValue(24),
-            paddingTop: Platform.OS === "android" ? 48 : 20,
+            paddingTop: safeHeaderPaddingTop(20),
             paddingBottom: RFValue(28),
           }}
         >
@@ -12313,7 +12337,7 @@ const DoctorPatientsScreen = ({ patients }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -12529,7 +12553,7 @@ const DoctorEmergencyScreen = ({ navigation }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
           flexDirection: "row",
@@ -12827,7 +12851,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
           style={{
             backgroundColor: "#FFFFFF",
             padding: RFValue(24),
-            paddingTop: Platform.OS === "android" ? 40 : 16,
+            paddingTop: safeHeaderPaddingTop(),
             alignItems: "center",
             borderBottomLeftRadius: RFValue(32),
             borderBottomRightRadius: RFValue(32),
@@ -14143,7 +14167,7 @@ const AppointmentBookingScreen = ({
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -14704,7 +14728,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(20),
-            paddingTop: Platform.OS === "android" ? 40 : 16,
+            paddingTop: safeHeaderPaddingTop(),
             borderBottomWidth: 1,
             borderBottomColor: theme.cardBorder,
             flexDirection: "row",
@@ -14939,7 +14963,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -15485,7 +15509,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -16108,7 +16132,7 @@ const HospitalDirectoryScreen = ({ onBack }) => {
           backgroundColor: theme.card,
           paddingHorizontal: RFValue(16),
           paddingVertical: RFValue(14),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           flexDirection: "row",
           alignItems: "center",
           borderBottomWidth: 1,
@@ -16758,7 +16782,7 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
           backgroundColor: theme.card,
           paddingHorizontal: RFValue(16),
           paddingVertical: RFValue(14),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           flexDirection: "row",
           alignItems: "center",
           borderBottomWidth: 1,
@@ -17025,7 +17049,7 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
           backgroundColor: theme.card,
           paddingHorizontal: RFValue(16),
           paddingVertical: RFValue(14),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           flexDirection: "row",
           alignItems: "center",
           borderBottomWidth: 1,
@@ -17377,7 +17401,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -17841,7 +17865,7 @@ const FamilyHealthScreen = ({ onBack }) => {
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -18066,7 +18090,7 @@ const EmergencySOScreen = ({ onBack }) => {
         style={{
           backgroundColor: sosActive ? "#7F1D1D" : "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: sosActive ? "#991B1B" : "#F3F4F6",
         }}
@@ -18354,7 +18378,7 @@ const DoctorRootPlaceholder = () => {
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -18524,9 +18548,12 @@ const DoctorRootPlaceholder = () => {
 const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
-  const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 10);
+  const bottomPad = Math.max(
+    insets.bottom,
+    Platform.OS === "android" ? RFValue(18) : RFValue(10),
+  );
   const tabIconSize = Math.min(ri(22), DEVICE_TYPE === "tablet" ? 26 : 24);
-  const tabLabelSize = Math.min(RFValue(10), 12);
+  const tabLabelSize = Math.min(RFText(10, { max: 1.06 }), 12);
   const muted = theme.textTertiary || "#9CA3AF";
 
   return (
@@ -18537,8 +18564,8 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.tabBarBorder,
         paddingBottom: bottomPad,
-        paddingTop: Math.min(RFValue(8), 10),
-        minHeight: Math.round(52 + bottomPad),
+        paddingTop: Math.min(RFValue(9), 11),
+        minHeight: Math.round(RFValue(58) + bottomPad),
         shadowColor: theme.shadowColor,
         shadowOpacity: 0.06,
         shadowOffset: { width: 0, height: -3 },
@@ -18577,7 +18604,8 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
               minWidth: 0,
               alignItems: "center",
               justifyContent: "center",
-              paddingVertical: 4,
+              paddingVertical: RFValue(3),
+              minHeight: RFValue(48),
             }}
           >
             {icon}
@@ -18827,7 +18855,7 @@ const PharmacyProfileScreen = ({ onLogout }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -19160,7 +19188,7 @@ const StaffManagementScreen = () => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -19269,7 +19297,7 @@ const ModernHeader = ({ title, subtitle }) => (
     style={{
       backgroundColor: "#FFFFFF",
       padding: RFValue(20),
-      paddingTop: Platform.OS === "android" ? 40 : 16,
+      paddingTop: safeHeaderPaddingTop(),
       borderBottomWidth: 1,
       borderBottomColor: "#F3F4F6",
     }}
@@ -21005,7 +21033,7 @@ const DoctorWoundsScreen = () => {
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -21120,7 +21148,7 @@ const PharmacyDashboard = ({ orders }) => {
         style={{
           backgroundColor: "#8B5CF6",
           padding: RFValue(24),
-          paddingTop: Platform.OS === "android" ? 48 : 20,
+          paddingTop: safeHeaderPaddingTop(20),
           borderBottomLeftRadius: RFValue(32),
           borderBottomRightRadius: RFValue(32),
         }}
@@ -21348,7 +21376,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: Platform.OS === "android" ? 40 : 16,
+          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
