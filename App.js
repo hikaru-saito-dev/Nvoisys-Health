@@ -21,6 +21,7 @@ import {
   Image,
   Alert,
   Animated,
+  Easing,
   TextInput,
   Platform,
   KeyboardAvoidingView,
@@ -74,14 +75,14 @@ import {
 const THEMES = {
   light: {
     name: "Light",
-    bg: "#F8FAFC",
+    bg: "#F0F4F8",
     bgSolid: "#FFFFFF",
     card: "#FFFFFF",
-    cardBorder: "#F3F4F6",
-    textPrimary: "#1E1B4B",
-    textSecondary: "#6B7280",
-    textTertiary: "#9CA3AF",
-    accent: "#4338CA",
+    cardBorder: "#E2E8F0",
+    textPrimary: "#0F172A",
+    textSecondary: "#64748B",
+    textTertiary: "#94A3B8",
+    accent: "#4F46E5",
     accentLight: "#EEF2FF",
     accentBg: "#4338CA",
     success: "#059669",
@@ -92,10 +93,10 @@ const THEMES = {
     dangerLight: "#FEF2F2",
     inputBg: "#F9FAFB",
     inputBorder: "#E5E7EB",
-    headerBg: "#4338CA",
+    headerBg: "#4F46E5",
     headerText: "#FFFFFF",
     tabBarBg: "#FFFFFF",
-    tabBarBorder: "#F3F4F6",
+    tabBarBorder: "#E8ECF0",
     shadowColor: "#000",
     statusBarStyle: "dark-content",
     statusBarBg: "#FFFFFF",
@@ -2273,7 +2274,8 @@ const ri = (size) => {
 };
 
 /** Bottom padding for ScrollViews on routes that sit above the custom tab bar. */
-const tabScrollBottomPadding = () => Math.round(Math.max(88, 72 * UI_SCALE + 28));
+const tabScrollBottomPadding = () =>
+  Math.round(Math.max(108, 82 * UI_SCALE + 40));
 
 const ResponsiveInfo = {
   deviceType: DEVICE_TYPE,
@@ -2421,22 +2423,27 @@ const styles = {
 };
 
 // --- ANIMATION WRAPPERS ---
+const EASE_OUT_CUBIC = Easing.out(Easing.cubic);
+
+// Calm entrance: short travel + cubic ease-out (avoids “linear slide” feel).
 const FadeInView = ({ children, style, delay = 0 }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(20)).current;
+  const slideAnim = useRef(new Animated.Value(12)).current;
 
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 500,
+        duration: 400,
         delay,
+        easing: EASE_OUT_CUBIC,
         useNativeDriver: true,
       }),
       Animated.timing(slideAnim, {
         toValue: 0,
-        duration: 500,
+        duration: 400,
         delay,
+        easing: EASE_OUT_CUBIC,
         useNativeDriver: true,
       }),
     ]).start();
@@ -2456,18 +2463,27 @@ const FadeInView = ({ children, style, delay = 0 }) => {
 
 const AnimatedTouchable = ({ children, style, onPress, ...props }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  const pressSpring = {
+    useNativeDriver: true,
+    friction: 7,
+    tension: 220,
+    restDisplacementThreshold: 0.01,
+    restSpeedThreshold: 0.01,
+  };
 
   const handlePressIn = () => {
     Animated.spring(scaleAnim, {
-      toValue: 0.95,
-      useNativeDriver: true,
+      ...pressSpring,
+      toValue: 0.97,
     }).start();
   };
 
   const handlePressOut = () => {
     Animated.spring(scaleAnim, {
+      ...pressSpring,
       toValue: 1,
-      useNativeDriver: true,
+      friction: 8,
+      tension: 180,
     }).start();
   };
 
@@ -2491,16 +2507,19 @@ const PulseView = ({ children, style }) => {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    const ease = Easing.inOut(Easing.sin);
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
-          toValue: 1.05,
-          duration: 1000,
+          toValue: 1.04,
+          duration: 1400,
+          easing: ease,
           useNativeDriver: true,
         }),
         Animated.timing(pulseAnim, {
           toValue: 1,
-          duration: 1000,
+          duration: 1400,
+          easing: ease,
           useNativeDriver: true,
         }),
       ]),
@@ -2518,25 +2537,31 @@ const HeartbeatView = ({ children, style }) => {
   const heartAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    const up = Easing.out(Easing.quad);
+    const down = Easing.in(Easing.quad);
     const beat = Animated.sequence([
       Animated.timing(heartAnim, {
-        toValue: 1.15,
-        duration: 150,
+        toValue: 1.12,
+        duration: 180,
+        easing: up,
         useNativeDriver: true,
       }),
       Animated.timing(heartAnim, {
         toValue: 1,
-        duration: 100,
+        duration: 160,
+        easing: down,
         useNativeDriver: true,
       }),
       Animated.timing(heartAnim, {
-        toValue: 1.08,
-        duration: 150,
+        toValue: 1.06,
+        duration: 200,
+        easing: up,
         useNativeDriver: true,
       }),
       Animated.timing(heartAnim, {
         toValue: 1,
-        duration: 400,
+        duration: 520,
+        easing: Easing.inOut(Easing.quad),
         useNativeDriver: true,
       }),
     ]);
@@ -2554,16 +2579,19 @@ const GlowView = ({ children, style, glowColor = "#5B21B6", size = 200 }) => {
   const glowAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    const breathe = Easing.inOut(Easing.sin);
     Animated.loop(
       Animated.sequence([
         Animated.timing(glowAnim, {
-          toValue: 0.6,
-          duration: 1500,
+          toValue: 0.55,
+          duration: 2200,
+          easing: breathe,
           useNativeDriver: true,
         }),
         Animated.timing(glowAnim, {
-          toValue: 0,
-          duration: 1500,
+          toValue: 0.08,
+          duration: 2200,
+          easing: breathe,
           useNativeDriver: true,
         }),
       ]),
@@ -2575,10 +2603,10 @@ const GlowView = ({ children, style, glowColor = "#5B21B6", size = 200 }) => {
       <Animated.View
         style={{
           position: "absolute",
-          top: -size / 4,
-          left: -size / 4,
-          right: -size / 4,
-          bottom: -size / 4,
+          top: -size / 6,
+          left: -size / 6,
+          right: -size / 6,
+          bottom: -size / 6,
           borderRadius: size / 2,
           backgroundColor: glowColor,
           opacity: glowAnim,
@@ -2599,11 +2627,12 @@ const AnimatedProgressBar = ({
   useEffect(() => {
     Animated.timing(animatedWidth, {
       toValue: progress,
-      duration: 1200,
-      delay: 500,
+      duration: 880,
+      delay: 120,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     }).start();
-  }, [progress]);
+  }, [animatedWidth, progress]);
 
   return (
     <View
@@ -2635,8 +2664,8 @@ const BounceView = ({ children, style }) => {
   useEffect(() => {
     Animated.spring(bounceAnim, {
       toValue: 1,
-      friction: 3,
-      tension: 40,
+      friction: 6,
+      tension: 90,
       useNativeDriver: true,
     }).start();
   }, [bounceAnim]);
@@ -2649,8 +2678,8 @@ const BounceView = ({ children, style }) => {
           transform: [
             {
               scale: bounceAnim.interpolate({
-                inputRange: [0, 0.5, 1],
-                outputRange: [0.5, 1.1, 1],
+                inputRange: [0, 0.55, 1],
+                outputRange: [0.88, 1.03, 1],
               }),
             },
           ],
@@ -2667,25 +2696,30 @@ const ShakeView = ({ children, style, trigger }) => {
 
   useEffect(() => {
     if (trigger) {
+      const ease = Easing.out(Easing.sin);
       Animated.sequence([
         Animated.timing(shakeAnim, {
-          toValue: 10,
-          duration: 50,
+          toValue: 8,
+          duration: 70,
+          easing: ease,
           useNativeDriver: true,
         }),
         Animated.timing(shakeAnim, {
-          toValue: -10,
-          duration: 50,
+          toValue: -8,
+          duration: 70,
+          easing: ease,
           useNativeDriver: true,
         }),
         Animated.timing(shakeAnim, {
-          toValue: 10,
-          duration: 50,
+          toValue: 5,
+          duration: 60,
+          easing: ease,
           useNativeDriver: true,
         }),
         Animated.timing(shakeAnim, {
           toValue: 0,
-          duration: 50,
+          duration: 90,
+          easing: Easing.inOut(Easing.quad),
           useNativeDriver: true,
         }),
       ]).start();
@@ -2703,16 +2737,19 @@ const FloatView = ({ children, style, floatRange = 10 }) => {
   const floatAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    const ease = Easing.inOut(Easing.sin);
     Animated.loop(
       Animated.sequence([
         Animated.timing(floatAnim, {
           toValue: 1,
-          duration: 1500,
+          duration: 2200,
+          easing: ease,
           useNativeDriver: true,
         }),
         Animated.timing(floatAnim, {
           toValue: 0,
-          duration: 1500,
+          duration: 2200,
+          easing: ease,
           useNativeDriver: true,
         }),
       ]),
@@ -2747,11 +2784,12 @@ const RotateView = ({ children, style, duration = 2000 }) => {
     Animated.loop(
       Animated.timing(rotateAnim, {
         toValue: 1,
-        duration: duration,
+        duration,
+        easing: Easing.linear,
         useNativeDriver: true,
       }),
     ).start();
-  }, [rotateAnim]);
+  }, [duration, rotateAnim]);
 
   return (
     <Animated.View
@@ -3031,16 +3069,16 @@ const PatientHomeScreen = () => {
         style={{ flex: 1, minHeight: 0 }}
         contentContainerStyle={{ paddingBottom: tabScrollBottomPadding(), flexGrow: 1 }}
       >
-        <FadeInView delay={100}>
+        <FadeInView delay={60}>
           {/* Modern Gradient Header */}
           <View
             style={{
               backgroundColor: theme.accent,
               padding: RFValue(24),
               paddingTop: Platform.OS === "android" ? 48 : 20,
-              paddingBottom: RFValue(48),
-              borderBottomLeftRadius: RFValue(32),
-              borderBottomRightRadius: RFValue(32),
+              paddingBottom: RFValue(28),
+              borderBottomLeftRadius: RFValue(28),
+              borderBottomRightRadius: RFValue(28),
             }}
           >
             <View
@@ -3116,9 +3154,11 @@ const PatientHomeScreen = () => {
             {/* Mood selector */}
             <View
               style={{
-                backgroundColor: "rgba(255,255,255,0.1)",
+                backgroundColor: "rgba(255,255,255,0.12)",
                 borderRadius: RFValue(16),
                 padding: RFValue(14),
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: "rgba(255,255,255,0.22)",
               }}
             >
               <Text
@@ -3177,9 +3217,9 @@ const PatientHomeScreen = () => {
           </View>
         </FadeInView>
 
-        <FadeInView delay={200}>
+        <FadeInView delay={140}>
           <View
-            style={{ paddingHorizontal: RFValue(16), marginTop: -RFValue(24) }}
+            style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
           >
             {/* Quick Actions Grid */}
             <View
@@ -3188,11 +3228,13 @@ const PatientHomeScreen = () => {
                 borderRadius: RFValue(20),
                 padding: RFValue(16),
                 marginBottom: RFValue(16),
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.cardBorder,
                 shadowColor: theme.shadowColor,
-                shadowOpacity: 0.06,
-                shadowOffset: { width: 0, height: 4 },
-                shadowRadius: 12,
-                elevation: 3,
+                shadowOpacity: 0.07,
+                shadowOffset: { width: 0, height: 2 },
+                shadowRadius: 16,
+                elevation: 2,
               }}
             >
               <View
@@ -3344,11 +3386,13 @@ const PatientHomeScreen = () => {
                   marginBottom: RFValue(16),
                   flexDirection: "row",
                   alignItems: "center",
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.cardBorder,
                   shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.06,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                  elevation: 3,
+                  shadowOpacity: 0.07,
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowRadius: 14,
+                  elevation: 2,
                   borderLeftWidth: 4,
                   borderLeftColor: theme.accent,
                 }}
@@ -7851,14 +7895,34 @@ const PatientProfileScreen = ({
 };
 
 const SplashScreen = ({ onNext }) => {
-  const [visible, setVisible] = useState(false);
   const insets = useSafeAreaInsets();
+  const splashOpacity = useRef(new Animated.Value(0)).current;
+  const splashScale = useRef(new Animated.Value(0.94)).current;
 
   useEffect(() => {
-    setTimeout(() => setVisible(true), 100);
+    const enter = Animated.parallel([
+      Animated.timing(splashOpacity, {
+        toValue: 1,
+        duration: 520,
+        delay: 80,
+        easing: EASE_OUT_CUBIC,
+        useNativeDriver: true,
+      }),
+      Animated.timing(splashScale, {
+        toValue: 1,
+        duration: 560,
+        delay: 80,
+        easing: Easing.out(Easing.back(1.15)),
+        useNativeDriver: true,
+      }),
+    ]);
+    enter.start();
     const timer = setTimeout(onNext, 2000);
-    return () => clearTimeout(timer);
-  }, []);
+    return () => {
+      clearTimeout(timer);
+      enter.stop();
+    };
+  }, [onNext, splashOpacity, splashScale]);
 
   return (
     <SafeAreaView
@@ -7908,15 +7972,15 @@ const SplashScreen = ({ onNext }) => {
       />
 
       {/* Main content — flex so it does not collide with footer dots */}
-      <View
+      <Animated.View
         style={{
           flex: 1,
           minHeight: 0,
           justifyContent: "center",
           alignItems: "center",
           paddingHorizontal: RFValue(20),
-          opacity: visible ? 1 : 0,
-          transform: [{ scale: visible ? 1 : 0.9 }],
+          opacity: splashOpacity,
+          transform: [{ scale: splashScale }],
         }}
       >
         {/* Logo container with shadow */}
@@ -7984,14 +8048,15 @@ const SplashScreen = ({ onNext }) => {
         >
           Your Health Guardian
         </Text>
-      </View>
+      </Animated.View>
 
-      <View
+      <Animated.View
         style={{
           alignItems: "center",
           justifyContent: "center",
           paddingBottom: Math.max(insets.bottom, RFValue(16)),
           paddingTop: RFValue(8),
+          opacity: splashOpacity,
         }}
       >
         <View style={{ flexDirection: "row", gap: 6 }}>
@@ -8020,7 +8085,7 @@ const SplashScreen = ({ onNext }) => {
             }}
           />
         </View>
-      </View>
+      </Animated.View>
     </SafeAreaView>
   );
 };
@@ -11827,11 +11892,11 @@ const DoctorDashboard = ({ wounds, patients }) => {
         <View
           style={{
             backgroundColor: theme.accent,
-            borderBottomLeftRadius: RFValue(32),
-            borderBottomRightRadius: RFValue(32),
+            borderBottomLeftRadius: RFValue(28),
+            borderBottomRightRadius: RFValue(28),
             padding: RFValue(24),
             paddingTop: Platform.OS === "android" ? 48 : 20,
-            paddingBottom: RFValue(32),
+            paddingBottom: RFValue(28),
           }}
         >
           <View
@@ -11845,7 +11910,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
             <View>
               <Text
                 style={{
-                  color: "rgba(255,255,255,0.7)",
+                  color: "rgba(255,255,255,0.78)",
                   fontSize: RFValue(13),
                   fontWeight: "600",
                   marginBottom: RFValue(4),
@@ -11998,7 +12063,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
 
         {/* Content */}
         <View
-          style={{ paddingHorizontal: RFValue(16), marginTop: -RFValue(24) }}
+          style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
         >
           {/* Critical Patients */}
           <View
@@ -12007,11 +12072,13 @@ const DoctorDashboard = ({ wounds, patients }) => {
               borderRadius: RFValue(20),
               padding: RFValue(16),
               marginBottom: RFValue(16),
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
               shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
+              shadowOpacity: 0.07,
+              shadowOffset: { width: 0, height: 2 },
+              shadowRadius: 16,
+              elevation: 2,
             }}
           >
             <View
@@ -18456,25 +18523,27 @@ const DoctorRootPlaceholder = () => {
 // --- CUSTOM TAB BAR ---
 const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const insets = useSafeAreaInsets();
-  const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 10 : 8);
+  const { theme } = useTheme();
+  const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 10);
   const tabIconSize = Math.min(ri(22), DEVICE_TYPE === "tablet" ? 26 : 24);
   const tabLabelSize = Math.min(RFValue(10), 12);
+  const muted = theme.textTertiary || "#9CA3AF";
 
   return (
     <View
       style={{
         flexDirection: "row",
-        backgroundColor: "#FFFFFF",
-        borderTopWidth: 1,
-        borderTopColor: "#F3F4F6",
+        backgroundColor: theme.tabBarBg,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.tabBarBorder,
         paddingBottom: bottomPad,
-        paddingTop: Math.min(RFValue(6), 8),
-        minHeight: Math.round(48 + bottomPad),
-        shadowColor: "#000",
-        shadowOpacity: 0.08,
-        shadowOffset: { width: 0, height: -4 },
-        shadowRadius: 10,
-        elevation: 10,
+        paddingTop: Math.min(RFValue(8), 10),
+        minHeight: Math.round(52 + bottomPad),
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.06,
+        shadowOffset: { width: 0, height: -3 },
+        shadowRadius: 12,
+        elevation: 8,
       }}
     >
       {state.routes.map((route, index) => {
@@ -18483,7 +18552,7 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
         const label = options.tabBarLabel || route.name;
         const icon = options.tabBarIcon
           ? options.tabBarIcon({
-              color: isFocused ? activeColor : "#9CA3AF",
+              color: isFocused ? activeColor : muted,
               size: tabIconSize,
               focused: isFocused,
             })
@@ -18520,8 +18589,8 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
               style={{
                 fontSize: tabLabelSize,
                 fontWeight: isFocused ? "700" : "500",
-                color: isFocused ? activeColor : "#9CA3AF",
-                marginTop: 2,
+                color: isFocused ? activeColor : muted,
+                marginTop: 3,
                 maxWidth: "100%",
                 paddingHorizontal: 2,
                 textAlign: "center",
