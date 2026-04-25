@@ -533,15 +533,10 @@ const ASSISTANT_CONVERSATION_KIND = "assistant";
 const ASSISTANT_USER_MESSAGE_KIND = "assistant_user";
 const ASSISTANT_REPLY_MESSAGE_KIND = "assistant_reply";
 
-// Detects "plain text" kinds where we must NOT run decryption — AI messages
-// are stored as plain text so a missing encryption key can't garble them.
-const messageKindIsPlainText = (kind) => {
-  const normalized = String(kind || "").toLowerCase();
-  return (
-    normalized === "system" ||
-    normalized === ASSISTANT_USER_MESSAGE_KIND ||
-    normalized === ASSISTANT_REPLY_MESSAGE_KIND
-  );
+// All message kinds are eligible for encryption. `decryptChatText` gracefully
+// returns legacy plaintext records unchanged when they do not have the prefix.
+const messageKindIsPlainText = () => {
+  return false;
 };
 
 const appointmentStatusColorsFor = (theme, statusKey) => {
@@ -1212,7 +1207,8 @@ const mapMessageRecord = (record) => {
   const isAssistantReply = rawKind === ASSISTANT_REPLY_MESSAGE_KIND;
   const isAssistantUser = rawKind === ASSISTANT_USER_MESSAGE_KIND;
   const rawText = resolveMessageText(record);
-  // Skip image-payload parsing for AI messages — they are always plain text.
+  // Image payload parsing is harmless for text-only encrypted messages; it
+  // only returns data for the dedicated encrypted image prefix.
   const imagePayload = messageKindIsPlainText(rawKind)
     ? null
     : decryptChatImagePayload(rawText);
@@ -4906,7 +4902,7 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
 
     try {
       await ensureDirectConversation(contact.id);
-    } catch (error) {
+    } catch {
       // Calls don't depend on chats existing; ignore errors.
     } finally {
       setStartingCallId(null);
@@ -5364,8 +5360,7 @@ const PatientChatScreen = () => {
     if (!message.trim() || !selectedContact?.id) return;
     const text = message.trim();
     // Step 9: route through the assistant endpoint when chatting with the
-    // Health Assistant conversation, so the message is stored as plain text
-    // and the AI reply is appended immediately.
+    // Health Assistant conversation, so the AI reply is appended immediately.
     if (isAssistantConversation(selectedContact)) {
       if (assistantThinking) return;
       setMessage("");
@@ -5423,7 +5418,7 @@ const PatientChatScreen = () => {
       } else {
         setDirectoryError("Unable to start chat");
       }
-    } catch (error) {
+    } catch {
       setDirectoryError(error?.message || "Unable to start chat");
     } finally {
       setStartingChatId(null);
@@ -21638,7 +21633,9 @@ export default function App() {
       .filter(Boolean);
     const roles = requestedRoles.length
       ? uniqueIds(requestedRoles)
-      : ["doctor", "pharmacy", "patient"];
+      : userRole === "patient"
+        ? ["doctor", "pharmacy"]
+        : ["doctor", "pharmacy", "patient"];
 
     const recordsByRole = await Promise.all(
       roles.map((role) => fetchUsersByRole(role)),
@@ -21649,6 +21646,34 @@ export default function App() {
       seen.add(user.id);
       return true;
     });
+  };
+
+  const createEncryptedMessage = async (payload, plainText) => {
+    const encrypted = await encryptChatText(String(plainText || ""));
+    try {
+      return await pb.collection("messages").create({
+        ...payload,
+        text: encrypted,
+      });
+    } catch {
+      return await pb.collection("messages").create({
+        ...payload,
+        message: encrypted,
+      });
+    }
+  };
+
+  const isPatientToPatientDirectConversation = (conversation) => {
+    if (!conversation || conversation.kind === ASSISTANT_CONVERSATION_KIND) {
+      return false;
+    }
+    const linkedWoundId = conversation.linkedWoundId || conversation.linkedWound;
+    if (linkedWoundId) return false;
+    const members = safeArray(conversation.memberUsers || conversation.expand?.members);
+    const patientCount = members.filter(
+      (member) => normalizeUserRole(member?.role) === "patient",
+    ).length;
+    return patientCount >= 2;
   };
 
   const loadMessagePreviewMap = async (conversationIds) => {
@@ -21895,6 +21920,12 @@ export default function App() {
       const allConversations = memberConversations.map((record) =>
         mapConversationRecord(record, activeUser.id, previewMap),
       );
+      const visibleConversations =
+        activeRole === "patient"
+          ? allConversations.filter(
+              (conversation) => !isPatientToPatientDirectConversation(conversation),
+            )
+          : allConversations;
 
       const doctorMatchesAppointment = (record) => {
         const expandedDoctorUserId =
@@ -21944,7 +21975,7 @@ export default function App() {
         setAppointments([]);
       }
 
-      setConversations(allConversations);
+      setConversations(visibleConversations);
     } catch (error) {
       console.log("refreshAllData error:", error);
       setDataError(error?.message || "Unable to load app data");
@@ -22020,11 +22051,13 @@ export default function App() {
       await pb
         .collection("wounds")
         .update(woundId, { conversation: conversationId });
-      await pb.collection("messages").create({
-        conversation: conversationId,
-        kind: "system",
-        text: DEFAULT_WOUND_SYSTEM_MESSAGE,
-      });
+      await createEncryptedMessage(
+        {
+          conversation: conversationId,
+          kind: "system",
+        },
+        DEFAULT_WOUND_SYSTEM_MESSAGE,
+      );
       await pb.collection("conversations").update(conversationId, {
         lastMessageAt: new Date().toISOString(),
       });
@@ -22047,6 +22080,22 @@ export default function App() {
     }
     if (targetId === currentUser.id) {
       throw new Error("Cannot start a chat with yourself");
+    }
+
+    let targetRole = normalizeUserRole(targetUser?.role || targetUser?.raw?.role);
+    if (!targetRole && userRole === "patient") {
+      try {
+        const targetRecord = await pb
+          .collection("UsersAuth")
+          .getOne(targetId, { requestKey: null });
+        targetRole = normalizeUserRole(targetRecord?.role);
+      } catch (error) {
+        console.log("ensureDirectConversation role check error:", error?.message);
+        throw new Error("Unable to verify this chat participant.");
+      }
+    }
+    if (userRole === "patient" && targetRole === "patient") {
+      throw new Error("Patients cannot start direct chats with other patients.");
     }
 
     const existingConversation = conversations.find((conversation) => {
@@ -22121,6 +22170,17 @@ export default function App() {
 
   const sendConversationMessage = async (conversationId, text) => {
     if (!currentUser?.id || !text?.trim()) return null;
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (
+      userRole === "patient" &&
+      isPatientToPatientDirectConversation(conversation)
+    ) {
+      Alert.alert(
+        "Chat unavailable",
+        "Patients cannot send direct messages to other patients.",
+      );
+      return null;
+    }
     const trimmed = text.trim();
     let createdMessage = null;
     try {
@@ -22400,11 +22460,13 @@ export default function App() {
         const reasonSuffix = trimmedReason
           ? `\nReason: ${trimmedReason}`
           : "";
-        await pb.collection("messages").create({
-          conversation: conversationId,
-          kind: "system",
-          text: `Appointment request: ${whenLabel}.${reasonSuffix}`,
-        });
+        await createEncryptedMessage(
+          {
+            conversation: conversationId,
+            kind: "system",
+          },
+          `Appointment request: ${whenLabel}.${reasonSuffix}`,
+        );
         await pb.collection("conversations").update(conversationId, {
           lastMessageAt: new Date().toISOString(),
         });
@@ -22480,11 +22542,13 @@ export default function App() {
                 ? `Consultation fee paid. Appointment is confirmed.`
                 : `Appointment status updated: ${humanizeAppointmentStatus(normalized)}.`;
       try {
-        await pb.collection("messages").create({
-          conversation: conversationId,
-          kind: "system",
-          text: systemText,
-        });
+        await createEncryptedMessage(
+          {
+            conversation: conversationId,
+            kind: "system",
+          },
+          systemText,
+        );
         await pb.collection("conversations").update(conversationId, {
           lastMessageAt: new Date().toISOString(),
         });
@@ -22577,11 +22641,13 @@ export default function App() {
     await pb.collection("wounds").update(woundRecord.id, {
       conversation: conversation.id,
     });
-    await pb.collection("messages").create({
-      conversation: conversation.id,
-      kind: "system",
-      text: DEFAULT_WOUND_SYSTEM_MESSAGE,
-    });
+    await createEncryptedMessage(
+      {
+        conversation: conversation.id,
+        kind: "system",
+      },
+      DEFAULT_WOUND_SYSTEM_MESSAGE,
+    );
     void refreshAllData().catch((err) =>
       console.log("refreshAllData after wound create:", err?.message || err),
     );
@@ -22820,11 +22886,13 @@ export default function App() {
     const pharmacyNote =
       pharmacyUsers.length > 0 ? " Pharmacy order created." : "";
 
-    await pb.collection("messages").create({
-      conversation: conversation.id,
-      kind: "system",
-      text: `Prescription sent for "${disease}": ${medicationSummary}.${pharmacyNote}`,
-    });
+    await createEncryptedMessage(
+      {
+        conversation: conversation.id,
+        kind: "system",
+      },
+      `Prescription sent for "${disease}": ${medicationSummary}.${pharmacyNote}`,
+    );
     await pb.collection("conversations").update(conversation.id, {
       lastMessageAt: new Date().toISOString(),
     });
@@ -22842,11 +22910,13 @@ export default function App() {
     const conversationId =
       orderLike?.conversation || orderLike?.raw?.conversation;
     if (conversationId) {
-      await pb.collection("messages").create({
-        conversation: conversationId,
-        kind: "system",
-        text: `Pharmacy updated order status to ${humanizeOrderStatus(nextStatus)}.`,
-      });
+      await createEncryptedMessage(
+        {
+          conversation: conversationId,
+          kind: "system",
+        },
+        `Pharmacy updated order status to ${humanizeOrderStatus(nextStatus)}.`,
+      );
       await pb.collection("conversations").update(conversationId, {
         lastMessageAt: new Date().toISOString(),
       });
@@ -22940,11 +23010,13 @@ export default function App() {
       `Medicine order placed:\n${summary}` +
       (trimmedNote ? `\nNote: ${trimmedNote}` : "");
     try {
-      await pb.collection("messages").create({
-        conversation: conversation.id,
-        kind: "system",
-        text: systemText,
-      });
+      await createEncryptedMessage(
+        {
+          conversation: conversation.id,
+          kind: "system",
+        },
+        systemText,
+      );
       await pb.collection("conversations").update(conversation.id, {
         lastMessageAt: new Date().toISOString(),
       });
@@ -23074,14 +23146,15 @@ export default function App() {
         lastMessageAt: new Date().toISOString(),
       };
       const created = await pb.collection("conversations").create(payload);
-      // Seed with a welcome message (plain text).
+      // Seed with a welcome message.
       try {
-        await pb.collection("messages").create({
-          conversation: created.id,
-          kind: ASSISTANT_REPLY_MESSAGE_KIND,
-          text:
-            "Hi! I'm your Nvoisys Health Assistant. Ask me about symptoms, medicines, or your prescriptions at any time.",
-        });
+        await createEncryptedMessage(
+          {
+            conversation: created.id,
+            kind: ASSISTANT_REPLY_MESSAGE_KIND,
+          },
+          "Hi! I'm your Nvoisys Health Assistant. Ask me about symptoms, medicines, or your prescriptions at any time.",
+        );
       } catch (seedError) {
         console.log("assistant seed message skipped:", seedError?.message);
       }
@@ -23099,15 +23172,17 @@ export default function App() {
     if (!conversationId || !currentUser?.id) return null;
     const trimmed = String(text || "").trim();
     if (!trimmed) return null;
-    // 1. Post the user's question as a plain-text assistant_user message.
+    // 1. Post the user's question as an encrypted assistant_user message.
     let userRecord = null;
     try {
-      userRecord = await pb.collection("messages").create({
-        conversation: conversationId,
-        sender: currentUser.id,
-        kind: ASSISTANT_USER_MESSAGE_KIND,
-        text: trimmed,
-      });
+      userRecord = await createEncryptedMessage(
+        {
+          conversation: conversationId,
+          sender: currentUser.id,
+          kind: ASSISTANT_USER_MESSAGE_KIND,
+        },
+        trimmed,
+      );
     } catch (error) {
       console.log("sendAssistantMessage user write error:", error?.message);
       return null;
@@ -23126,14 +23201,16 @@ export default function App() {
         ? aiResult.reply
         : null) || aiChatStubReply(trimmed, { prescriptionsContext });
 
-    // 3. Persist the AI reply as a plain-text assistant_reply message.
+    // 3. Persist the AI reply as an encrypted assistant_reply message.
     let replyRecord = null;
     try {
-      replyRecord = await pb.collection("messages").create({
-        conversation: conversationId,
-        kind: ASSISTANT_REPLY_MESSAGE_KIND,
-        text: replyText,
-      });
+      replyRecord = await createEncryptedMessage(
+        {
+          conversation: conversationId,
+          kind: ASSISTANT_REPLY_MESSAGE_KIND,
+        },
+        replyText,
+      );
       await pb.collection("conversations").update(conversationId, {
         lastMessageAt: new Date().toISOString(),
       });
@@ -23249,11 +23326,13 @@ export default function App() {
 
           const body = formatAssistantPrescriptionInsightMessage(rx, warnings);
           try {
-            await pb.collection("messages").create({
-              conversation: conversationId,
-              kind: ASSISTANT_REPLY_MESSAGE_KIND,
-              text: body,
-            });
+            await createEncryptedMessage(
+              {
+                conversation: conversationId,
+                kind: ASSISTANT_REPLY_MESSAGE_KIND,
+              },
+              body,
+            );
             await pb.collection("conversations").update(conversationId, {
               lastMessageAt: new Date().toISOString(),
             });
