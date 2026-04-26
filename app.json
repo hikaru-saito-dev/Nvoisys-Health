@@ -77,6 +77,9 @@
       "paymentMode": "stub",
       "stripePublishableKey": "",
       "razorpayKeyId": "",
+      "paymentMode": "razorpay",
+      "paymentBackendUrl": "https://api.nvoisyshealth.com",
+      "razorpayReturnUrl": "myapp://payment/razorpay",
       "aiBaseUrl": "",
       "aiApiKey": "",
       "eas": {
