@@ -102,6 +102,20 @@ function buildEmailVerificationRequiredError(email = "") {
   );
 }
 
+function ensureSelectedRoleMatchesUser(user, selectedRole) {
+  if (!selectedRole) return;
+
+  const normalizedSelectedRole = normalizeRole(selectedRole);
+  const actualRole = normalizeRole(user?.role);
+
+  if (actualRole !== normalizedSelectedRole) {
+    pb.authStore.clear();
+    throw new Error(
+      `This account is registered as a ${actualRole}. Please choose ${actualRole} to log in.`,
+    );
+  }
+}
+
 function ensureVerifiedAuthUser(email = "") {
   const user = getAuthUser();
 
@@ -511,7 +525,7 @@ export async function signUpWithEmail({
   };
 }
 
-export async function loginWithEmail({ email, password }) {
+export async function loginWithEmail({ email, password, selectedRole }) {
   const normalizedEmail = (email || "").trim().toLowerCase();
 
   const authData = await pb
@@ -523,6 +537,8 @@ export async function loginWithEmail({ email, password }) {
   }
 
   const user = getAuthUser() || authData?.record || null;
+
+  ensureSelectedRoleMatchesUser(user, selectedRole);
 
   if (user && !isEmailVerified(user)) {
     pb.authStore.clear();
@@ -680,6 +696,8 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
     console.log("OAuth authData:", JSON.stringify(authData, null, 2));
 
     const user = getAuthUser() || authData?.record || null;
+
+    ensureSelectedRoleMatchesUser(user, selectedRole);
 
     if (user && !isEmailVerified(user)) {
       pb.authStore.clear();

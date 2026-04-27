@@ -10628,6 +10628,7 @@ const AuthScreen = ({ onLogin }) => {
       const result = await loginWithEmail({
         email: email.trim(),
         password: password.trim(),
+        selectedRole: role,
       });
 
       onLogin({
