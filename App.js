@@ -3302,7 +3302,7 @@ const PatientHomeScreen = () => {
                 style={{
                   flexDirection: "row",
                   flexWrap: "wrap",
-                  justifyContent: "flex-start",
+                  justifyContent: "space-around",
                 }}
               >
                 <AnimatedTouchable
@@ -3545,37 +3545,37 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
-                  flexWrap: "wrap",
                   justifyContent: "space-between",
                   marginBottom: RFValue(12),
+                  gap: RFValue(10),
                 }}
               >
                 <AnimatedTouchable
                   onPress={() => setStartCallType("video")}
-                  scaleDown={0.94}
+                  scaleDown={0.96}
                   style={{
-                    width: "48%",
+                    flex: 1,
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
-                    padding: RFValue(16),
-                    marginBottom: RFValue(8),
+                    padding: RFValue(14),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
+                    flexDirection: "row",
                     alignItems: "center",
                   }}
                 >
                   <View
                     style={{
-                      paddingHorizontal: RFValue(10),
-                      height: RFValue(36),
+                      width: RFValue(44),
+                      height: RFValue(44),
                       borderRadius: RFValue(14),
-                      backgroundColor: theme.bg,
+                      backgroundColor: theme.accentLight || theme.bg,
                       justifyContent: "center",
                       alignItems: "center",
-                      marginBottom: RFValue(8),
+                      marginRight: RFValue(12),
                     }}
                   >
                     <Ionicons
@@ -3584,51 +3584,58 @@ const PatientHomeScreen = () => {
                       color={theme.accent}
                     />
                   </View>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      fontWeight: "700",
-                      color: theme.textPrimary,
-                    }}
-                  >
-                    Video Call
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: RFValue(10),
-                      color: theme.textSecondary,
-                      marginTop: RFValue(2),
-                    }}
-                  >
-                    Consult a doctor
-                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        fontSize: RFValue(14),
+                        fontWeight: "700",
+                        color: theme.textPrimary,
+                      }}
+                    >
+                      Video Call
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textSecondary,
+                        marginTop: RFValue(2),
+                      }}
+                    >
+                      Consult a doctor
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={RFValue(16)}
+                    color={theme.textTertiary}
+                  />
                 </AnimatedTouchable>
                 <AnimatedTouchable
                   onPress={() => setStartCallType("audio")}
-                  scaleDown={0.94}
+                  scaleDown={0.96}
                   style={{
-                    width: "48%",
+                    flex: 1,
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
-                    padding: RFValue(16),
-                    marginBottom: RFValue(8),
+                    padding: RFValue(14),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
+                    flexDirection: "row",
                     alignItems: "center",
                   }}
                 >
                   <View
                     style={{
-                      paddingHorizontal: RFValue(10),
-                      height: RFValue(36),
+                      width: RFValue(44),
+                      height: RFValue(44),
                       borderRadius: RFValue(14),
                       backgroundColor: theme.warningLight,
                       justifyContent: "center",
                       alignItems: "center",
-                      marginBottom: RFValue(8),
+                      marginRight: RFValue(12),
                     }}
                   >
                     <Ionicons
@@ -3637,24 +3644,31 @@ const PatientHomeScreen = () => {
                       color={theme.warning}
                     />
                   </View>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      fontWeight: "700",
-                      color: theme.textPrimary,
-                    }}
-                  >
-                    Audio Call
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: RFValue(10),
-                      color: theme.textSecondary,
-                      marginTop: RFValue(2),
-                    }}
-                  >
-                    Talk to a doctor
-                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        fontSize: RFValue(14),
+                        fontWeight: "700",
+                        color: theme.textPrimary,
+                      }}
+                    >
+                      Audio Call
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textSecondary,
+                        marginTop: RFValue(2),
+                      }}
+                    >
+                      Talk to a doctor
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={RFValue(16)}
+                    color={theme.textTertiary}
+                  />
                 </AnimatedTouchable>
               </View>
               <TouchableOpacity
