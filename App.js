@@ -7995,10 +7995,9 @@ const SplashScreen = ({ onNext }) => {
       style={{
         flex: 1,
         backgroundColor: "#FFFFFF",
-        paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0,
       }}
     >
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* Background decorative circles */}
       <View
@@ -8255,14 +8254,8 @@ const LanguageScreen = ({ onNext, onBack }) => {
   };
 
   return (
-    <SafeAreaView
-      style={{
-        flex: 1,
-        backgroundColor: "#FAFBFF",
-        paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0,
-      }}
-    >
-      <StatusBar barStyle="dark-content" backgroundColor="#FAFBFF" translucent={false} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#FAFBFF" }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FAFBFF" />
       <View style={{ flex: 1, minHeight: 0 }}>
         <ScrollView
           style={{ flex: 1, minHeight: 0 }}
@@ -8288,7 +8281,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
             <View
               style={{
                 padding: RFValue(24),
-                paddingTop: RFValue(16),
+                paddingTop: safeHeaderPaddingTop(),
               }}
             >
               <View
@@ -8501,14 +8494,8 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
   const current = slides[slide];
 
   return (
-    <SafeAreaView
-      style={{
-        flex: 1,
-        backgroundColor: "#FFFFFF",
-        paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0,
-      }}
-    >
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* Top buttons — fixed height row */}
       <View
@@ -8516,7 +8503,7 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
           flexDirection: "row",
           justifyContent: "space-between",
           paddingHorizontal: RFValue(24),
-          paddingTop: RFValue(12),
+          paddingTop: Math.max(insets.top, safeHeaderPaddingTop(8)),
           paddingBottom: RFValue(12),
         }}
       >
@@ -8564,7 +8551,6 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
         style={{ flex: 1, minHeight: 0 }}
         contentContainerStyle={{
           flexGrow: 1,
-          justifyContent: "center",
           paddingHorizontal: RFValue(24),
           paddingBottom: RFValue(16),
         }}
@@ -8763,14 +8749,8 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
   const insets = useSafeAreaInsets();
 
   return (
-    <SafeAreaView
-      style={{
-        flex: 1,
-        backgroundColor: "#FAFBFF",
-        paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0,
-      }}
-    >
-      <StatusBar barStyle="dark-content" backgroundColor="#FAFBFF" translucent={false} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#FAFBFF" }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FAFBFF" />
       <View style={{ flex: 1, minHeight: 0 }}>
         <ScrollView
           style={{ flex: 1, minHeight: 0 }}
@@ -8782,7 +8762,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
             style={{
               backgroundColor: "#FFFFFF",
               padding: RFValue(24),
-              paddingTop: RFValue(16),
+              paddingTop: safeHeaderPaddingTop(),
               borderBottomLeftRadius: RFValue(32),
               borderBottomRightRadius: RFValue(32),
               shadowColor: "#000",
@@ -8796,7 +8776,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
               <View
                 style={{
                   position: "absolute",
-                  top: RFValue(16),
+                  top: safeHeaderPaddingTop(),
                   left: RFValue(24),
                   zIndex: 1,
                 }}
@@ -8820,7 +8800,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
                 </TouchableOpacity>
               </View>
             )}
-            <View style={{ alignItems: "center", marginTop: onBack ? RFValue(36) : 0 }}>
+            <View style={{ alignItems: "center" }}>
               <View
                 style={{
                   width: RFValue(64),
@@ -10773,18 +10753,12 @@ const AuthScreen = ({ onLogin }) => {
 
   if (step === "FORGOT") {
     return (
-      <SafeAreaView
-        style={{
-          flex: 1,
-          backgroundColor: "#F8FAFC",
-          paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0,
-        }}
-      >
+      <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
         <ScrollView
           contentContainerStyle={{
             flexGrow: 1,
             padding: RFValue(24),
-            paddingTop: RFValue(24),
+            paddingTop: Math.max(authInsets.top, RFValue(24)),
             paddingBottom: Math.max(authInsets.bottom, RFValue(24)),
             justifyContent: "center",
           }}
@@ -10905,19 +10879,13 @@ const AuthScreen = ({ onLogin }) => {
 
   if (step === "REG") {
     return (
-      <SafeAreaView
-        style={{
-          flex: 1,
-          backgroundColor: "#F8FAFC",
-          paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0,
-        }}
-      >
+      <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
         <ScrollView
           style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={{
             flexGrow: 1,
             padding: RFValue(24),
-            paddingTop: RFValue(24),
+            paddingTop: Math.max(authInsets.top, RFValue(24)),
             paddingBottom: Math.max(authInsets.bottom, RFValue(24)),
             justifyContent: "center",
           }}
@@ -22271,18 +22239,7 @@ export default function App() {
   ]);
 
   const theme = THEMES[themeKey];
-  const changeTheme = (key) => {
-    setThemeKey(key);
-    AsyncStorage.setItem("@nvoisys_theme", key).catch(() => {});
-  };
-
-  useEffect(() => {
-    AsyncStorage.getItem("@nvoisys_theme")
-      .then((saved) => {
-        if (saved && THEMES[saved]) setThemeKey(saved);
-      })
-      .catch(() => {});
-  }, []);
+  const changeTheme = (key) => setThemeKey(key);
 
   useEffect(() => {
     if (!userRole) {
