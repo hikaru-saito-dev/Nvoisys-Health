@@ -2511,44 +2511,34 @@ const FadeInView = ({ children, style, delay = 0 }) => {
   );
 };
 
-const AnimatedTouchable = ({ children, style, onPress, scaleDown = 0.96, ...props }) => {
+const AnimatedTouchable = ({ children, style, onPress, ...props }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const opacityAnim = useRef(new Animated.Value(1)).current;
+  const pressSpring = {
+    useNativeDriver: true,
+    friction: 7,
+    tension: 220,
+    restDisplacementThreshold: 0.01,
+    restSpeedThreshold: 0.01,
+  };
 
   const handlePressIn = () => {
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: scaleDown,
-        friction: 8,
-        tension: 200,
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: 0.85,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    Animated.spring(scaleAnim, {
+      ...pressSpring,
+      toValue: 0.97,
+    }).start();
   };
 
   const handlePressOut = () => {
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        friction: 5,
-        tension: 120,
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    Animated.spring(scaleAnim, {
+      ...pressSpring,
+      toValue: 1,
+      friction: 8,
+      tension: 180,
+    }).start();
   };
 
   return (
-    <Animated.View style={{ transform: [{ scale: scaleAnim }], opacity: opacityAnim }}>
+    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
       <TouchableOpacity
         activeOpacity={1}
         onPressIn={handlePressIn}
@@ -3302,13 +3292,12 @@ const PatientHomeScreen = () => {
                 style={{
                   flexDirection: "row",
                   flexWrap: "wrap",
-                  justifyContent: "space-around",
+                  justifyContent: "flex-start",
                 }}
               >
-                <AnimatedTouchable
+                <TouchableOpacity
                   onPress={() => setShowFindDoctor(true)}
-                  scaleDown={0.9}
-                  style={{ alignItems: "center", width: "25%", paddingVertical: RFValue(6) }}
+                  style={{ alignItems: "center", width: "25%" }}
                 >
                   <View
                     style={{
@@ -3337,11 +3326,10 @@ const PatientHomeScreen = () => {
                   >
                     Symptoms
                   </Text>
-                </AnimatedTouchable>
-                <AnimatedTouchable
+                </TouchableOpacity>
+                <TouchableOpacity
                   onPress={() => setShowPharmacy(true)}
-                  scaleDown={0.9}
-                  style={{ alignItems: "center", width: "25%", paddingVertical: RFValue(6) }}
+                  style={{ alignItems: "center", width: "25%" }}
                 >
                   <View
                     style={{
@@ -3370,11 +3358,10 @@ const PatientHomeScreen = () => {
                   >
                     Medicines
                   </Text>
-                </AnimatedTouchable>
-                <AnimatedTouchable
+                </TouchableOpacity>
+                <TouchableOpacity
                   onPress={() => setShowFindDoctor(true)}
-                  scaleDown={0.9}
-                  style={{ alignItems: "center", width: "25%", paddingVertical: RFValue(6) }}
+                  style={{ alignItems: "center", width: "25%" }}
                 >
                   <View
                     style={{
@@ -3403,11 +3390,10 @@ const PatientHomeScreen = () => {
                   >
                     Book Appt
                   </Text>
-                </AnimatedTouchable>
-                <AnimatedTouchable
+                </TouchableOpacity>
+                <TouchableOpacity
                   onPress={() => setShowHospital(true)}
-                  scaleDown={0.9}
-                  style={{ alignItems: "center", width: "25%", paddingVertical: RFValue(6) }}
+                  style={{ alignItems: "center", width: "25%" }}
                 >
                   <View
                     style={{
@@ -3436,14 +3422,14 @@ const PatientHomeScreen = () => {
                   >
                     Hospital
                   </Text>
-                </AnimatedTouchable>
+                </TouchableOpacity>
               </View>
             </View>
 
             {upcomingAppointments.length > 0 ? (
-              <AnimatedTouchable
+              <TouchableOpacity
                 onPress={() => setShowAppointments(true)}
-                scaleDown={0.97}
+                activeOpacity={0.9}
                 style={{
                   backgroundColor: theme.card,
                   borderRadius: RFValue(16),
@@ -3518,7 +3504,7 @@ const PatientHomeScreen = () => {
                   size={RFValue(18)}
                   color={theme.textTertiary}
                 />
-              </AnimatedTouchable>
+              </TouchableOpacity>
             ) : null}
 
             {/* Telemedicine */}
@@ -3545,37 +3531,36 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
+                  flexWrap: "wrap",
                   justifyContent: "space-between",
                   marginBottom: RFValue(12),
-                  gap: RFValue(10),
                 }}
               >
-                <AnimatedTouchable
+                <TouchableOpacity
                   onPress={() => setStartCallType("video")}
-                  scaleDown={0.96}
                   style={{
-                    flex: 1,
+                    width: "48%",
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
-                    padding: RFValue(14),
+                    padding: RFValue(16),
+                    marginBottom: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
-                    flexDirection: "row",
                     alignItems: "center",
                   }}
                 >
                   <View
                     style={{
-                      width: RFValue(44),
-                      height: RFValue(44),
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
                       borderRadius: RFValue(14),
-                      backgroundColor: theme.accentLight || theme.bg,
+                      backgroundColor: theme.bg,
                       justifyContent: "center",
                       alignItems: "center",
-                      marginRight: RFValue(12),
+                      marginBottom: RFValue(8),
                     }}
                   >
                     <Ionicons
@@ -3584,58 +3569,50 @@ const PatientHomeScreen = () => {
                       color={theme.accent}
                     />
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={{
-                        fontSize: RFValue(14),
-                        fontWeight: "700",
-                        color: theme.textPrimary,
-                      }}
-                    >
-                      Video Call
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: RFValue(11),
-                        color: theme.textSecondary,
-                        marginTop: RFValue(2),
-                      }}
-                    >
-                      Consult a doctor
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={RFValue(16)}
-                    color={theme.textTertiary}
-                  />
-                </AnimatedTouchable>
-                <AnimatedTouchable
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    Video Call
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(2),
+                    }}
+                  >
+                    Consult a doctor
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   onPress={() => setStartCallType("audio")}
-                  scaleDown={0.96}
                   style={{
-                    flex: 1,
+                    width: "48%",
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
-                    padding: RFValue(14),
+                    padding: RFValue(16),
+                    marginBottom: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
-                    flexDirection: "row",
                     alignItems: "center",
                   }}
                 >
                   <View
                     style={{
-                      width: RFValue(44),
-                      height: RFValue(44),
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
                       borderRadius: RFValue(14),
                       backgroundColor: theme.warningLight,
                       justifyContent: "center",
                       alignItems: "center",
-                      marginRight: RFValue(12),
+                      marginBottom: RFValue(8),
                     }}
                   >
                     <Ionicons
@@ -3644,32 +3621,25 @@ const PatientHomeScreen = () => {
                       color={theme.warning}
                     />
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={{
-                        fontSize: RFValue(14),
-                        fontWeight: "700",
-                        color: theme.textPrimary,
-                      }}
-                    >
-                      Audio Call
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: RFValue(11),
-                        color: theme.textSecondary,
-                        marginTop: RFValue(2),
-                      }}
-                    >
-                      Talk to a doctor
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={RFValue(16)}
-                    color={theme.textTertiary}
-                  />
-                </AnimatedTouchable>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      fontWeight: "700",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    Audio Call
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(2),
+                    }}
+                  >
+                    Talk to a doctor
+                  </Text>
+                </TouchableOpacity>
               </View>
               <TouchableOpacity
                 onPress={() => setShowFindDoctor(true)}
@@ -8425,7 +8395,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
           </View>
 
           <View style={{ padding: RFValue(24), paddingBottom: RFValue(8) }}>
-            <AnimatedTouchable
+            <TouchableOpacity
               style={{
                 backgroundColor: "#4338CA",
                 borderRadius: RFValue(16),
@@ -8448,7 +8418,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
               >
                 Continue
               </Text>
-            </AnimatedTouchable>
+            </TouchableOpacity>
             <Text
               style={{
                 textAlign: "center",
@@ -8469,42 +8439,6 @@ const LanguageScreen = ({ onNext, onBack }) => {
 const OnboardingCarousel = ({ onNext, onBack }) => {
   const [slide, setSlide] = useState(0);
   const insets = useSafeAreaInsets();
-  const slideAnim = useRef(new Animated.Value(0)).current;
-  const slideOpacity = useRef(new Animated.Value(1)).current;
-
-  const animateToSlide = (nextSlide, direction = 1) => {
-    Animated.parallel([
-      Animated.timing(slideOpacity, {
-        toValue: 0,
-        duration: 150,
-        easing: EASE_OUT_CUBIC,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: direction * -30,
-        duration: 150,
-        easing: EASE_OUT_CUBIC,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      setSlide(nextSlide);
-      slideAnim.setValue(direction * 30);
-      Animated.parallel([
-        Animated.timing(slideOpacity, {
-          toValue: 1,
-          duration: 300,
-          easing: EASE_OUT_CUBIC,
-          useNativeDriver: true,
-        }),
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          easing: EASE_OUT_CUBIC,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    });
-  };
 
   const slides = [
     {
@@ -8553,13 +8487,8 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
   ];
 
   const handleNext = () => {
-    if (slide < slides.length - 1) animateToSlide(slide + 1, 1);
+    if (slide < slides.length - 1) setSlide(slide + 1);
     else onNext();
-  };
-
-  const handlePrev = () => {
-    if (slide > 0) animateToSlide(slide - 1, -1);
-    else if (onBack) onBack();
   };
 
   const current = slides[slide];
@@ -8580,7 +8509,7 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
       >
         {onBack ? (
           <TouchableOpacity
-            onPress={handlePrev}
+            onPress={onBack}
             style={{
               width: RFValue(36),
               height: RFValue(36),
@@ -8628,12 +8557,6 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Animated.View
-          style={{
-            opacity: slideOpacity,
-            transform: [{ translateX: slideAnim }],
-          }}
-        >
         <View style={{ alignItems: "center", marginBottom: RFValue(24) }}>
           <View
             style={{
@@ -8738,7 +8661,6 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
             </View>
           ))}
         </View>
-        </Animated.View>
       </ScrollView>
 
       {/* Footer pinned below scroll — never overlaps list */}
@@ -8760,24 +8682,21 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
             marginBottom: RFValue(12),
           }}
         >
-          {slides.map((_, idx) => {
-            const isActive = idx === slide;
-            return (
-              <Animated.View
-                key={idx}
-                style={{
-                  width: isActive ? 28 : 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: isActive ? current.iconColor : "#E5E7EB",
-                  marginHorizontal: 4,
-                }}
-              />
-            );
-          })}
+          {slides.map((_, idx) => (
+            <View
+              key={idx}
+              style={{
+                width: idx === slide ? 28 : 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: idx === slide ? current.iconColor : "#E5E7EB",
+                marginHorizontal: 4,
+              }}
+            />
+          ))}
         </View>
 
-        <AnimatedTouchable
+        <TouchableOpacity
           style={{
             width: "100%",
             backgroundColor: current.iconColor,
@@ -8805,7 +8724,7 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
             {slide === slides.length - 1 ? "Get Started" : "Next"}
           </Text>
           <Ionicons name="chevron-forward" size={RFValue(20)} color="#FFF" />
-        </AnimatedTouchable>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -9269,7 +9188,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
           borderTopColor: "#F3F4F6",
         }}
       >
-        <AnimatedTouchable
+        <TouchableOpacity
           style={{
             backgroundColor:
               selectedRole === "patient"
@@ -9303,7 +9222,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
           >
             Continue
           </Text>
-        </AnimatedTouchable>
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => onGoToLogin?.(selectedRole)}
           activeOpacity={0.7}
@@ -19151,91 +19070,6 @@ const DoctorRootPlaceholder = () => {
   );
 };
 
-// --- ANIMATED TAB BUTTON ---
-const AnimatedTabButton = ({ onPress, isFocused, icon, label, activeColor, muted, tabLabelSize }) => {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  const dotWidth = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
-
-  useEffect(() => {
-    Animated.timing(dotWidth, {
-      toValue: isFocused ? 1 : 0,
-      duration: 250,
-      easing: EASE_OUT_CUBIC,
-      useNativeDriver: false,
-    }).start();
-  }, [isFocused, dotWidth]);
-
-  const handlePressIn = () => {
-    Animated.spring(scaleAnim, {
-      toValue: 0.88,
-      friction: 8,
-      tension: 150,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const handlePressOut = () => {
-    Animated.spring(scaleAnim, {
-      toValue: 1,
-      friction: 5,
-      tension: 100,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const animatedDotWidth = dotWidth.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, RFValue(16)],
-  });
-
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
-      activeOpacity={1}
-      style={{
-        flex: 1,
-        minWidth: 0,
-        alignItems: "center",
-        justifyContent: "center",
-        paddingVertical: RFValue(3),
-        minHeight: RFValue(48),
-      }}
-    >
-      <Animated.View style={{ transform: [{ scale: scaleAnim }], alignItems: "center" }}>
-        {icon}
-        <Text
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          adjustsFontSizeToFit
-          minimumFontScale={0.85}
-          style={{
-            fontSize: tabLabelSize,
-            fontWeight: isFocused ? "700" : "500",
-            color: isFocused ? activeColor : muted,
-            marginTop: 3,
-            maxWidth: "100%",
-            paddingHorizontal: 2,
-            textAlign: "center",
-          }}
-        >
-          {label}
-        </Text>
-        <Animated.View
-          style={{
-            width: animatedDotWidth,
-            height: 3,
-            borderRadius: 1.5,
-            backgroundColor: activeColor,
-            marginTop: 4,
-          }}
-        />
-      </Animated.View>
-    </TouchableOpacity>
-  );
-};
-
 // --- CUSTOM TAB BAR ---
 const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const insets = useSafeAreaInsets();
@@ -19253,16 +19087,16 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
       style={{
         flexDirection: "row",
         backgroundColor: theme.tabBarBg,
-        borderTopWidth: 0,
+        borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.tabBarBorder,
         paddingBottom: bottomPad,
         paddingTop: Math.min(RFValue(9), 11),
-        minHeight: Math.round(RFValue(62) + bottomPad),
+        minHeight: Math.round(RFValue(58) + bottomPad),
         shadowColor: theme.shadowColor,
-        shadowOpacity: 0.1,
-        shadowOffset: { width: 0, height: -4 },
-        shadowRadius: 16,
-        elevation: 12,
+        shadowOpacity: 0.06,
+        shadowOffset: { width: 0, height: -3 },
+        shadowRadius: 12,
+        elevation: 8,
       }}
     >
       {state.routes.map((route, index) => {
@@ -19288,16 +19122,37 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
         };
 
         return (
-          <AnimatedTabButton
+          <TouchableOpacity
             key={route.key}
             onPress={onPress}
-            isFocused={isFocused}
-            icon={icon}
-            label={label}
-            activeColor={activeColor}
-            muted={muted}
-            tabLabelSize={tabLabelSize}
-          />
+            style={{
+              flex: 1,
+              minWidth: 0,
+              alignItems: "center",
+              justifyContent: "center",
+              paddingVertical: RFValue(3),
+              minHeight: RFValue(48),
+            }}
+          >
+            {icon}
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
+              style={{
+                fontSize: tabLabelSize,
+                fontWeight: isFocused ? "700" : "500",
+                color: isFocused ? activeColor : muted,
+                marginTop: 3,
+                maxWidth: "100%",
+                paddingHorizontal: 2,
+                textAlign: "center",
+              }}
+            >
+              {label}
+            </Text>
+          </TouchableOpacity>
         );
       })}
     </View>
@@ -19305,112 +19160,13 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
 };
 
 // --- CUSTOM TAB NAVIGATOR ---
-const TabLogoSplash = ({ visible, onDone }) => {
-  const { theme } = useTheme();
-  const opacity = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.85)).current;
-
-  useEffect(() => {
-    if (visible) {
-      opacity.setValue(0);
-      scale.setValue(0.85);
-      Animated.parallel([
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 200,
-          easing: EASE_OUT_CUBIC,
-          useNativeDriver: true,
-        }),
-        Animated.spring(scale, {
-          toValue: 1,
-          friction: 8,
-          tension: 80,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        const timer = setTimeout(() => {
-          Animated.timing(opacity, {
-            toValue: 0,
-            duration: 200,
-            easing: EASE_OUT_CUBIC,
-            useNativeDriver: true,
-          }).start(() => onDone());
-        }, 350);
-        return () => clearTimeout(timer);
-      });
-    }
-  }, [visible, opacity, scale, onDone]);
-
-  if (!visible) return null;
-
-  return (
-    <Animated.View
-      style={{
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: theme.bg,
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: 10,
-        opacity,
-      }}
-    >
-      <Animated.Image
-        source={{ uri: NVOISYS_LOGO }}
-        style={{
-          width: RFValue(72),
-          height: RFValue(72),
-          resizeMode: "contain",
-          transform: [{ scale }],
-        }}
-      />
-    </Animated.View>
-  );
-};
-
 const CustomTabNavigator = ({ routes, activeColor }) => {
   const [activeIndex, setActiveIndex] = useState(0);
-  const [showLogoSplash, setShowLogoSplash] = useState(false);
-  const [pendingIndex, setPendingIndex] = useState(null);
-  const screenOpacity = useRef(new Animated.Value(1)).current;
-  const screenSlide = useRef(new Animated.Value(0)).current;
-
-  const animateTabSwitch = useCallback(
-    (newIndex) => {
-      if (newIndex === activeIndex) return;
-      setShowLogoSplash(true);
-      setPendingIndex(newIndex);
-    },
-    [activeIndex],
-  );
-
-  const handleLogoSplashDone = useCallback(() => {
-    if (pendingIndex != null) {
-      screenOpacity.setValue(0);
-      screenSlide.setValue(8);
-      setActiveIndex(pendingIndex);
-      setPendingIndex(null);
-      setShowLogoSplash(false);
-      Animated.parallel([
-        Animated.timing(screenOpacity, {
-          toValue: 1,
-          duration: 300,
-          easing: EASE_OUT_CUBIC,
-          useNativeDriver: true,
-        }),
-        Animated.timing(screenSlide, {
-          toValue: 0,
-          duration: 300,
-          easing: EASE_OUT_CUBIC,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  }, [pendingIndex, screenOpacity, screenSlide]);
 
   useEffect(() => {
     const handleBack = () => {
       if (activeIndex !== 0) {
-        animateTabSwitch(0);
+        setActiveIndex(0);
         return true;
       }
       return false;
@@ -19420,23 +19176,20 @@ const CustomTabNavigator = ({ routes, activeColor }) => {
       handleBack,
     );
     return () => subscription.remove();
-  }, [activeIndex, animateTabSwitch]);
+  }, [activeIndex]);
 
   const state = {
     index: activeIndex,
     routes: routes.map((r, i) => ({ key: r.name, name: r.name })),
   };
 
-  const navigation = useMemo(
-    () => ({
-      navigate: (name) => {
-        const idx = routes.findIndex((r) => r.name === name);
-        if (idx !== -1) animateTabSwitch(idx);
-      },
-      emit: () => ({ defaultPrevented: false }),
-    }),
-    [routes, animateTabSwitch],
-  );
+  const navigation = {
+    navigate: (name) => {
+      const idx = routes.findIndex((r) => r.name === name);
+      if (idx !== -1) setActiveIndex(idx);
+    },
+    emit: () => ({ defaultPrevented: false }),
+  };
 
   const descriptors = {};
   routes.forEach((r) => {
@@ -19450,16 +19203,7 @@ const CustomTabNavigator = ({ routes, activeColor }) => {
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1, minHeight: 0 }}>
-        <Animated.View
-          style={{
-            flex: 1,
-            opacity: screenOpacity,
-            transform: [{ translateY: screenSlide }],
-          }}
-        >
-          <ActiveComponent navigation={navigation} />
-        </Animated.View>
-        <TabLogoSplash visible={showLogoSplash} onDone={handleLogoSplashDone} />
+        <ActiveComponent navigation={navigation} />
       </View>
       <CustomTabBar
         state={state}
