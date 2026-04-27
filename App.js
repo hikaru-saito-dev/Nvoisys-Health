@@ -3301,149 +3301,58 @@ const PatientHomeScreen = () => {
               <View
                 style={{
                   flexDirection: "row",
-                  flexWrap: "wrap",
-                  justifyContent: "space-around",
+                  justifyContent: "space-evenly",
                 }}
               >
-                <AnimatedTouchable
-                  onPress={() => setShowFindDoctor(true)}
-                  scaleDown={0.9}
-                  style={{ alignItems: "center", width: "25%", paddingVertical: RFValue(6) }}
-                >
-                  <View
+                {[
+                  { label: "Symptoms", icon: "pulse", bg: theme.bg, color: theme.accent, action: () => setShowFindDoctor(true) },
+                  { label: "Medicines", icon: "cart", bg: theme.successLight, color: theme.success, action: () => setShowPharmacy(true) },
+                  { label: "Book Appt", icon: "calendar", bg: theme.bg, color: theme.accent, action: () => setShowFindDoctor(true) },
+                  { label: "Hospital", icon: "location", bg: theme.dangerLight, color: theme.danger, action: () => setShowHospital(true) },
+                ].map((item, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    onPress={item.action}
+                    activeOpacity={0.7}
                     style={{
-                      width: RFValue(48),
-                      height: RFValue(48),
-                      borderRadius: RFValue(14),
-                      backgroundColor: theme.bg,
-                      justifyContent: "center",
                       alignItems: "center",
-                      marginBottom: RFValue(6),
+                      flex: 1,
+                      paddingVertical: RFValue(8),
                     }}
                   >
-                    <Ionicons
-                      name="pulse"
-                      size={RFValue(24)}
-                      color={theme.accent}
-                    />
-                  </View>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      fontWeight: "600",
-                      textAlign: "center",
-                    }}
-                  >
-                    Symptoms
-                  </Text>
-                </AnimatedTouchable>
-                <AnimatedTouchable
-                  onPress={() => setShowPharmacy(true)}
-                  scaleDown={0.9}
-                  style={{ alignItems: "center", width: "25%", paddingVertical: RFValue(6) }}
-                >
-                  <View
-                    style={{
-                      width: RFValue(48),
-                      height: RFValue(48),
-                      borderRadius: RFValue(14),
-                      backgroundColor: theme.successLight,
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginBottom: RFValue(6),
-                    }}
-                  >
-                    <Ionicons
-                      name="cart"
-                      size={RFValue(24)}
-                      color={theme.success}
-                    />
-                  </View>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      fontWeight: "600",
-                      textAlign: "center",
-                    }}
-                  >
-                    Medicines
-                  </Text>
-                </AnimatedTouchable>
-                <AnimatedTouchable
-                  onPress={() => setShowFindDoctor(true)}
-                  scaleDown={0.9}
-                  style={{ alignItems: "center", width: "25%", paddingVertical: RFValue(6) }}
-                >
-                  <View
-                    style={{
-                      width: RFValue(48),
-                      height: RFValue(48),
-                      borderRadius: RFValue(14),
-                      backgroundColor: theme.bg,
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginBottom: RFValue(6),
-                    }}
-                  >
-                    <Ionicons
-                      name="calendar"
-                      size={RFValue(24)}
-                      color={theme.accent}
-                    />
-                  </View>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      fontWeight: "600",
-                      textAlign: "center",
-                    }}
-                  >
-                    Book Appt
-                  </Text>
-                </AnimatedTouchable>
-                <AnimatedTouchable
-                  onPress={() => setShowHospital(true)}
-                  scaleDown={0.9}
-                  style={{ alignItems: "center", width: "25%", paddingVertical: RFValue(6) }}
-                >
-                  <View
-                    style={{
-                      width: RFValue(48),
-                      height: RFValue(48),
-                      borderRadius: RFValue(14),
-                      backgroundColor: theme.dangerLight,
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginBottom: RFValue(6),
-                    }}
-                  >
-                    <Ionicons
-                      name="location"
-                      size={RFValue(24)}
-                      color={theme.danger}
-                    />
-                  </View>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      fontWeight: "600",
-                      textAlign: "center",
-                    }}
-                  >
-                    Hospital
-                  </Text>
-                </AnimatedTouchable>
+                    <View
+                      style={{
+                        width: RFValue(48),
+                        height: RFValue(48),
+                        borderRadius: RFValue(14),
+                        backgroundColor: item.bg,
+                        justifyContent: "center",
+                        alignItems: "center",
+                        marginBottom: RFValue(8),
+                      }}
+                    >
+                      <Ionicons name={item.icon} size={RFValue(22)} color={item.color} />
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textSecondary,
+                        fontWeight: "600",
+                        textAlign: "center",
+                      }}
+                    >
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
               </View>
             </View>
 
             {upcomingAppointments.length > 0 ? (
-              <AnimatedTouchable
+              <TouchableOpacity
                 onPress={() => setShowAppointments(true)}
-                scaleDown={0.97}
+                activeOpacity={0.85}
                 style={{
                   backgroundColor: theme.card,
                   borderRadius: RFValue(16),
@@ -3518,7 +3427,7 @@ const PatientHomeScreen = () => {
                   size={RFValue(18)}
                   color={theme.textTertiary}
                 />
-              </AnimatedTouchable>
+              </TouchableOpacity>
             ) : null}
 
             {/* Telemedicine */}
@@ -3542,135 +3451,87 @@ const PatientHomeScreen = () => {
             </View>
 
             <View style={{ marginBottom: RFValue(16) }}>
-              <View
+              <TouchableOpacity
+                onPress={() => setStartCallType("video")}
+                activeOpacity={0.85}
                 style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(16),
+                  padding: RFValue(16),
+                  marginBottom: RFValue(10),
+                  shadowColor: theme.shadowColor,
+                  shadowOpacity: 0.06,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowRadius: 12,
+                  elevation: 3,
                   flexDirection: "row",
-                  justifyContent: "space-between",
-                  marginBottom: RFValue(12),
-                  gap: RFValue(10),
+                  alignItems: "center",
                 }}
               >
-                <AnimatedTouchable
-                  onPress={() => setStartCallType("video")}
-                  scaleDown={0.96}
+                <View
                   style={{
-                    flex: 1,
-                    backgroundColor: theme.card,
-                    borderRadius: RFValue(16),
-                    padding: RFValue(14),
-                    shadowColor: theme.shadowColor,
-                    shadowOpacity: 0.06,
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowRadius: 12,
-                    elevation: 3,
-                    flexDirection: "row",
+                    width: RFValue(48),
+                    height: RFValue(48),
+                    borderRadius: RFValue(14),
+                    backgroundColor: theme.accentLight || theme.bg,
+                    justifyContent: "center",
                     alignItems: "center",
+                    marginRight: RFValue(14),
                   }}
                 >
-                  <View
-                    style={{
-                      width: RFValue(44),
-                      height: RFValue(44),
-                      borderRadius: RFValue(14),
-                      backgroundColor: theme.accentLight || theme.bg,
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginRight: RFValue(12),
-                    }}
-                  >
-                    <Ionicons
-                      name="videocam"
-                      size={RFValue(22)}
-                      color={theme.accent}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={{
-                        fontSize: RFValue(14),
-                        fontWeight: "700",
-                        color: theme.textPrimary,
-                      }}
-                    >
-                      Video Call
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: RFValue(11),
-                        color: theme.textSecondary,
-                        marginTop: RFValue(2),
-                      }}
-                    >
-                      Consult a doctor
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={RFValue(16)}
-                    color={theme.textTertiary}
-                  />
-                </AnimatedTouchable>
-                <AnimatedTouchable
-                  onPress={() => setStartCallType("audio")}
-                  scaleDown={0.96}
+                  <Ionicons name="videocam" size={RFValue(22)} color={theme.accent} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: RFValue(15), fontWeight: "700", color: theme.textPrimary }}>
+                    Video Call
+                  </Text>
+                  <Text style={{ fontSize: RFValue(12), color: theme.textSecondary, marginTop: RFValue(2) }}>
+                    Consult a doctor face-to-face
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={RFValue(18)} color={theme.textTertiary} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setStartCallType("audio")}
+                activeOpacity={0.85}
+                style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(16),
+                  padding: RFValue(16),
+                  marginBottom: RFValue(10),
+                  shadowColor: theme.shadowColor,
+                  shadowOpacity: 0.06,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowRadius: 12,
+                  elevation: 3,
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <View
                   style={{
-                    flex: 1,
-                    backgroundColor: theme.card,
-                    borderRadius: RFValue(16),
-                    padding: RFValue(14),
-                    shadowColor: theme.shadowColor,
-                    shadowOpacity: 0.06,
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowRadius: 12,
-                    elevation: 3,
-                    flexDirection: "row",
+                    width: RFValue(48),
+                    height: RFValue(48),
+                    borderRadius: RFValue(14),
+                    backgroundColor: theme.warningLight,
+                    justifyContent: "center",
                     alignItems: "center",
+                    marginRight: RFValue(14),
                   }}
                 >
-                  <View
-                    style={{
-                      width: RFValue(44),
-                      height: RFValue(44),
-                      borderRadius: RFValue(14),
-                      backgroundColor: theme.warningLight,
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginRight: RFValue(12),
-                    }}
-                  >
-                    <Ionicons
-                      name="call"
-                      size={RFValue(22)}
-                      color={theme.warning}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={{
-                        fontSize: RFValue(14),
-                        fontWeight: "700",
-                        color: theme.textPrimary,
-                      }}
-                    >
-                      Audio Call
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: RFValue(11),
-                        color: theme.textSecondary,
-                        marginTop: RFValue(2),
-                      }}
-                    >
-                      Talk to a doctor
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={RFValue(16)}
-                    color={theme.textTertiary}
-                  />
-                </AnimatedTouchable>
-              </View>
+                  <Ionicons name="call" size={RFValue(22)} color={theme.warning} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: RFValue(15), fontWeight: "700", color: theme.textPrimary }}>
+                    Audio Call
+                  </Text>
+                  <Text style={{ fontSize: RFValue(12), color: theme.textSecondary, marginTop: RFValue(2) }}>
+                    Talk to a doctor by phone
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={RFValue(18)} color={theme.textTertiary} />
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setShowFindDoctor(true)}
                 style={{
@@ -19337,107 +19198,30 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
 };
 
 // --- CUSTOM TAB NAVIGATOR ---
-const TabLogoSplash = ({ visible, onDone }) => {
-  const { theme } = useTheme();
-  const opacity = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.85)).current;
-
-  useEffect(() => {
-    if (visible) {
-      opacity.setValue(0);
-      scale.setValue(0.85);
-      Animated.parallel([
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 200,
-          easing: EASE_OUT_CUBIC,
-          useNativeDriver: true,
-        }),
-        Animated.spring(scale, {
-          toValue: 1,
-          friction: 8,
-          tension: 80,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        const timer = setTimeout(() => {
-          Animated.timing(opacity, {
-            toValue: 0,
-            duration: 200,
-            easing: EASE_OUT_CUBIC,
-            useNativeDriver: true,
-          }).start(() => onDone());
-        }, 350);
-        return () => clearTimeout(timer);
-      });
-    }
-  }, [visible, opacity, scale, onDone]);
-
-  if (!visible) return null;
-
-  return (
-    <Animated.View
-      style={{
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: theme.bg,
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: 10,
-        opacity,
-      }}
-    >
-      <Animated.Image
-        source={{ uri: NVOISYS_LOGO }}
-        style={{
-          width: RFValue(72),
-          height: RFValue(72),
-          resizeMode: "contain",
-          transform: [{ scale }],
-        }}
-      />
-    </Animated.View>
-  );
-};
-
 const CustomTabNavigator = ({ routes, activeColor }) => {
   const [activeIndex, setActiveIndex] = useState(0);
-  const [showLogoSplash, setShowLogoSplash] = useState(false);
-  const [pendingIndex, setPendingIndex] = useState(null);
   const screenOpacity = useRef(new Animated.Value(1)).current;
-  const screenSlide = useRef(new Animated.Value(0)).current;
 
   const animateTabSwitch = useCallback(
     (newIndex) => {
       if (newIndex === activeIndex) return;
-      setShowLogoSplash(true);
-      setPendingIndex(newIndex);
-    },
-    [activeIndex],
-  );
-
-  const handleLogoSplashDone = useCallback(() => {
-    if (pendingIndex != null) {
-      screenOpacity.setValue(0);
-      screenSlide.setValue(8);
-      setActiveIndex(pendingIndex);
-      setPendingIndex(null);
-      setShowLogoSplash(false);
-      Animated.parallel([
+      Animated.timing(screenOpacity, {
+        toValue: 0,
+        duration: 120,
+        easing: EASE_OUT_CUBIC,
+        useNativeDriver: true,
+      }).start(() => {
+        setActiveIndex(newIndex);
         Animated.timing(screenOpacity, {
           toValue: 1,
-          duration: 300,
+          duration: 250,
           easing: EASE_OUT_CUBIC,
           useNativeDriver: true,
-        }),
-        Animated.timing(screenSlide, {
-          toValue: 0,
-          duration: 300,
-          easing: EASE_OUT_CUBIC,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  }, [pendingIndex, screenOpacity, screenSlide]);
+        }).start();
+      });
+    },
+    [activeIndex, screenOpacity],
+  );
 
   useEffect(() => {
     const handleBack = () => {
@@ -19482,16 +19266,9 @@ const CustomTabNavigator = ({ routes, activeColor }) => {
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1, minHeight: 0 }}>
-        <Animated.View
-          style={{
-            flex: 1,
-            opacity: screenOpacity,
-            transform: [{ translateY: screenSlide }],
-          }}
-        >
+        <Animated.View style={{ flex: 1, opacity: screenOpacity }}>
           <ActiveComponent navigation={navigation} />
         </Animated.View>
-        <TabLogoSplash visible={showLogoSplash} onDone={handleLogoSplashDone} />
       </View>
       <CustomTabBar
         state={state}
