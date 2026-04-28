@@ -19200,27 +19200,53 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
 // --- CUSTOM TAB NAVIGATOR ---
 const CustomTabNavigator = ({ routes, activeColor }) => {
   const [activeIndex, setActiveIndex] = useState(0);
-  const screenOpacity = useRef(new Animated.Value(1)).current;
+  const screenOpacities = useRef(
+    routes.map((_, i) => new Animated.Value(i === 0 ? 1 : 0))
+  ).current;
+  const screenTranslates = useRef(
+    routes.map(() => new Animated.Value(0))
+  ).current;
 
   const animateTabSwitch = useCallback(
     (newIndex) => {
       if (newIndex === activeIndex) return;
-      Animated.timing(screenOpacity, {
-        toValue: 0,
-        duration: 120,
-        easing: EASE_OUT_CUBIC,
-        useNativeDriver: true,
-      }).start(() => {
-        setActiveIndex(newIndex);
-        Animated.timing(screenOpacity, {
-          toValue: 1,
-          duration: 250,
+      const prevIndex = activeIndex;
+      setActiveIndex(newIndex);
+      // Prime the incoming screen just below its natural position
+      screenTranslates[newIndex].setValue(14);
+      Animated.parallel([
+        // Outgoing: fade out, drift up slightly
+        Animated.timing(screenOpacities[prevIndex], {
+          toValue: 0,
+          duration: 160,
           easing: EASE_OUT_CUBIC,
           useNativeDriver: true,
-        }).start();
+        }),
+        Animated.timing(screenTranslates[prevIndex], {
+          toValue: -8,
+          duration: 160,
+          easing: EASE_OUT_CUBIC,
+          useNativeDriver: true,
+        }),
+        // Incoming: fade in, slide up into place
+        Animated.timing(screenOpacities[newIndex], {
+          toValue: 1,
+          duration: 300,
+          easing: EASE_OUT_CUBIC,
+          useNativeDriver: true,
+        }),
+        Animated.timing(screenTranslates[newIndex], {
+          toValue: 0,
+          duration: 300,
+          easing: EASE_OUT_CUBIC,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        // Reset outgoing screen for next use
+        screenTranslates[prevIndex].setValue(0);
       });
     },
-    [activeIndex, screenOpacity],
+    [activeIndex, screenOpacities, screenTranslates],
   );
 
   useEffect(() => {
@@ -19261,14 +19287,27 @@ const CustomTabNavigator = ({ routes, activeColor }) => {
     };
   });
 
-  const ActiveComponent = routes[activeIndex].component;
-
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1, minHeight: 0 }}>
-        <Animated.View style={{ flex: 1, opacity: screenOpacity }}>
-          <ActiveComponent navigation={navigation} />
-        </Animated.View>
+        {routes.map((route, idx) => {
+          const RouteComponent = route.component;
+          return (
+            <Animated.View
+              key={route.name}
+              pointerEvents={idx === activeIndex ? "auto" : "none"}
+              style={[
+                StyleSheet.absoluteFillObject,
+                {
+                  opacity: screenOpacities[idx],
+                  transform: [{ translateY: screenTranslates[idx] }],
+                },
+              ]}
+            >
+              <RouteComponent navigation={navigation} />
+            </Animated.View>
+          );
+        })}
       </View>
       <CustomTabBar
         state={state}
