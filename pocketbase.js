@@ -39,11 +39,17 @@ export const pb = new PocketBase(PB_URL, authStore);
  * - `doctor` (relation → **either** users **or** doctor_profile — must match the flag above)
  * - `scheduled_at` (datetime)
  * - `consultation_type` (select): include at least `video`, `chat` (or relax / omit field)
- * - `status` (select): include `requested`, `approved`, `rejected` or `declined`,
- *   `paid`, `completed`, and often `pending` / `scheduled` for older rows
+ * - `status` (select): include `requested`, `pending`, `approved`, `rejected` or `declined`,
+ *   **`ask_reschedule`** (doctor proposes new times; patient picks on same row), **`cancelled`**,
+ *   `paid`, `completed`, and often `scheduled` for older rows
  * - `reason` (text, optional but recommended)
  * - `conversation` (relation → conversations, optional)
  * - `consultationFee` or fee on doctor_profile (optional; app reads fee for “Pay fee”)
+ * - **Package Doctor demo meetings** reuse this collection: the app writes the same relations +
+ *   `scheduled_at` / `consultation_type` / `status`, and encodes negotiation in **`reason`** after
+ *   the marker `---NVHS_MEETING_WORKFLOW---` (optional JSON **`workflow_json`**). List filters keep
+ *   normal bookings separate. Set **`pbAppointmentDoctorIsProfile`** in `app.json` to match whether
+ *   `doctor` points at **doctor_profile** or **users**.
  *
  * **API rules:** patients need **Create** where `patient = @request.auth.id`;
  * doctors need **List/Update** for their side of the workflow.
@@ -100,6 +106,20 @@ function buildEmailVerificationRequiredError(email = "") {
   return new Error(
     `Please verify your email${targetSuffix} before logging in. Use the link sent to your inbox.`,
   );
+}
+
+function ensureSelectedRoleMatchesUser(user, selectedRole) {
+  if (!selectedRole) return;
+
+  const normalizedSelectedRole = normalizeRole(selectedRole);
+  const actualRole = normalizeRole(user?.role);
+
+  if (actualRole !== normalizedSelectedRole) {
+    pb.authStore.clear();
+    throw new Error(
+      `This account is registered as a ${actualRole}. Please choose ${actualRole} to log in.`,
+    );
+  }
 }
 
 function ensureVerifiedAuthUser(email = "") {
@@ -219,6 +239,8 @@ function compactProfileFields(fields) {
  *                            marital_status (text/select), district (text), state (text),
  *                            smoking (text/select), alcohol (text/select),
  *                            medical_conditions (text), allergies (text)
+ *   Product spec: care_mode (text/select: package_doctor | casual | not_planning),
+ *                  preferred_quick_doctor / preferred_quick_provider (relation → UsersAuth, optional)
  * Avatar is uploaded after create in signUpWithEmail (file field).
  */
 async function createPatientProfileRecord(userId, merged) {
@@ -276,6 +298,21 @@ async function createPatientProfileRecord(userId, merged) {
  * Launch v1.0 — Step 3a: add optional JSON field **`concerns`** (string array of
  * tags, e.g. `["diabetes","hypertension"]`). Doctors edit this in-app on the
  * Doctor Profile screen so Find Doctor concern chips can filter accurately.
+ *
+ * Product spec: optional **`practitioner_tier`** (select: rmp | clinic | professional |
+ * specialist) — Quick Solution / Quick Counselling prefer non-professional tiers;
+ * package flows use professional doctors. Optional **`coin_balance`** (number) for wallet UI.
+ * **`package_templates`** or alias **`packages_template`** (JSON): store an array of
+ * **`{ slot, total_amount_inr }`** (length 3) — package titles, periods, descriptions & features are
+ * **app-defined**; doctors only set fees. When the doctor taps Skip onboarding, the app may store
+ * **`{ "skipped": true }`** instead of the fee array. Bool **`package_setup`**: **`true`** when all
+ * three fees are saved; **`false`** when incomplete or skipped. Legacy: **`packages_setup_complete`**,
+ * **`package_setup_skipped`** (still sent on some writes for older schemas).
+ * **Update rule:** doctors must be allowed to update their own row (e.g. `user = @request.auth.id`),
+ * not admin-only, or the app falls back to on-device storage for fees until rules are fixed.
+ *
+ * Package demo meetings use the **`appointments`** collection (see block above), not a separate
+ * collection.
  */
 async function createDoctorProfileRecord(userId, merged) {
   const specialty = String(merged.specialty || "").trim();
@@ -511,7 +548,7 @@ export async function signUpWithEmail({
   };
 }
 
-export async function loginWithEmail({ email, password }) {
+export async function loginWithEmail({ email, password, selectedRole }) {
   const normalizedEmail = (email || "").trim().toLowerCase();
 
   const authData = await pb
@@ -523,6 +560,8 @@ export async function loginWithEmail({ email, password }) {
   }
 
   const user = getAuthUser() || authData?.record || null;
+
+  ensureSelectedRoleMatchesUser(user, selectedRole);
 
   if (user && !isEmailVerified(user)) {
     pb.authStore.clear();
@@ -680,6 +719,8 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
     console.log("OAuth authData:", JSON.stringify(authData, null, 2));
 
     const user = getAuthUser() || authData?.record || null;
+
+    ensureSelectedRoleMatchesUser(user, selectedRole);
 
     if (user && !isEmailVerified(user)) {
       pb.authStore.clear();
