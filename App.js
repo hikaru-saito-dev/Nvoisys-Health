@@ -42,6 +42,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import * as WebBrowser from "expo-web-browser";
+import * as Haptics from "expo-haptics";
 import {
   Ionicons,
   MaterialCommunityIcons,
@@ -3074,6 +3075,127 @@ const SectionTitle = ({ title, actionText, onAction }) => (
   </View>
 );
 
+// --- SLIDE SCREEN (drill-down transition) ---
+// Wraps any full-screen drill-down with a spring slide-in from the right.
+// Overrides the child's onBack prop so it slides out before unmounting.
+const SlideScreen = ({ onBack, children }) => {
+  const translateX = useRef(new Animated.Value(SCREEN_WIDTH)).current;
+
+  useEffect(() => {
+    Animated.spring(translateX, {
+      toValue: 0,
+      damping: 22,
+      stiffness: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [translateX]);
+
+  const slideBack = useCallback(() => {
+    Animated.timing(translateX, {
+      toValue: SCREEN_WIDTH,
+      duration: 220,
+      easing: EASE_OUT_CUBIC,
+      useNativeDriver: true,
+    }).start(() => onBack());
+  }, [onBack, translateX]);
+
+  return (
+    <Animated.View
+      style={[StyleSheet.absoluteFillObject, { transform: [{ translateX }] }]}
+    >
+      {React.cloneElement(children, { onBack: slideBack })}
+    </Animated.View>
+  );
+};
+
+// --- PRESS CARD (scale micro-feedback) ---
+// Drop-in replacement for TouchableOpacity on any card element.
+// Applies a quick scale: 0.98 spring on press so cards feel alive.
+const PressCard = ({ onPress, style, children }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const pressIn = () =>
+    Animated.spring(scale, {
+      toValue: 0.98,
+      useNativeDriver: true,
+      damping: 15,
+      stiffness: 350,
+    }).start();
+
+  const pressOut = () =>
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      damping: 12,
+      stiffness: 200,
+    }).start();
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+      activeOpacity={1}
+    >
+      <Animated.View style={[style, { transform: [{ scale }] }]}>
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
+  );
+};
+
+// --- SKELETON SHIMMER ---
+// Pulsing placeholder block for loading states.
+const SkeletonShimmer = ({ width, height, borderRadius = 8, style }) => {
+  const opacity = useRef(new Animated.Value(0.35)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.9,
+          duration: 700,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.35,
+          duration: 700,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      style={[{ width, height, borderRadius, backgroundColor: "#E5E7EB", opacity }, style]}
+    />
+  );
+};
+
+// --- GLASS OVERLAY ---
+// Semi-transparent frosted overlay for modal backdrops.
+const GlassOverlay = ({ children, style }) => (
+  <View
+    style={[
+      {
+        flex: 1,
+        backgroundColor: "rgba(8, 12, 28, 0.62)",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: RFValue(24),
+      },
+      style,
+    ]}
+  >
+    {children}
+  </View>
+);
+
 // --- SCREENS ---
 
 // 1. Home Dashboard
@@ -3271,34 +3393,57 @@ const PatientHomeScreen = () => {
 
   if (startCallType)
     return (
-      <StartCallScreen
-        callType={startCallType}
-        onBack={() => setStartCallType(null)}
-      />
+      <SlideScreen onBack={() => setStartCallType(null)}>
+        <StartCallScreen callType={startCallType} onBack={null} />
+      </SlideScreen>
     );
   if (showFindDoctor)
     return (
-      <PatientDoctorBookingFlow
-        onBack={() => {
-          setShowFindDoctor(false);
-          refreshAllData();
-        }}
-      />
+      <SlideScreen onBack={() => { setShowFindDoctor(false); refreshAllData(); }}>
+        <PatientDoctorBookingFlow onBack={null} />
+      </SlideScreen>
     );
   if (showPrescription)
-    return <PrescriptionScreen onBack={() => setShowPrescription(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowPrescription(false)}>
+        <PrescriptionScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showMeds)
-    return <MedicationTrackerScreen onBack={() => setShowMeds(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowMeds(false)}>
+        <MedicationTrackerScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showFamily)
-    return <FamilyHealthScreen onBack={() => setShowFamily(false)} />;
-  if (showSOS) return <EmergencySOScreen onBack={() => setShowSOS(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowFamily(false)}>
+        <FamilyHealthScreen onBack={null} />
+      </SlideScreen>
+    );
+  if (showSOS)
+    return (
+      <SlideScreen onBack={() => setShowSOS(false)}>
+        <EmergencySOScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showHospital)
-    return <HospitalDirectoryScreen onBack={() => setShowHospital(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowHospital(false)}>
+        <HospitalDirectoryScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showPharmacy)
-    return <PharmacyDirectoryScreen onBack={() => setShowPharmacy(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowPharmacy(false)}>
+        <PharmacyDirectoryScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showAppointments)
     return (
-      <PatientAppointmentsScreen onBack={() => setShowAppointments(false)} />
+      <SlideScreen onBack={() => setShowAppointments(false)}>
+        <PatientAppointmentsScreen onBack={null} />
+      </SlideScreen>
     );
 
   return (
@@ -3323,9 +3468,25 @@ const PatientHomeScreen = () => {
           paddingBottom: tabScrollBottomPadding(),
           flexGrow: 1,
         }}
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true }
+        )}
       >
         <FadeInView delay={60}>
-          {/* Modern Gradient Header */}
+          {/* Modern Gradient Header — subtle parallax: moves at ~70% scroll speed */}
+          <Animated.View
+            style={{
+              transform: [{
+                translateY: scrollY.interpolate({
+                  inputRange: [0, 250],
+                  outputRange: [0, 75],
+                  extrapolate: "clamp",
+                }),
+              }],
+            }}
+          >
           <View
             style={{
               backgroundColor: theme.accent,
@@ -3470,6 +3631,7 @@ const PatientHomeScreen = () => {
               </View>
             </View>
           </View>
+          </Animated.View>
         </FadeInView>
 
         <FadeInView delay={140}>
@@ -3601,27 +3763,9 @@ const PatientHomeScreen = () => {
                 >
                   <View
                     style={{
-                      width: RFValue(48),
-                      height: RFValue(48),
-                      borderRadius: RFValue(14),
-                      backgroundColor: theme.dangerLight,
-                      justifyContent: "center",
                       alignItems: "center",
-                      marginBottom: RFValue(6),
-                    }}
-                  >
-                    <Ionicons
-                      name="location"
-                      size={RFValue(24)}
-                      color={theme.danger}
-                    />
-                  </View>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      fontWeight: "600",
-                      textAlign: "center",
+                      flex: 1,
+                      paddingVertical: RFValue(8),
                     }}
                   >
                     Hospital
@@ -3871,8 +4015,18 @@ const PatientHomeScreen = () => {
             </View>
 
             <View style={{ marginBottom: RFValue(16) }}>
-              <View
+              <PressCard
+                onPress={() => setStartCallType("video")}
                 style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(16),
+                  padding: RFValue(16),
+                  marginBottom: RFValue(10),
+                  shadowColor: theme.shadowColor,
+                  shadowOpacity: 0.06,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowRadius: 12,
+                  elevation: 3,
                   flexDirection: "row",
                   flexWrap: "wrap",
                   justifyContent: "space-between",
@@ -3893,6 +4047,7 @@ const PatientHomeScreen = () => {
                     shadowRadius: 12,
                     elevation: 3,
                     alignItems: "center",
+                    marginRight: RFValue(14),
                   }}
                 >
                   <View
@@ -3945,6 +4100,7 @@ const PatientHomeScreen = () => {
                     shadowRadius: 12,
                     elevation: 3,
                     alignItems: "center",
+                    marginRight: RFValue(14),
                   }}
                 >
                   <View
@@ -4793,6 +4949,7 @@ const CallScreen = ({
 }) => {
   const { theme } = useTheme();
   const { currentUserId } = useAppData();
+  const callInsets = useSafeAreaInsets();
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [status, setStatus] = useState("Connecting...");
@@ -5140,7 +5297,7 @@ const CallScreen = ({
           flexDirection: "row",
           justifyContent: "center",
           padding: RFValue(16),
-          paddingBottom: RFValue(24),
+          paddingBottom: Math.max(callInsets.bottom, 10) + RFValue(82),
         }}
       >
         <TouchableOpacity
@@ -6283,7 +6440,7 @@ const PatientChatScreen = () => {
               backgroundColor: theme.card,
               paddingHorizontal: RFValue(12),
               paddingTop: RFValue(8),
-              paddingBottom: Math.max(insets.bottom, RFValue(8)),
+              paddingBottom: Math.max(insets.bottom, 10) + RFValue(92),
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
@@ -9433,7 +9590,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
       <View style={{ flex: 1, minHeight: 0 }}>
         <ScrollView
           style={{ flex: 1, minHeight: 0 }}
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: RFValue(8) }}
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: tabScrollBottomPadding() }}
           keyboardShouldPersistTaps="handled"
         >
           {/* Header */}
@@ -16262,7 +16419,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             style={{
               paddingHorizontal: RFValue(16),
               paddingTop: RFValue(10),
-              paddingBottom: Math.max(bookingInsets.bottom, RFValue(12)),
+              paddingBottom: Math.max(bookingInsets.bottom, 10) + RFValue(82),
               backgroundColor: theme.card,
               borderTopWidth: StyleSheet.hairlineWidth,
               borderTopColor: theme.cardBorder,
@@ -17622,7 +17779,7 @@ const HospitalDirectoryScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: RFValue(16),
-          paddingBottom: RFValue(60),
+          paddingBottom: tabScrollBottomPadding(),
         }}
         refreshControl={
           <RefreshControl
@@ -17994,6 +18151,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
           borderTopLeftRadius: RFValue(24),
           borderTopRightRadius: RFValue(24),
           padding: RFValue(20),
+          paddingBottom: tabScrollBottomPadding(),
           maxHeight: "92%",
         }}
       >
@@ -18119,7 +18277,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                           editable={!submitting}
                         />
                         <TextInput
-                          style={[inputStyle, { flex: 2 }]}
+                          style={[inputStyle, { flex: 2, minWidth: 0 }]}
                           placeholder="Notes (optional)"
                           placeholderTextColor={theme.textTertiary}
                           value={selections[idx].notes}
@@ -18223,7 +18381,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                   editable={!submitting}
                 />
                 <TextInput
-                  style={[inputStyle, { flex: 2 }]}
+                  style={[inputStyle, { flex: 2, minWidth: 0 }]}
                   placeholder="Notes (optional)"
                   placeholderTextColor={theme.textTertiary}
                   value={item.notes}
@@ -18866,7 +19024,7 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: RFValue(16),
-          paddingBottom: RFValue(60),
+          paddingBottom: tabScrollBottomPadding(),
         }}
         refreshControl={
           <RefreshControl
@@ -19658,6 +19816,7 @@ const FamilyHealthScreen = ({ onBack }) => {
           justifyContent: "center",
           alignItems: "center",
           padding: RFValue(24),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         <GlowView glowColor="#4338CA" size={RFValue(120)}>
@@ -20305,18 +20464,36 @@ const DoctorRootPlaceholder = () => {
 const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
-  const bottomPad = Math.max(
-    insets.bottom,
-    Platform.OS === "android" ? RFValue(18) : RFValue(10),
-  );
+  const [tabBarWidth, setTabBarWidth] = useState(0);
+  const indicatorX = useRef(new Animated.Value(0)).current;
+  const numTabs = state.routes.length;
   const tabIconSize = Math.min(ri(22), DEVICE_TYPE === "tablet" ? 26 : 24);
   const tabLabelSize = Math.min(RFText(10, { max: 1.06 }), 12);
   const muted = theme.textTertiary || "#9CA3AF";
+  const floatBottom = Math.max(insets.bottom, 10) + 10;
+
+  // Spring the shared indicator to the active tab's position
+  useEffect(() => {
+    if (tabBarWidth === 0 || numTabs === 0) return;
+    const tabWidth = tabBarWidth / numTabs;
+    const pillWidth = tabWidth - RFValue(24);
+    const targetX = state.index * tabWidth + RFValue(12);
+    Animated.spring(indicatorX, {
+      toValue: targetX,
+      damping: 18,
+      stiffness: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [state.index, tabBarWidth, numTabs, indicatorX]);
 
   return (
     <View
       style={{
-        flexDirection: "row",
+        position: "absolute",
+        bottom: floatBottom,
+        left: 16,
+        right: 16,
+        borderRadius: RFValue(28),
         backgroundColor: theme.tabBarBg,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.tabBarBorder,
@@ -20329,6 +20506,7 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
         shadowRadius: 12,
         elevation: 8,
       }}
+      onLayout={(e) => setTabBarWidth(e.nativeEvent.layout.width)}
     >
       {state.routes.map((route, index) => {
         const { options } = descriptors[route.key];
@@ -21425,15 +21603,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FFF" }}>
       <Modal visible={submitting} transparent animationType="fade">
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(15, 23, 42, 0.45)",
-            justifyContent: "center",
-            alignItems: "center",
-            padding: RFValue(24),
-          }}
-        >
+        <GlassOverlay>
           <View
             style={{
               backgroundColor: "#FFF",
@@ -21443,6 +21613,11 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
               alignItems: "center",
               maxWidth: 320,
               width: "100%",
+              shadowColor: "#000",
+              shadowOpacity: 0.18,
+              shadowOffset: { width: 0, height: 8 },
+              shadowRadius: 24,
+              elevation: 16,
             }}
           >
             <ActivityIndicator size="large" color="#4338CA" />
@@ -21468,7 +21643,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
               Please wait. You will return to Wound Tracker when this finishes.
             </Text>
           </View>
-        </View>
+        </GlassOverlay>
       </Modal>
       <View
         style={{
@@ -21496,7 +21671,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         scrollEnabled={!submitting}
-        contentContainerStyle={{ padding: RFValue(20) }}
+        contentContainerStyle={{ padding: RFValue(20), paddingBottom: tabScrollBottomPadding() }}
       >
         <Text
           style={{
@@ -23212,7 +23387,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(40),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {errorMessage ? (
@@ -26046,7 +26221,7 @@ const AppContent = ({
           backgroundColor={theme.statusBarBg}
         />
         <CustomTabNavigator
-          activeColor={theme.accent}
+          activeColor="#0EA5E9"
           routes={[
             {
               name: "Home",
@@ -26151,7 +26326,7 @@ const AppContent = ({
           backgroundColor={theme.statusBarBg}
         />
         <CustomTabNavigator
-          activeColor="#8B5CF6"
+          activeColor="#059669"
           routes={[
             {
               name: "Home",
