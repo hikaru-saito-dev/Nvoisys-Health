@@ -42,6 +42,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import * as WebBrowser from "expo-web-browser";
+import * as Haptics from "expo-haptics";
 import {
   Ionicons,
   MaterialCommunityIcons,
@@ -2987,6 +2988,127 @@ const SectionTitle = ({ title, actionText, onAction }) => (
   </View>
 );
 
+// --- SLIDE SCREEN (drill-down transition) ---
+// Wraps any full-screen drill-down with a spring slide-in from the right.
+// Overrides the child's onBack prop so it slides out before unmounting.
+const SlideScreen = ({ onBack, children }) => {
+  const translateX = useRef(new Animated.Value(SCREEN_WIDTH)).current;
+
+  useEffect(() => {
+    Animated.spring(translateX, {
+      toValue: 0,
+      damping: 22,
+      stiffness: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [translateX]);
+
+  const slideBack = useCallback(() => {
+    Animated.timing(translateX, {
+      toValue: SCREEN_WIDTH,
+      duration: 220,
+      easing: EASE_OUT_CUBIC,
+      useNativeDriver: true,
+    }).start(() => onBack());
+  }, [onBack, translateX]);
+
+  return (
+    <Animated.View
+      style={[StyleSheet.absoluteFillObject, { transform: [{ translateX }] }]}
+    >
+      {React.cloneElement(children, { onBack: slideBack })}
+    </Animated.View>
+  );
+};
+
+// --- PRESS CARD (scale micro-feedback) ---
+// Drop-in replacement for TouchableOpacity on any card element.
+// Applies a quick scale: 0.98 spring on press so cards feel alive.
+const PressCard = ({ onPress, style, children }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const pressIn = () =>
+    Animated.spring(scale, {
+      toValue: 0.98,
+      useNativeDriver: true,
+      damping: 15,
+      stiffness: 350,
+    }).start();
+
+  const pressOut = () =>
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      damping: 12,
+      stiffness: 200,
+    }).start();
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+      activeOpacity={1}
+    >
+      <Animated.View style={[style, { transform: [{ scale }] }]}>
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
+  );
+};
+
+// --- SKELETON SHIMMER ---
+// Pulsing placeholder block for loading states.
+const SkeletonShimmer = ({ width, height, borderRadius = 8, style }) => {
+  const opacity = useRef(new Animated.Value(0.35)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.9,
+          duration: 700,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.35,
+          duration: 700,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      style={[{ width, height, borderRadius, backgroundColor: "#E5E7EB", opacity }, style]}
+    />
+  );
+};
+
+// --- GLASS OVERLAY ---
+// Semi-transparent frosted overlay for modal backdrops.
+const GlassOverlay = ({ children, style }) => (
+  <View
+    style={[
+      {
+        flex: 1,
+        backgroundColor: "rgba(8, 12, 28, 0.62)",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: RFValue(24),
+      },
+      style,
+    ]}
+  >
+    {children}
+  </View>
+);
+
 // --- SCREENS ---
 
 // 1. Home Dashboard
@@ -3013,6 +3135,7 @@ const PatientHomeScreen = () => {
   const [showHospital, setShowHospital] = useState(false);
   const [showPharmacy, setShowPharmacy] = useState(false);
   const [showAppointments, setShowAppointments] = useState(false);
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     void fetchHospitals();
@@ -3089,49 +3212,88 @@ const PatientHomeScreen = () => {
 
   if (startCallType)
     return (
-      <StartCallScreen
-        callType={startCallType}
-        onBack={() => setStartCallType(null)}
-      />
+      <SlideScreen onBack={() => setStartCallType(null)}>
+        <StartCallScreen callType={startCallType} onBack={null} />
+      </SlideScreen>
     );
   if (showFindDoctor)
     return (
-      <PatientDoctorBookingFlow
-        onBack={() => {
-          setShowFindDoctor(false);
-          refreshAllData();
-        }}
-      />
+      <SlideScreen onBack={() => { setShowFindDoctor(false); refreshAllData(); }}>
+        <PatientDoctorBookingFlow onBack={null} />
+      </SlideScreen>
     );
   if (showPrescription)
-    return <PrescriptionScreen onBack={() => setShowPrescription(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowPrescription(false)}>
+        <PrescriptionScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showMeds)
-    return <MedicationTrackerScreen onBack={() => setShowMeds(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowMeds(false)}>
+        <MedicationTrackerScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showFamily)
-    return <FamilyHealthScreen onBack={() => setShowFamily(false)} />;
-  if (showSOS) return <EmergencySOScreen onBack={() => setShowSOS(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowFamily(false)}>
+        <FamilyHealthScreen onBack={null} />
+      </SlideScreen>
+    );
+  if (showSOS)
+    return (
+      <SlideScreen onBack={() => setShowSOS(false)}>
+        <EmergencySOScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showHospital)
-    return <HospitalDirectoryScreen onBack={() => setShowHospital(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowHospital(false)}>
+        <HospitalDirectoryScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showPharmacy)
-    return <PharmacyDirectoryScreen onBack={() => setShowPharmacy(false)} />;
+    return (
+      <SlideScreen onBack={() => setShowPharmacy(false)}>
+        <PharmacyDirectoryScreen onBack={null} />
+      </SlideScreen>
+    );
   if (showAppointments)
     return (
-      <PatientAppointmentsScreen onBack={() => setShowAppointments(false)} />
+      <SlideScreen onBack={() => setShowAppointments(false)}>
+        <PatientAppointmentsScreen onBack={null} />
+      </SlideScreen>
     );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <StatusBar barStyle="light-content" backgroundColor={theme.accent} />
-      <ScrollView
+      <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         style={{ flex: 1, minHeight: 0 }}
         contentContainerStyle={{
           paddingBottom: tabScrollBottomPadding(),
           flexGrow: 1,
         }}
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true }
+        )}
       >
         <FadeInView delay={60}>
-          {/* Modern Gradient Header */}
+          {/* Modern Gradient Header — subtle parallax: moves at ~70% scroll speed */}
+          <Animated.View
+            style={{
+              transform: [{
+                translateY: scrollY.interpolate({
+                  inputRange: [0, 250],
+                  outputRange: [0, 75],
+                  extrapolate: "clamp",
+                }),
+              }],
+            }}
+          >
           <View
             style={{
               backgroundColor: theme.accent,
@@ -3276,6 +3438,7 @@ const PatientHomeScreen = () => {
               </View>
             </View>
           </View>
+          </Animated.View>
         </FadeInView>
 
         <FadeInView delay={140}>
@@ -3350,9 +3513,8 @@ const PatientHomeScreen = () => {
             </View>
 
             {upcomingAppointments.length > 0 ? (
-              <TouchableOpacity
+              <PressCard
                 onPress={() => setShowAppointments(true)}
-                activeOpacity={0.85}
                 style={{
                   backgroundColor: theme.card,
                   borderRadius: RFValue(16),
@@ -3427,7 +3589,7 @@ const PatientHomeScreen = () => {
                   size={RFValue(18)}
                   color={theme.textTertiary}
                 />
-              </TouchableOpacity>
+              </PressCard>
             ) : null}
 
             {/* Telemedicine */}
@@ -3451,9 +3613,8 @@ const PatientHomeScreen = () => {
             </View>
 
             <View style={{ marginBottom: RFValue(16) }}>
-              <TouchableOpacity
+              <PressCard
                 onPress={() => setStartCallType("video")}
-                activeOpacity={0.85}
                 style={{
                   backgroundColor: theme.card,
                   borderRadius: RFValue(16),
@@ -3490,11 +3651,10 @@ const PatientHomeScreen = () => {
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={RFValue(18)} color={theme.textTertiary} />
-              </TouchableOpacity>
+              </PressCard>
 
-              <TouchableOpacity
+              <PressCard
                 onPress={() => setStartCallType("audio")}
-                activeOpacity={0.85}
                 style={{
                   backgroundColor: theme.card,
                   borderRadius: RFValue(16),
@@ -3531,7 +3691,7 @@ const PatientHomeScreen = () => {
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={RFValue(18)} color={theme.textTertiary} />
-              </TouchableOpacity>
+              </PressCard>
               <TouchableOpacity
                 onPress={() => setShowFindDoctor(true)}
                 style={{
@@ -3862,7 +4022,7 @@ const PatientHomeScreen = () => {
             </TouchableOpacity>
           </View>
         </FadeInView>
-      </ScrollView>
+      </Animated.ScrollView>
     </SafeAreaView>
   );
 };
@@ -5773,7 +5933,7 @@ const PatientChatScreen = () => {
               backgroundColor: theme.card,
               paddingHorizontal: RFValue(12),
               paddingTop: RFValue(8),
-              paddingBottom: Math.max(insets.bottom, RFValue(8)),
+              paddingBottom: 102,
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
@@ -19047,16 +19207,11 @@ const DoctorRootPlaceholder = () => {
 // --- ANIMATED TAB BUTTON ---
 const AnimatedTabButton = ({ onPress, isFocused, icon, label, activeColor, muted, tabLabelSize }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const dotWidth = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
 
-  useEffect(() => {
-    Animated.timing(dotWidth, {
-      toValue: isFocused ? 1 : 0,
-      duration: 250,
-      easing: EASE_OUT_CUBIC,
-      useNativeDriver: false,
-    }).start();
-  }, [isFocused, dotWidth]);
+  const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onPress();
+  };
 
   const handlePressIn = () => {
     Animated.spring(scaleAnim, {
@@ -19076,14 +19231,9 @@ const AnimatedTabButton = ({ onPress, isFocused, icon, label, activeColor, muted
     }).start();
   };
 
-  const animatedDotWidth = dotWidth.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, RFValue(16)],
-  });
-
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={handlePress}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       activeOpacity={1}
@@ -19115,15 +19265,6 @@ const AnimatedTabButton = ({ onPress, isFocused, icon, label, activeColor, muted
         >
           {label}
         </Text>
-        <Animated.View
-          style={{
-            width: animatedDotWidth,
-            height: 3,
-            borderRadius: 1.5,
-            backgroundColor: activeColor,
-            marginTop: 4,
-          }}
-        />
       </Animated.View>
     </TouchableOpacity>
   );
@@ -19133,66 +19274,105 @@ const AnimatedTabButton = ({ onPress, isFocused, icon, label, activeColor, muted
 const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
-  const bottomPad = Math.max(
-    insets.bottom,
-    Platform.OS === "android" ? RFValue(18) : RFValue(10),
-  );
+  const [tabBarWidth, setTabBarWidth] = useState(0);
+  const indicatorX = useRef(new Animated.Value(0)).current;
+  const numTabs = state.routes.length;
   const tabIconSize = Math.min(ri(22), DEVICE_TYPE === "tablet" ? 26 : 24);
   const tabLabelSize = Math.min(RFText(10, { max: 1.06 }), 12);
   const muted = theme.textTertiary || "#9CA3AF";
+  const floatBottom = Math.max(insets.bottom, 10) + 10;
+
+  // Spring the shared indicator to the active tab's position
+  useEffect(() => {
+    if (tabBarWidth === 0 || numTabs === 0) return;
+    const tabWidth = tabBarWidth / numTabs;
+    const pillWidth = tabWidth - RFValue(24);
+    const targetX = state.index * tabWidth + RFValue(12);
+    Animated.spring(indicatorX, {
+      toValue: targetX,
+      damping: 18,
+      stiffness: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [state.index, tabBarWidth, numTabs, indicatorX]);
 
   return (
     <View
       style={{
-        flexDirection: "row",
+        position: "absolute",
+        bottom: floatBottom,
+        left: 16,
+        right: 16,
+        borderRadius: RFValue(28),
         backgroundColor: theme.tabBarBg,
-        borderTopWidth: 0,
-        borderTopColor: theme.tabBarBorder,
-        paddingBottom: bottomPad,
-        paddingTop: Math.min(RFValue(9), 11),
-        minHeight: Math.round(RFValue(62) + bottomPad),
-        shadowColor: theme.shadowColor,
-        shadowOpacity: 0.1,
-        shadowOffset: { width: 0, height: -4 },
-        shadowRadius: 16,
-        elevation: 12,
+        shadowColor: "#000",
+        shadowOpacity: 0.18,
+        shadowOffset: { width: 0, height: 8 },
+        shadowRadius: 24,
+        elevation: 20,
+        overflow: "hidden",
       }}
+      onLayout={(e) => setTabBarWidth(e.nativeEvent.layout.width)}
     >
-      {state.routes.map((route, index) => {
-        const { options } = descriptors[route.key];
-        const isFocused = state.index === index;
-        const label = options.tabBarLabel || route.name;
-        const icon = options.tabBarIcon
-          ? options.tabBarIcon({
-              color: isFocused ? activeColor : muted,
-              size: tabIconSize,
-              focused: isFocused,
-            })
-          : null;
+      {/* Spring indicator pill */}
+      {tabBarWidth > 0 && (
+        <Animated.View
+          style={{
+            position: "absolute",
+            top: RFValue(6),
+            width: tabBarWidth / numTabs - RFValue(24),
+            height: RFValue(36),
+            borderRadius: RFValue(18),
+            backgroundColor: activeColor + "1E",
+            transform: [{ translateX: indicatorX }],
+          }}
+        />
+      )}
 
-        const onPress = () => {
-          const event = navigation.emit({
-            type: "tabPress",
-            target: route.key,
-          });
-          if (!isFocused && !event.defaultPrevented) {
-            navigation.navigate(route.name);
-          }
-        };
+      <View
+        style={{
+          flexDirection: "row",
+          paddingBottom: RFValue(10),
+          paddingTop: RFValue(6),
+          minHeight: RFValue(58),
+        }}
+      >
+        {state.routes.map((route, index) => {
+          const { options } = descriptors[route.key];
+          const isFocused = state.index === index;
+          const label = options.tabBarLabel || route.name;
+          const icon = options.tabBarIcon
+            ? options.tabBarIcon({
+                color: isFocused ? activeColor : muted,
+                size: tabIconSize,
+                focused: isFocused,
+              })
+            : null;
 
-        return (
-          <AnimatedTabButton
-            key={route.key}
-            onPress={onPress}
-            isFocused={isFocused}
-            icon={icon}
-            label={label}
-            activeColor={activeColor}
-            muted={muted}
-            tabLabelSize={tabLabelSize}
-          />
-        );
-      })}
+          const onPress = () => {
+            const event = navigation.emit({
+              type: "tabPress",
+              target: route.key,
+            });
+            if (!isFocused && !event.defaultPrevented) {
+              navigation.navigate(route.name);
+            }
+          };
+
+          return (
+            <AnimatedTabButton
+              key={route.key}
+              onPress={onPress}
+              isFocused={isFocused}
+              icon={icon}
+              label={label}
+              activeColor={activeColor}
+              muted={muted}
+              tabLabelSize={tabLabelSize}
+            />
+          );
+        })}
+      </View>
     </View>
   );
 };
@@ -20288,15 +20468,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FFF" }}>
       <Modal visible={submitting} transparent animationType="fade">
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(15, 23, 42, 0.45)",
-            justifyContent: "center",
-            alignItems: "center",
-            padding: RFValue(24),
-          }}
-        >
+        <GlassOverlay>
           <View
             style={{
               backgroundColor: "#FFF",
@@ -20306,6 +20478,11 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
               alignItems: "center",
               maxWidth: 320,
               width: "100%",
+              shadowColor: "#000",
+              shadowOpacity: 0.18,
+              shadowOffset: { width: 0, height: 8 },
+              shadowRadius: 24,
+              elevation: 16,
             }}
           >
             <ActivityIndicator size="large" color="#4338CA" />
@@ -20331,7 +20508,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
               Please wait. You will return to Wound Tracker when this finishes.
             </Text>
           </View>
-        </View>
+        </GlassOverlay>
       </Modal>
       <View
         style={{
@@ -24540,7 +24717,7 @@ const AppContent = ({
           backgroundColor={theme.statusBarBg}
         />
         <CustomTabNavigator
-          activeColor={theme.accent}
+          activeColor="#0EA5E9"
           routes={[
             {
               name: "Home",
@@ -24645,7 +24822,7 @@ const AppContent = ({
           backgroundColor={theme.statusBarBg}
         />
         <CustomTabNavigator
-          activeColor="#8B5CF6"
+          activeColor="#059669"
           routes={[
             {
               name: "Home",
