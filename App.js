@@ -4489,6 +4489,7 @@ const CallScreen = ({
 }) => {
   const { theme } = useTheme();
   const { currentUserId } = useAppData();
+  const callInsets = useSafeAreaInsets();
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [status, setStatus] = useState("Connecting...");
@@ -4836,7 +4837,7 @@ const CallScreen = ({
           flexDirection: "row",
           justifyContent: "center",
           padding: RFValue(16),
-          paddingBottom: RFValue(24),
+          paddingBottom: Math.max(callInsets.bottom, 10) + RFValue(82),
         }}
       >
         <TouchableOpacity
@@ -5933,7 +5934,7 @@ const PatientChatScreen = () => {
               backgroundColor: theme.card,
               paddingHorizontal: RFValue(12),
               paddingTop: RFValue(8),
-              paddingBottom: 102,
+              paddingBottom: Math.max(insets.bottom, 10) + RFValue(92),
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
@@ -8876,7 +8877,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
       <View style={{ flex: 1, minHeight: 0 }}>
         <ScrollView
           style={{ flex: 1, minHeight: 0 }}
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: RFValue(8) }}
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: tabScrollBottomPadding() }}
           keyboardShouldPersistTaps="handled"
         >
           {/* Header */}
@@ -15165,7 +15166,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             style={{
               paddingHorizontal: RFValue(16),
               paddingTop: RFValue(10),
-              paddingBottom: Math.max(bookingInsets.bottom, RFValue(12)),
+              paddingBottom: Math.max(bookingInsets.bottom, 10) + RFValue(82),
               backgroundColor: theme.card,
               borderTopWidth: StyleSheet.hairlineWidth,
               borderTopColor: theme.cardBorder,
@@ -16525,7 +16526,7 @@ const HospitalDirectoryScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: RFValue(16),
-          paddingBottom: RFValue(60),
+          paddingBottom: tabScrollBottomPadding(),
         }}
         refreshControl={
           <RefreshControl
@@ -16897,6 +16898,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
           borderTopLeftRadius: RFValue(24),
           borderTopRightRadius: RFValue(24),
           padding: RFValue(20),
+          paddingBottom: tabScrollBottomPadding(),
           maxHeight: "92%",
         }}
       >
@@ -17022,7 +17024,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                           editable={!submitting}
                         />
                         <TextInput
-                          style={[inputStyle, { flex: 2 }]}
+                          style={[inputStyle, { flex: 2, minWidth: 0 }]}
                           placeholder="Notes (optional)"
                           placeholderTextColor={theme.textTertiary}
                           value={selections[idx].notes}
@@ -17126,7 +17128,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                   editable={!submitting}
                 />
                 <TextInput
-                  style={[inputStyle, { flex: 2 }]}
+                  style={[inputStyle, { flex: 2, minWidth: 0 }]}
                   placeholder="Notes (optional)"
                   placeholderTextColor={theme.textTertiary}
                   value={item.notes}
@@ -17769,7 +17771,7 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: RFValue(16),
-          paddingBottom: RFValue(60),
+          paddingBottom: tabScrollBottomPadding(),
         }}
         refreshControl={
           <RefreshControl
@@ -18561,6 +18563,7 @@ const FamilyHealthScreen = ({ onBack }) => {
           justifyContent: "center",
           alignItems: "center",
           padding: RFValue(24),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         <GlowView glowColor="#4338CA" size={RFValue(120)}>
@@ -20536,7 +20539,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         scrollEnabled={!submitting}
-        contentContainerStyle={{ padding: RFValue(20) }}
+        contentContainerStyle={{ padding: RFValue(20), paddingBottom: tabScrollBottomPadding() }}
       >
         <Text
           style={{
@@ -22252,7 +22255,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(40),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {errorMessage ? (
