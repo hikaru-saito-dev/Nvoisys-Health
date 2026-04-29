@@ -4231,9 +4231,27 @@ const PatientHomeScreen = () => {
                 >
                   <View
                     style={{
+                      width: RFValue(48),
+                      height: RFValue(48),
+                      borderRadius: RFValue(14),
+                      backgroundColor: theme.bg,
+                      justifyContent: "center",
                       alignItems: "center",
-                      flex: 1,
-                      paddingVertical: RFValue(8),
+                      marginBottom: RFValue(6),
+                    }}
+                  >
+                    <Ionicons
+                      name="business"
+                      size={RFValue(24)}
+                      color={theme.accent}
+                    />
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      fontWeight: "600",
+                      textAlign: "center",
                     }}
                   >
                     Hospital
@@ -4608,7 +4626,7 @@ const PatientHomeScreen = () => {
                     Talk to a doctor
                   </Text>
                 </TouchableOpacity>
-              </View>
+              </PressCard>
               <TouchableOpacity
                 onPress={() => setShowFindDoctor(true)}
                 style={{
