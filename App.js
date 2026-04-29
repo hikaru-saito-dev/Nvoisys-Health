@@ -6770,7 +6770,7 @@ const PatientChatScreen = () => {
     return (
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.bg }}
-        edges={["bottom", "left", "right"]}
+        edges={["left", "right"]}
       >
         <StatusBar
           barStyle={theme.statusBarStyle}
@@ -7127,8 +7127,8 @@ const PatientChatScreen = () => {
                 position: "absolute",
                 right: RFValue(16),
                 bottom:
-                  RFValue(100) +
-                  Math.max(insets.bottom, RFValue(8)),
+                  RFValue(56) +
+                  Math.max(insets.bottom, RFValue(6)),
                 backgroundColor: theme.accent,
                 paddingHorizontal: RFValue(14),
                 paddingVertical: RFValue(8),
@@ -7164,8 +7164,8 @@ const PatientChatScreen = () => {
             style={{
               backgroundColor: theme.card,
               paddingHorizontal: RFValue(12),
-              paddingTop: RFValue(8),
-              paddingBottom: 102,
+              paddingTop: RFValue(6),
+              paddingBottom: RFValue(10),
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
@@ -7235,7 +7235,8 @@ const PatientChatScreen = () => {
                     RFValue(120),
                     Math.round(SHORT_SIDE * 0.22),
                   ),
-                  paddingVertical: RFValue(8),
+                  paddingVertical: RFValue(6),
+                  minHeight: RFValue(40),
                   fontSize: RFValue(14),
                   color: theme.textPrimary,
                 }}
