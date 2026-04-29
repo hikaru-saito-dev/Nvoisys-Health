@@ -782,6 +782,8 @@ export function PackageDoctorJourneyScreen({
   doctors,
   onOpenChatWithDoctor,
   onAfterPackagePayment,
+  /** Extra ScrollView bottom inset when this screen sits above a floating tab bar (see App.js). */
+  scrollContentBottomInset = 120,
 }) {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState("");
@@ -1119,7 +1121,10 @@ export function PackageDoctorJourneyScreen({
         </Text>
       </View>
       <ScrollView
-        contentContainerStyle={{ padding: S.pad, paddingBottom: 40 }}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: scrollContentBottomInset + (insets.bottom || 0) + 24,
+        }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />
         }

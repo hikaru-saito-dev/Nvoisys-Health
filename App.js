@@ -3967,6 +3967,7 @@ const PatientHomeScreen = () => {
         doctors={packageDoctors}
         onOpenChatWithDoctor={handleOpenChatWithDoctor}
         onAfterPackagePayment={handleAfterPackagePayment}
+        scrollContentBottomInset={tabScrollBottomPadding()}
       />
     );
 
@@ -4617,25 +4618,24 @@ const PatientHomeScreen = () => {
                   shadowRadius: 12,
                   elevation: 3,
                   flexDirection: "row",
-                  flexWrap: "wrap",
-                  justifyContent: "space-between",
+                  alignItems: "stretch",
                 }}
               >
                 <TouchableOpacity
                   onPress={() => setStartCallType("video")}
                   style={{
-                    width: "48%",
+                    flex: 1,
+                    minWidth: 0,
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
-                    marginBottom: RFValue(8),
+                    marginRight: RFValue(10),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
                     alignItems: "center",
-                    marginRight: RFValue(14),
                   }}
                 >
                   <View
@@ -4677,18 +4677,17 @@ const PatientHomeScreen = () => {
                 <TouchableOpacity
                   onPress={() => setStartCallType("audio")}
                   style={{
-                    width: "48%",
+                    flex: 1,
+                    minWidth: 0,
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
-                    marginBottom: RFValue(8),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
                     alignItems: "center",
-                    marginRight: RFValue(14),
                   }}
                 >
                   <View
@@ -6904,9 +6903,9 @@ const PatientChatScreen = () => {
             contentContainerStyle={{
               padding: RFValue(16),
               paddingBottom:
-                Math.max(insets.bottom, 8) +
-                Math.round(72 * UI_SCALE) +
-                RFValue(12),
+                tabScrollBottomPadding() +
+                RFValue(72) +
+                Math.max(insets.bottom, 8),
             }}
             style={{ flex: 1, minHeight: 0 }}
             keyboardShouldPersistTaps="handled"
@@ -7140,7 +7139,10 @@ const PatientChatScreen = () => {
               style={{
                 position: "absolute",
                 right: RFValue(16),
-                bottom: RFValue(86) + Math.max(insets.bottom, RFValue(8)),
+                bottom:
+                  tabScrollBottomPadding() +
+                  RFValue(56) +
+                  Math.max(insets.bottom, RFValue(8)),
                 backgroundColor: theme.accent,
                 paddingHorizontal: RFValue(14),
                 paddingVertical: RFValue(8),
