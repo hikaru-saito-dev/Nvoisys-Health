@@ -35,9 +35,26 @@ module.exports = ({ config }) => {
   // `config` is the parsed `app.json` (everything inside the `expo` key).
   // We spread it and override only the fields we need to compute at runtime.
   const baseExtra = (config && config.extra) || {};
+  const basePlugins = Array.isArray(config.plugins) ? [...config.plugins] : [];
+  // LDPlayer / most Android emulators are x86_64; default EAS APKs are often
+  // ARM-only and will not install or run there.
+  const androidAbiPlugin = [
+    "expo-build-properties",
+    {
+      android: {
+        reactNativeArchitectures: [
+          "armeabi-v7a",
+          "arm64-v8a",
+          "x86",
+          "x86_64",
+        ],
+      },
+    },
+  ];
 
   return {
     ...config,
+    plugins: [...basePlugins, androidAbiPlugin],
     extra: {
       ...baseExtra,
       aiApiKey:

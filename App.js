@@ -28,15 +28,18 @@ import {
   Modal,
   RefreshControl,
   Linking,
+  InteractionManager,
 } from "react-native";
-import {
-  RTCPeerConnection,
-  RTCIceCandidate,
-  RTCSessionDescription,
-  RTCView,
-  mediaDevices,
-} from "@livekit/react-native-webrtc";
 import Constants from "expo-constants";
+
+/** Load WebRTC only when a call screen runs — avoids native init at cold start (common emulator crash). */
+let livekitWebRtcModule = null;
+const getLivekitWebRTC = () => {
+  if (!livekitWebRtcModule) {
+    livekitWebRtcModule = require("@livekit/react-native-webrtc");
+  }
+  return livekitWebRtcModule;
+};
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
@@ -58,6 +61,123 @@ import { NotificationHost, installAlertOverride } from "./appNotify";
 // (and dependencies) into a styled toast. Confirmation dialogs that pass a
 // `buttons` array still use the system Alert.
 installAlertOverride(Alert);
+
+// Surface unhandled async rejections so silent emulator crashes are
+// at least visible via `console.log` (and adb logcat).
+if (typeof globalThis !== "undefined" && !globalThis.__nvhsRejectionHook) {
+  globalThis.__nvhsRejectionHook = true;
+  try {
+    const tracking = require("promise/setimmediate/rejection-tracking");
+    tracking.enable({
+      allRejections: true,
+      onUnhandled: (id, error) => {
+        try {
+          console.log(
+            "Unhandled promise rejection:",
+            id,
+            error?.message || error,
+            error?.stack,
+          );
+        } catch {
+          /* ignore */
+        }
+      },
+      onHandled: () => {},
+    });
+  } catch {
+    /* ignore — rejection-tracking is optional */
+  }
+}
+
+// Root-level error boundary so a crash inside the rendered tree shows a
+// readable message instead of silently killing the Android process. This
+// helps diagnose post-login crashes on emulators (e.g. LDPlayer) where
+// `adb logcat` is not always accessible.
+class RootErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    this.setState({ info });
+    try {
+      console.log("RootErrorBoundary caught:", error?.message, info?.componentStack);
+    } catch {
+      /* ignore */
+    }
+  }
+  render() {
+    if (this.state.error) {
+      const themeBg = this.props.theme?.bg || "#FFFFFF";
+      const themeText = this.props.theme?.textPrimary || "#111827";
+      const themeAccent = this.props.theme?.accent || "#4F46E5";
+      return (
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: themeBg,
+            padding: 20,
+            paddingTop: 60,
+          }}
+        >
+          <Text style={{ color: themeText, fontSize: 20, fontWeight: "800" }}>
+            Something went wrong
+          </Text>
+          <Text style={{ color: themeText, marginTop: 12 }}>
+            {String(this.state.error?.message || this.state.error || "Unknown error")}
+          </Text>
+          <ScrollView style={{ marginTop: 12 }}>
+            <Text style={{ color: themeText, fontSize: 12 }}>
+              {String(this.state.info?.componentStack || "")}
+            </Text>
+          </ScrollView>
+          <TouchableOpacity
+            onPress={() => this.setState({ error: null, info: null })}
+            style={{
+              backgroundColor: themeAccent,
+              padding: 14,
+              borderRadius: 12,
+              marginTop: 16,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#FFF", fontWeight: "800" }}>Try again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                if (pb?.authStore?.clear) pb.authStore.clear();
+              } catch {
+                /* ignore */
+              }
+              try {
+                await AsyncStorage.removeItem("pb_auth");
+              } catch {
+                /* ignore */
+              }
+              this.setState({ error: null, info: null });
+            }}
+            style={{
+              backgroundColor: "#EF4444",
+              padding: 14,
+              borderRadius: 12,
+              marginTop: 12,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#FFF", fontWeight: "800" }}>
+              Sign out and clear saved login
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 import {
   decryptChatImagePayload,
   decryptChatText,
@@ -3564,6 +3684,7 @@ const PatientHomeScreen = () => {
   } = useAppData();
   const tabNav = useMainTabNav();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   const handleOpenOfferConversation = useCallback(
     (conversationId, peerUserId) => {
@@ -4517,7 +4638,6 @@ const PatientHomeScreen = () => {
                   flexDirection: "row",
                   flexWrap: "wrap",
                   justifyContent: "space-between",
-                  marginBottom: RFValue(12),
                 }}
               >
                 <TouchableOpacity
@@ -4977,6 +5097,12 @@ const PatientHomeScreen = () => {
 const PatientEmergencyScreen = ({ navigation }) => {
   const { theme } = useTheme();
   const [pressed, setPressed] = useState(false);
+  const { patientProfile, hospitals } = useAppData();
+  const [showHospital, setShowHospital] = useState(false);
+
+  if (showHospital) {
+    return <HospitalDirectoryScreen onBack={() => setShowHospital(false)} />;
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -5447,6 +5573,7 @@ const CallScreen = ({
   const pcRef = useRef(null);
   const wsRef = useRef(null);
   const roleRef = useRef("receiver");
+  const { RTCView: LkRTCView } = useMemo(() => getLivekitWebRTC(), []);
 
   const cleanupStreams = (resetState = true) => {
     const stream = localStreamRef.current;
@@ -5503,6 +5630,12 @@ const CallScreen = ({
 
     const setupCall = async () => {
       try {
+        const {
+          mediaDevices,
+          RTCPeerConnection,
+          RTCSessionDescription,
+          RTCIceCandidate,
+        } = getLivekitWebRTC();
         const stream = await mediaDevices.getUserMedia({
           audio: true,
           video: callType === "video",
@@ -5721,7 +5854,7 @@ const CallScreen = ({
 
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         {remoteStream ? (
-          <RTCView
+          <LkRTCView
             streamURL={remoteStream.toURL()}
             style={{ width: "100%", height: "100%" }}
             objectFit="cover"
@@ -5756,7 +5889,7 @@ const CallScreen = ({
             }}
           >
             {isVideoEnabled ? (
-              <RTCView
+              <LkRTCView
                 streamURL={localStream.toURL()}
                 style={{ width: "100%", height: "100%" }}
                 objectFit="cover"
@@ -6584,7 +6717,7 @@ const PatientChatScreen = () => {
       } else {
         setDirectoryError("Unable to start chat");
       }
-    } catch {
+    } catch (error) {
       setDirectoryError(error?.message || "Unable to start chat");
     } finally {
       setStartingChatId(null);
@@ -15574,6 +15707,7 @@ const AudioCallScreen = ({ onBack }) => {
 
     const startAudio = async () => {
       try {
+        const { mediaDevices } = getLivekitWebRTC();
         const stream = await mediaDevices.getUserMedia({
           audio: true,
           video: false,
@@ -15736,6 +15870,7 @@ const VideoCallScreen = ({ onBack }) => {
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [localStream, setLocalStream] = useState(null);
   const localStreamRef = useRef(null);
+  const { RTCView: LkRTCView } = useMemo(() => getLivekitWebRTC(), []);
 
   useEffect(() => {
     const interval = setInterval(
@@ -15750,6 +15885,7 @@ const VideoCallScreen = ({ onBack }) => {
 
     const startStream = async () => {
       try {
+        const { mediaDevices } = getLivekitWebRTC();
         const stream = await mediaDevices.getUserMedia({
           audio: true,
           video: { facingMode: "user" },
@@ -15889,7 +16025,7 @@ const VideoCallScreen = ({ onBack }) => {
         }}
       >
         {localStream && !isVideoOff ? (
-          <RTCView
+          <LkRTCView
             streamURL={localStream.toURL()}
             style={{ width: "100%", height: "100%" }}
             objectFit="cover"
@@ -21297,6 +21433,10 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const tabLabelSize = Math.min(RFText(10, { max: 1.06 }), 12);
   const muted = theme.textTertiary || "#9CA3AF";
   const floatBottom = Math.max(insets.bottom, 10) + 10;
+  const bottomPad = Math.max(
+    insets.bottom,
+    Platform.OS === "android" ? RFValue(18) : RFValue(10),
+  );
 
   // Spring the shared indicator to the active tab's position
   useEffect(() => {
@@ -26622,9 +26762,22 @@ export default function App() {
 
   // Step 7b: when a patient logs in, request notification permission up-front
   // so later dose reminders can be scheduled silently. Best-effort.
+  // Defer on Android: LDPlayer / some emulators crash if permission runs in the
+  // same tick as heavy post-login layout + PocketBase realtime.
   useEffect(() => {
     if (!currentUser?.id || userRole !== "patient") return;
-    ensureReminderPermissions().catch(() => {});
+    let cancelled = false;
+    const delayMs = Platform.OS === "android" ? 2000 : 0;
+    const t = setTimeout(() => {
+      InteractionManager.runAfterInteractions(() => {
+        if (cancelled) return;
+        ensureReminderPermissions().catch(() => {});
+      });
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [currentUser?.id, userRole]);
 
   // Step 9: give every patient a pinned "Health Assistant" conversation the
@@ -26862,23 +27015,25 @@ export default function App() {
     <SafeAreaProvider>
       <ThemeContext.Provider value={{ theme, changeTheme, themeKey }}>
         <AppDataContext.Provider value={appDataValue}>
-          <AppContent
-            userRole={userRole}
-            setUserRole={setUserRole}
-            currentUser={currentUser}
-            setCurrentUser={setCurrentUser}
-            patientProfile={patientProfile}
-            setPatientProfile={setPatientProfile}
-            localCareMode={localCareMode}
-            setLocalCareMode={setLocalCareMode}
-            theme={theme}
-            wounds={wounds}
-            setWounds={setWounds}
-            medOrders={medOrders}
-            setMedOrders={setMedOrders}
-            patients={patients}
-            setPatients={setPatients}
-          />
+          <RootErrorBoundary theme={theme}>
+            <AppContent
+              userRole={userRole}
+              setUserRole={setUserRole}
+              currentUser={currentUser}
+              setCurrentUser={setCurrentUser}
+              patientProfile={patientProfile}
+              setPatientProfile={setPatientProfile}
+              localCareMode={localCareMode}
+              setLocalCareMode={setLocalCareMode}
+              theme={theme}
+              wounds={wounds}
+              setWounds={setWounds}
+              medOrders={medOrders}
+              setMedOrders={setMedOrders}
+              patients={patients}
+              setPatients={setPatients}
+            />
+          </RootErrorBoundary>
           <NotificationHost />
         </AppDataContext.Provider>
       </ThemeContext.Provider>
