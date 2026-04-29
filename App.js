@@ -3684,7 +3684,6 @@ const PatientHomeScreen = () => {
   } = useAppData();
   const tabNav = useMainTabNav();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
-  const scrollY = useRef(new Animated.Value(0)).current;
 
   const handleOpenOfferConversation = useCallback(
     (conversationId, peerUserId) => {
@@ -4051,25 +4050,8 @@ const PatientHomeScreen = () => {
           paddingBottom: tabScrollBottomPadding(),
           flexGrow: 1,
         }}
-        scrollEventThrottle={16}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true }
-        )}
       >
         <FadeInView delay={60}>
-          {/* Modern Gradient Header — subtle parallax: moves at ~70% scroll speed */}
-          <Animated.View
-            style={{
-              transform: [{
-                translateY: scrollY.interpolate({
-                  inputRange: [0, 250],
-                  outputRange: [0, 75],
-                  extrapolate: "clamp",
-                }),
-              }],
-            }}
-          >
           <View
             style={{
               backgroundColor: theme.accent,
@@ -4220,7 +4202,6 @@ const PatientHomeScreen = () => {
               </View>
             </View>
           </View>
-          </Animated.View>
         </FadeInView>
 
         <FadeInView delay={140}>
@@ -21456,6 +21437,7 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
     <View
       style={{
         position: "absolute",
+        flexDirection: "row",
         bottom: floatBottom,
         left: 16,
         right: 16,
