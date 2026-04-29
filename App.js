@@ -4098,9 +4098,6 @@ const PatientHomeScreen = () => {
               </View>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <TouchableOpacity
-                  accessibilityLabel="Notifications"
-                  accessibilityRole="button"
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   style={{
                     width: RFValue(40),
                     height: RFValue(40),
@@ -4118,9 +4115,6 @@ const PatientHomeScreen = () => {
                   />
                 </TouchableOpacity>
                 <TouchableOpacity
-                  accessibilityLabel="SOS emergency alert"
-                  accessibilityRole="button"
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   style={{
                     width: RFValue(40),
                     height: RFValue(40),
@@ -4559,7 +4553,6 @@ const PatientHomeScreen = () => {
                       color: theme.textPrimary,
                       marginTop: RFValue(2),
                     }}
-                    numberOfLines={1}
                   >
                     {upcomingAppointments[0].doctorName}
                   </Text>
@@ -5542,7 +5535,6 @@ const CallScreen = ({
 }) => {
   const { theme } = useTheme();
   const { currentUserId } = useAppData();
-  const callInsets = useSafeAreaInsets();
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [status, setStatus] = useState("Connecting...");
@@ -5897,13 +5889,11 @@ const CallScreen = ({
           flexDirection: "row",
           justifyContent: "center",
           padding: RFValue(16),
-          paddingBottom: Math.max(callInsets.bottom, 10) + RFValue(82),
+          paddingBottom: RFValue(24),
         }}
       >
         <TouchableOpacity
           onPress={toggleMute}
-          accessibilityLabel={isMuted ? "Unmute microphone" : "Mute microphone"}
-          accessibilityRole="button"
           style={{
             width: RFValue(52),
             height: RFValue(52),
@@ -5924,8 +5914,6 @@ const CallScreen = ({
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handleClose}
-          accessibilityLabel="End call"
-          accessibilityRole="button"
           style={{
             width: RFValue(62),
             height: RFValue(62),
@@ -5941,8 +5929,6 @@ const CallScreen = ({
         <TouchableOpacity
           onPress={toggleVideo}
           disabled={callType !== "video"}
-          accessibilityLabel={isVideoEnabled ? "Turn off camera" : "Turn on camera"}
-          accessibilityRole="button"
           style={{
             width: RFValue(52),
             height: RFValue(52),
@@ -6945,7 +6931,7 @@ const PatientChatScreen = () => {
                 const isPrescription =
                   !hasImage && messageLooksLikePrescription(msg.text);
                 const bubbleBg = isPrescription
-                  ? theme.accentLight || "#EEF2FF"
+                  ? "#EEF2FF"
                   : isSystem
                     ? theme.bg
                     : hasImage
@@ -6956,7 +6942,7 @@ const PatientChatScreen = () => {
                         ? theme.accent
                         : theme.card;
                 const bodyTextColor = isPrescription
-                  ? theme.textPrimary
+                  ? "#1E1B4B"
                   : isSystem
                     ? theme.textSecondary
                     : hasImage
@@ -7114,7 +7100,7 @@ const PatientChatScreen = () => {
                 >
                   <Ionicons
                     name="chatbubbles-outline"
-                    size={RFValue(32)}
+                    size={32}
                     color={theme.textTertiary}
                   />
                 </View>
@@ -7179,7 +7165,7 @@ const PatientChatScreen = () => {
               backgroundColor: theme.card,
               paddingHorizontal: RFValue(12),
               paddingTop: RFValue(8),
-              paddingBottom: Math.max(insets.bottom, 10) + RFValue(92),
+              paddingBottom: 102,
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
@@ -7191,9 +7177,6 @@ const PatientChatScreen = () => {
                 <TouchableOpacity
                   onPress={() => sendAttachment("camera")}
                   disabled={sendingAttachment}
-                  accessibilityLabel="Take photo"
-                  accessibilityRole="button"
-                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                   style={{
                     width: RFValue(36),
                     height: RFValue(36),
@@ -7214,9 +7197,6 @@ const PatientChatScreen = () => {
                 <TouchableOpacity
                   onPress={() => sendAttachment("image")}
                   disabled={sendingAttachment}
-                  accessibilityLabel="Attach image"
-                  accessibilityRole="button"
-                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                   style={{
                     width: RFValue(36),
                     height: RFValue(36),
@@ -9122,7 +9102,6 @@ const PatientProfileScreen = ({
             <View
               style={{
                 position: "absolute",
-                zIndex: 1,
                 right: -RFValue(4),
                 bottom: -RFValue(4),
                 width: RFValue(28),
@@ -9596,7 +9575,6 @@ const SplashScreen = ({ onNext }) => {
       <View
         style={{
           position: "absolute",
-          zIndex: -1,
           top: -60,
           right: -60,
           width: 200,
@@ -9609,7 +9587,6 @@ const SplashScreen = ({ onNext }) => {
       <View
         style={{
           position: "absolute",
-          zIndex: -1,
           bottom: -40,
           left: -40,
           width: 160,
@@ -9622,7 +9599,6 @@ const SplashScreen = ({ onNext }) => {
       <View
         style={{
           position: "absolute",
-          zIndex: -1,
           top: "40%",
           left: -30,
           width: 100,
@@ -10350,7 +10326,7 @@ const RoleScreen = ({ onNext, onBack, onGoToLogin }) => {
       <View style={{ flex: 1, minHeight: 0 }}>
         <ScrollView
           style={{ flex: 1, minHeight: 0 }}
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: tabScrollBottomPadding() }}
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: RFValue(8) }}
           keyboardShouldPersistTaps="handled"
         >
           {/* Header */}
@@ -17352,7 +17328,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             style={{
               paddingHorizontal: RFValue(16),
               paddingTop: RFValue(10),
-              paddingBottom: Math.max(bookingInsets.bottom, 10) + RFValue(82),
+              paddingBottom: Math.max(bookingInsets.bottom, RFValue(12)),
               backgroundColor: theme.card,
               borderTopWidth: StyleSheet.hairlineWidth,
               borderTopColor: theme.cardBorder,
@@ -17520,7 +17496,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingRight: RFValue(8), paddingBottom: RFValue(4) }}
+            contentContainerStyle={{ paddingRight: RFValue(8) }}
           >
             {concernChips.map((chip) => {
               const active = selectedConcern === chip.id;
@@ -17555,7 +17531,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingTop: RFValue(10), paddingBottom: RFValue(4) }}
+          contentContainerStyle={{ paddingTop: RFValue(10) }}
         >
           {categories.map((categoryOption) => {
             const active = category === categoryOption;
@@ -17818,7 +17794,6 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
 };
 
 const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
-  const { theme } = useTheme();
   const {
     prescriptions: prescriptionRecords,
     wounds: woundRecords,
@@ -17932,15 +17907,15 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   }, [highlightPrescriptionId, cards]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.statusBarBg} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
-          backgroundColor: theme.card,
+          backgroundColor: "#FFFFFF",
           padding: RFValue(20),
           paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
-          borderBottomColor: theme.cardBorder,
+          borderBottomColor: "#F3F4F6",
         }}
       >
         <View
@@ -17956,19 +17931,19 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
               width: RFValue(36),
               height: RFValue(36),
               borderRadius: RFValue(10),
-              backgroundColor: theme.bg,
+              backgroundColor: "#F3F4F6",
               justifyContent: "center",
               alignItems: "center",
               marginRight: RFValue(14),
             }}
           >
-            <Ionicons name="arrow-back" size={RFValue(20)} color={theme.textPrimary} />
+            <Ionicons name="arrow-back" size={RFValue(20)} color="#374151" />
           </TouchableOpacity>
           <Text
             style={{
               fontSize: RFValue(18),
               fontWeight: "800",
-              color: theme.textPrimary,
+              color: "#1E1B4B",
             }}
           >
             Prescriptions
@@ -17988,13 +17963,13 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
             <Ionicons
               name="document-text-outline"
               size={RFValue(48)}
-              color={theme.textTertiary}
+              color="#D1D5DB"
             />
             <Text
               style={{
                 marginTop: RFValue(12),
                 fontSize: RFValue(14),
-                color: theme.textSecondary,
+                color: "#6B7280",
                 textAlign: "center",
               }}
             >
@@ -18013,7 +17988,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                 }
               }}
               style={{
-                backgroundColor: theme.card,
+                backgroundColor: "#FFFFFF",
                 borderRadius: RFValue(18),
                 marginBottom: RFValue(16),
                 shadowColor: "#000",
@@ -18090,16 +18065,16 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   style={{
                     paddingHorizontal: RFValue(16),
                     paddingVertical: RFValue(10),
-                    backgroundColor: theme.accentLight,
+                    backgroundColor: "#EEF2FF",
                     borderBottomWidth: 1,
-                    borderBottomColor: theme.cardBorder,
+                    borderBottomColor: "#E0E7FF",
                   }}
                 >
                   <Text
                     style={{
                       fontSize: RFValue(11),
                       fontWeight: "700",
-                      color: theme.accent,
+                      color: "#3730A3",
                       marginBottom: 2,
                     }}
                   >
@@ -18109,7 +18084,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     style={{
                       fontSize: RFValue(13),
                       fontWeight: "600",
-                      color: theme.textPrimary,
+                      color: "#1E1B4B",
                     }}
                     numberOfLines={2}
                   >
@@ -18123,16 +18098,16 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   style={{
                     paddingHorizontal: RFValue(16),
                     paddingVertical: RFValue(12),
-                    backgroundColor: theme.accentLight,
+                    backgroundColor: "#F5F3FF",
                     borderBottomWidth: 1,
-                    borderBottomColor: theme.cardBorder,
+                    borderBottomColor: "#E9D5FF",
                   }}
                 >
                   <Text
                     style={{
                       fontSize: RFValue(11),
                       fontWeight: "700",
-                      color: theme.accent,
+                      color: "#6D28D9",
                       marginBottom: 4,
                     }}
                   >
@@ -18142,7 +18117,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     style={{
                       fontSize: RFValue(14),
                       fontWeight: "700",
-                      color: theme.textPrimary,
+                      color: "#1E1B4B",
                     }}
                   >
                     {rx.diagnosis}
@@ -18157,7 +18132,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     paddingVertical: RFValue(10),
                   }}
                 >
-                  <Text style={{ fontSize: RFValue(11), color: theme.textSecondary }}>
+                  <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
                     Checking prescriptions for interactions with your profile…
                   </Text>
                 </View>
@@ -18168,7 +18143,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     marginBottom: RFValue(10),
                     padding: RFValue(12),
                     borderRadius: RFValue(12),
-                    backgroundColor: theme.warningLight,
+                    backgroundColor: "#FEF3C7",
                     borderWidth: 1,
                     borderColor: "#F59E0B",
                   }}
@@ -18223,7 +18198,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   style={{
                     padding: RFValue(16),
                     borderBottomWidth: idx < rx.medicines.length - 1 ? 1 : 0,
-                    borderBottomColor: theme.divider,
+                    borderBottomColor: "#F3F4F6",
                   }}
                 >
                   <View
@@ -18238,7 +18213,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                       style={{
                         fontSize: RFValue(14),
                         fontWeight: "700",
-                        color: theme.textPrimary,
+                        color: "#1E1B4B",
                         flex: 1,
                         marginRight: RFValue(8),
                       }}
@@ -18247,7 +18222,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     </Text>
                     <View
                       style={{
-                        backgroundColor: theme.accentLight,
+                        backgroundColor: "#EEF2FF",
                         paddingHorizontal: RFValue(8),
                         paddingVertical: RFValue(4),
                         borderRadius: RFValue(8),
@@ -18269,13 +18244,13 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   <Text
                     style={{
                       fontSize: RFValue(12),
-                      color: theme.textSecondary,
+                      color: "#6B7280",
                       marginBottom: RFValue(4),
                     }}
                   >
                     When to take: {med.whenToTake}
                   </Text>
-                  <Text style={{ fontSize: RFValue(12), color: theme.textSecondary }}>
+                  <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
                     How long: {med.duration}
                   </Text>
                 </View>
@@ -18286,7 +18261,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   padding: RFValue(12),
                   flexDirection: "row",
                   borderTopWidth: 1,
-                  borderTopColor: theme.divider,
+                  borderTopColor: "#F3F4F6",
                 }}
               >
                 <TouchableOpacity
@@ -18296,7 +18271,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     justifyContent: "center",
                     alignItems: "center",
                     paddingVertical: RFValue(10),
-                    backgroundColor: theme.successLight,
+                    backgroundColor: "#ECFDF5",
                     borderRadius: RFValue(10),
                     marginRight: RFValue(8),
                   }}
@@ -18324,7 +18299,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     justifyContent: "center",
                     alignItems: "center",
                     paddingVertical: RFValue(10),
-                    backgroundColor: theme.accentLight,
+                    backgroundColor: "#EEF2FF",
                     borderRadius: RFValue(10),
                     marginLeft: RFValue(8),
                   }}
@@ -18676,7 +18651,7 @@ const HospitalDirectoryScreen = ({ onBack }) => {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingVertical: RFValue(10), paddingBottom: RFValue(4) }}
+            contentContainerStyle={{ paddingVertical: RFValue(10) }}
           >
             {chipFilters.map((chip) => {
               const active = locationFilter === chip.id;
@@ -18713,7 +18688,7 @@ const HospitalDirectoryScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: RFValue(16),
-          paddingBottom: tabScrollBottomPadding(),
+          paddingBottom: RFValue(60),
         }}
         refreshControl={
           <RefreshControl
@@ -18841,13 +18816,13 @@ const PharmacyCard = ({ theme, pharmacy, onOpen }) => {
           width: RFValue(52),
           height: RFValue(52),
           borderRadius: RFValue(14),
-          backgroundColor: theme.accentLight,
+          backgroundColor: "#F3E8FF",
           justifyContent: "center",
           alignItems: "center",
           marginRight: RFValue(12),
         }}
       >
-        <Ionicons name="leaf" size={RFValue(24)} color={theme.accent} />
+        <Ionicons name="leaf" size={RFValue(24)} color="#8B5CF6" />
       </View>
       <View style={{ flex: 1 }}>
         <Text
@@ -19085,7 +19060,6 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
           borderTopLeftRadius: RFValue(24),
           borderTopRightRadius: RFValue(24),
           padding: RFValue(20),
-          paddingBottom: tabScrollBottomPadding(),
           maxHeight: "92%",
         }}
       >
@@ -19126,10 +19100,6 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
           delivery with the pharmacy in chat.
         </Text>
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={RFValue(40)}
-        >
         <ScrollView
           keyboardShouldPersistTaps="handled"
           style={{ maxHeight: RFValue(440) }}
@@ -19215,7 +19185,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                           editable={!submitting}
                         />
                         <TextInput
-                          style={[inputStyle, { flex: 2, minWidth: 0 }]}
+                          style={[inputStyle, { flex: 2 }]}
                           placeholder="Notes (optional)"
                           placeholderTextColor={theme.textTertiary}
                           value={selections[idx].notes}
@@ -19285,13 +19255,10 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                 <TouchableOpacity
                   onPress={() => removeCustomItem(item.key)}
                   disabled={submitting}
-                  accessibilityLabel="Remove item"
-                  accessibilityRole="button"
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Ionicons
                     name="trash-outline"
-                    size={RFValue(18)}
+                    size={18}
                     color={theme.danger}
                   />
                 </TouchableOpacity>
@@ -19322,7 +19289,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                   editable={!submitting}
                 />
                 <TextInput
-                  style={[inputStyle, { flex: 2, minWidth: 0 }]}
+                  style={[inputStyle, { flex: 2 }]}
                   placeholder="Notes (optional)"
                   placeholderTextColor={theme.textTertiary}
                   value={item.notes}
@@ -19386,7 +19353,6 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
             </Text>
           ) : null}
         </ScrollView>
-        </KeyboardAvoidingView>
 
         <TouchableOpacity
           onPress={handleSubmit}
@@ -19929,7 +19895,7 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingVertical: RFValue(10), paddingBottom: RFValue(4) }}
+            contentContainerStyle={{ paddingVertical: RFValue(10) }}
           >
             {chipFilters.map((chip) => {
               const active = locationFilter === chip.id;
@@ -19966,7 +19932,7 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: RFValue(16),
-          paddingBottom: tabScrollBottomPadding(),
+          paddingBottom: RFValue(60),
         }}
         refreshControl={
           <RefreshControl
@@ -20051,7 +20017,6 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
 // ========================================
 
 const MedicationTrackerScreen = ({ onBack }) => {
-  const { theme } = useTheme();
   const {
     currentUserId,
     fetchMedicationSchedule,
@@ -20253,15 +20218,15 @@ const MedicationTrackerScreen = ({ onBack }) => {
   const mealLabel = (meal) => MEAL_TIMING_LABEL[meal] || "";
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.statusBarBg} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
-          backgroundColor: theme.card,
+          backgroundColor: "#FFFFFF",
           padding: RFValue(20),
           paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
-          borderBottomColor: theme.cardBorder,
+          borderBottomColor: "#F3F4F6",
         }}
       >
         <View
@@ -20277,19 +20242,19 @@ const MedicationTrackerScreen = ({ onBack }) => {
               width: RFValue(36),
               height: RFValue(36),
               borderRadius: RFValue(10),
-              backgroundColor: theme.bg,
+              backgroundColor: "#F3F4F6",
               justifyContent: "center",
               alignItems: "center",
               marginRight: RFValue(14),
             }}
           >
-            <Ionicons name="arrow-back" size={RFValue(20)} color={theme.textPrimary} />
+            <Ionicons name="arrow-back" size={RFValue(20)} color="#374151" />
           </TouchableOpacity>
           <Text
             style={{
               fontSize: RFValue(18),
               fontWeight: "800",
-              color: theme.textPrimary,
+              color: "#1E1B4B",
             }}
           >
             Medication Tracker
@@ -20315,13 +20280,13 @@ const MedicationTrackerScreen = ({ onBack }) => {
         {error ? (
           <View
             style={{
-              backgroundColor: theme.dangerLight,
+              backgroundColor: "#FEF2F2",
               borderRadius: RFValue(12),
               padding: RFValue(12),
               marginBottom: RFValue(12),
             }}
           >
-            <Text style={{ color: theme.danger, fontSize: RFValue(12) }}>
+            <Text style={{ color: "#B91C1C", fontSize: RFValue(12) }}>
               {error}
             </Text>
           </View>
@@ -20330,7 +20295,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
         {/* Adherence Score */}
         <View
           style={{
-            backgroundColor: theme.card,
+            backgroundColor: "#FFFFFF",
             borderRadius: RFValue(18),
             padding: RFValue(20),
             marginBottom: RFValue(16),
@@ -20368,7 +20333,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
             style={{
               fontSize: RFValue(14),
               fontWeight: "700",
-              color: theme.textPrimary,
+              color: "#1E1B4B",
             }}
           >
             7-day Adherence
@@ -20387,7 +20352,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
         {/* Weekly Chart */}
         <View
           style={{
-            backgroundColor: theme.card,
+            backgroundColor: "#FFFFFF",
             borderRadius: RFValue(18),
             padding: RFValue(16),
             marginBottom: RFValue(16),
@@ -20402,7 +20367,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
             style={{
               fontSize: RFValue(14),
               fontWeight: "700",
-              color: theme.textPrimary,
+              color: "#1E1B4B",
               marginBottom: RFValue(14),
             }}
           >
@@ -20427,7 +20392,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
                     ),
                     borderRadius: RFValue(4),
                     backgroundColor: !d.hadDoses
-                      ? theme.cardBorder
+                      ? "#E5E7EB"
                       : d.rate >= 80
                         ? "#059669"
                         : d.rate >= 50
@@ -20439,7 +20404,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
                 <Text
                   style={{
                     fontSize: RFValue(9),
-                    color: theme.textSecondary,
+                    color: "#6B7280",
                     fontWeight: "600",
                   }}
                 >
@@ -20455,7 +20420,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
           style={{
             fontSize: RFValue(15),
             fontWeight: "700",
-            color: theme.textPrimary,
+            color: "#1E1B4B",
             marginBottom: RFValue(12),
           }}
         >
@@ -20464,7 +20429,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
         {todayDoses.length === 0 ? (
           <View
             style={{
-              backgroundColor: theme.card,
+              backgroundColor: "#FFFFFF",
               borderRadius: RFValue(14),
               padding: RFValue(16),
               marginBottom: RFValue(12),
@@ -20474,7 +20439,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
             <Text
               style={{
                 fontSize: RFValue(12),
-                color: theme.textSecondary,
+                color: "#6B7280",
                 textAlign: "center",
               }}
             >
@@ -20493,7 +20458,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
               onPress={() => !taken && handleMarkTaken(dose)}
               disabled={taken || isBusy}
               style={{
-                backgroundColor: theme.card,
+                backgroundColor: "#FFFFFF",
                 borderRadius: RFValue(14),
                 padding: RFValue(16),
                 marginBottom: RFValue(10),
@@ -20515,10 +20480,10 @@ const MedicationTrackerScreen = ({ onBack }) => {
                   height: RFValue(36),
                   borderRadius: RFValue(12),
                   backgroundColor: taken
-                    ? theme.successLight
+                    ? "#ECFDF5"
                     : missed
-                      ? theme.dangerLight
-                      : theme.bg,
+                      ? "#FEF2F2"
+                      : "#F3F4F6",
                   justifyContent: "center",
                   alignItems: "center",
                   marginRight: RFValue(14),
@@ -20533,7 +20498,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
                         : "medkit"
                   }
                   size={RFValue(22)}
-                  color={taken ? theme.success : missed ? theme.danger : theme.textTertiary}
+                  color={taken ? "#059669" : missed ? "#B91C1C" : "#6B7280"}
                 />
               </View>
               <View style={{ flex: 1 }}>
@@ -20541,18 +20506,18 @@ const MedicationTrackerScreen = ({ onBack }) => {
                   style={{
                     fontSize: RFValue(14),
                     fontWeight: "700",
-                    color: theme.textPrimary,
+                    color: "#1E1B4B",
                     textDecorationLine: taken ? "line-through" : "none",
                   }}
                 >
                   {dose.medicine_name}
                 </Text>
-                <Text style={{ fontSize: RFValue(12), color: theme.textSecondary }}>
+                <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
                   {formatTime(dose.due_at)}
                   {dose.dosage ? ` · ${dose.dosage}` : ""}
                 </Text>
                 {mealLabel(dose.meal_timing) ? (
-                  <Text style={{ fontSize: RFValue(11), color: theme.textTertiary }}>
+                  <Text style={{ fontSize: RFValue(11), color: "#9CA3AF" }}>
                     {mealLabel(dose.meal_timing)}
                   </Text>
                 ) : null}
@@ -20578,10 +20543,10 @@ const MedicationTrackerScreen = ({ onBack }) => {
                     height: RFValue(24),
                     borderRadius: RFValue(12),
                     borderWidth: 2,
-                    borderColor: taken ? theme.success : theme.cardBorder,
+                    borderColor: taken ? "#059669" : "#D1D5DB",
                     justifyContent: "center",
                     alignItems: "center",
-                    backgroundColor: taken ? theme.success : theme.card,
+                    backgroundColor: taken ? "#059669" : "#FFF",
                   }}
                 >
                   {taken && (
@@ -20602,7 +20567,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
           style={{
             fontSize: RFValue(15),
             fontWeight: "700",
-            color: theme.textPrimary,
+            color: "#1E1B4B",
             marginTop: RFValue(12),
             marginBottom: RFValue(10),
           }}
@@ -20611,7 +20576,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
         </Text>
         <View
           style={{
-            backgroundColor: theme.card,
+            backgroundColor: "#FFFFFF",
             borderRadius: RFValue(14),
             padding: RFValue(16),
             marginBottom: RFValue(12),
@@ -20635,7 +20600,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
               >
                 {month.taken}
               </Text>
-              <Text style={{ fontSize: RFValue(11), color: theme.textSecondary }}>
+              <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
                 Taken
               </Text>
             </View>
@@ -20649,7 +20614,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
               >
                 {month.missed}
               </Text>
-              <Text style={{ fontSize: RFValue(11), color: theme.textSecondary }}>
+              <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
                 Missed
               </Text>
             </View>
@@ -20663,7 +20628,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
               >
                 {month.rate}%
               </Text>
-              <Text style={{ fontSize: RFValue(11), color: theme.textSecondary }}>
+              <Text style={{ fontSize: RFValue(11), color: "#6B7280" }}>
                 Adherence
               </Text>
             </View>
@@ -20674,7 +20639,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
           <View
             key={med.name}
             style={{
-              backgroundColor: theme.card,
+              backgroundColor: "#FFFFFF",
               borderRadius: RFValue(12),
               padding: RFValue(12),
               marginBottom: RFValue(8),
@@ -20687,7 +20652,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
               style={{
                 fontSize: RFValue(13),
                 fontWeight: "700",
-                color: theme.textPrimary,
+                color: "#1E1B4B",
                 flex: 1,
               }}
               numberOfLines={1}
@@ -20714,17 +20679,16 @@ const MedicationTrackerScreen = ({ onBack }) => {
 };
 
 const FamilyHealthScreen = ({ onBack }) => {
-  const { theme } = useTheme();
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.statusBarBg} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
-          backgroundColor: theme.card,
+          backgroundColor: "#FFFFFF",
           padding: RFValue(20),
           paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
-          borderBottomColor: theme.cardBorder,
+          borderBottomColor: "#F3F4F6",
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -20734,19 +20698,19 @@ const FamilyHealthScreen = ({ onBack }) => {
               width: RFValue(36),
               height: RFValue(36),
               borderRadius: RFValue(10),
-              backgroundColor: theme.bg,
+              backgroundColor: "#F3F4F6",
               justifyContent: "center",
               alignItems: "center",
               marginRight: RFValue(14),
             }}
           >
-            <Ionicons name="arrow-back" size={RFValue(20)} color={theme.textPrimary} />
+            <Ionicons name="arrow-back" size={RFValue(20)} color="#374151" />
           </TouchableOpacity>
           <Text
             style={{
               fontSize: RFValue(18),
               fontWeight: "800",
-              color: theme.textPrimary,
+              color: "#1E1B4B",
             }}
           >
             Family Health
@@ -20760,7 +20724,6 @@ const FamilyHealthScreen = ({ onBack }) => {
           justifyContent: "center",
           alignItems: "center",
           padding: RFValue(24),
-          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         <GlowView glowColor="#4338CA" size={RFValue(120)}>
@@ -20769,7 +20732,7 @@ const FamilyHealthScreen = ({ onBack }) => {
               width: RFValue(100),
               height: RFValue(100),
               borderRadius: RFValue(50),
-              backgroundColor: theme.accentLight,
+              backgroundColor: "#EEF2FF",
               justifyContent: "center",
               alignItems: "center",
             }}
@@ -20803,7 +20766,7 @@ const FamilyHealthScreen = ({ onBack }) => {
             style={{
               fontSize: RFValue(24),
               fontWeight: "800",
-              color: theme.textPrimary,
+              color: "#1E1B4B",
               textAlign: "center",
             }}
           >
@@ -20812,7 +20775,7 @@ const FamilyHealthScreen = ({ onBack }) => {
           <Text
             style={{
               fontSize: RFValue(14),
-              color: theme.textSecondary,
+              color: "#6B7280",
               textAlign: "center",
               marginTop: RFValue(8),
               lineHeight: RFValue(20),
@@ -20828,7 +20791,7 @@ const FamilyHealthScreen = ({ onBack }) => {
           style={{
             width: "100%",
             marginTop: RFValue(40),
-            backgroundColor: theme.card,
+            backgroundColor: "#FFFFFF",
             borderRadius: RFValue(16),
             padding: RFValue(16),
             shadowColor: "#000",
@@ -20840,7 +20803,7 @@ const FamilyHealthScreen = ({ onBack }) => {
             style={{
               fontSize: RFValue(14),
               fontWeight: "700",
-              color: theme.textPrimary,
+              color: "#1E1B4B",
               marginBottom: RFValue(16),
             }}
           >
@@ -20874,7 +20837,7 @@ const FamilyHealthScreen = ({ onBack }) => {
                   width: RFValue(28),
                   height: RFValue(28),
                   borderRadius: RFValue(8),
-                  backgroundColor: theme.accentLight,
+                  backgroundColor: "#F5F3FF",
                   justifyContent: "center",
                   alignItems: "center",
                   marginRight: RFValue(12),
@@ -20885,7 +20848,7 @@ const FamilyHealthScreen = ({ onBack }) => {
               <Text
                 style={{
                   fontSize: RFValue(13),
-                  color: theme.textSecondary,
+                  color: "#4B5563",
                   fontWeight: "500",
                 }}
               >
@@ -20898,7 +20861,7 @@ const FamilyHealthScreen = ({ onBack }) => {
         <TouchableOpacity
           style={{
             marginTop: RFValue(32),
-            backgroundColor: theme.bg,
+            backgroundColor: "#F3F4F6",
             paddingHorizontal: RFValue(24),
             paddingVertical: RFValue(12),
             borderRadius: RFValue(12),
@@ -20906,7 +20869,7 @@ const FamilyHealthScreen = ({ onBack }) => {
         >
           <Text
             style={{
-              color: theme.textSecondary,
+              color: "#6B7280",
               fontSize: RFValue(13),
               fontWeight: "700",
             }}
@@ -20920,7 +20883,6 @@ const FamilyHealthScreen = ({ onBack }) => {
 };
 
 const EmergencySOScreen = ({ onBack }) => {
-  const { theme } = useTheme();
   const [sosActive, setSosActive] = useState(false);
   const [countdown, setCountdown] = useState(null);
 
@@ -20941,19 +20903,19 @@ const EmergencySOScreen = ({ onBack }) => {
 
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: sosActive ? "#7F1D1D" : theme.bg }}
+      style={{ flex: 1, backgroundColor: sosActive ? "#7F1D1D" : "#F8FAFC" }}
     >
       <StatusBar
-        barStyle={sosActive ? "light-content" : theme.statusBarStyle}
-        backgroundColor={sosActive ? "#7F1D1D" : theme.statusBarBg}
+        barStyle={sosActive ? "light-content" : "dark-content"}
+        backgroundColor={sosActive ? "#7F1D1D" : "#FFFFFF"}
       />
       <View
         style={{
-          backgroundColor: sosActive ? "#7F1D1D" : theme.card,
+          backgroundColor: sosActive ? "#7F1D1D" : "#FFFFFF",
           padding: RFValue(20),
           paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
-          borderBottomColor: sosActive ? "#991B1B" : theme.cardBorder,
+          borderBottomColor: sosActive ? "#991B1B" : "#F3F4F6",
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -20963,7 +20925,7 @@ const EmergencySOScreen = ({ onBack }) => {
               width: RFValue(36),
               height: RFValue(36),
               borderRadius: RFValue(10),
-              backgroundColor: sosActive ? "rgba(255,255,255,0.2)" : theme.bg,
+              backgroundColor: sosActive ? "rgba(255,255,255,0.2)" : "#F3F4F6",
               justifyContent: "center",
               alignItems: "center",
               marginRight: RFValue(14),
@@ -20972,14 +20934,14 @@ const EmergencySOScreen = ({ onBack }) => {
             <Ionicons
               name="arrow-back"
               size={RFValue(20)}
-              color={sosActive ? "#FFF" : theme.textPrimary}
+              color={sosActive ? "#FFF" : "#374151"}
             />
           </TouchableOpacity>
           <Text
             style={{
               fontSize: RFValue(18),
               fontWeight: "800",
-              color: sosActive ? "#FFF" : theme.textPrimary,
+              color: sosActive ? "#FFF" : "#1E1B4B",
             }}
           >
             Emergency SOS
@@ -21056,7 +21018,7 @@ const EmergencySOScreen = ({ onBack }) => {
                 width: RFValue(160),
                 height: RFValue(160),
                 borderRadius: RFValue(80),
-                backgroundColor: theme.dangerLight,
+                backgroundColor: "#FEF2F2",
                 justifyContent: "center",
                 alignItems: "center",
                 marginBottom: RFValue(24),
@@ -21093,7 +21055,7 @@ const EmergencySOScreen = ({ onBack }) => {
             </View>
             <Text
               style={{
-                color: theme.textPrimary,
+                color: "#1E1B4B",
                 fontSize: RFValue(20),
                 fontWeight: "800",
                 textAlign: "center",
@@ -21104,7 +21066,7 @@ const EmergencySOScreen = ({ onBack }) => {
             </Text>
             <Text
               style={{
-                color: theme.textSecondary,
+                color: "#6B7280",
                 fontSize: RFValue(14),
                 textAlign: "center",
                 lineHeight: RFValue(22),
@@ -21121,7 +21083,7 @@ const EmergencySOScreen = ({ onBack }) => {
         <View style={{ width: "100%" }}>
           <Text
             style={{
-              color: sosActive ? "#FCA5A5" : theme.textSecondary,
+              color: sosActive ? "#FCA5A5" : "#6B7280",
               fontSize: RFValue(13),
               fontWeight: "700",
               marginBottom: RFValue(12),
@@ -21137,7 +21099,7 @@ const EmergencySOScreen = ({ onBack }) => {
                 style={{
                   backgroundColor: sosActive
                     ? "rgba(255,255,255,0.1)"
-                    : theme.card,
+                    : "#FFFFFF",
                   borderRadius: RFValue(14),
                   padding: RFValue(16),
                   marginBottom: RFValue(10),
@@ -21157,7 +21119,7 @@ const EmergencySOScreen = ({ onBack }) => {
                     borderRadius: RFValue(12),
                     backgroundColor: sosActive
                       ? "rgba(255,255,255,0.2)"
-                      : theme.dangerLight,
+                      : "#FEF2F2",
                     justifyContent: "center",
                     alignItems: "center",
                     marginRight: RFValue(14),
@@ -21174,7 +21136,7 @@ const EmergencySOScreen = ({ onBack }) => {
                     style={{
                       fontSize: RFValue(14),
                       fontWeight: "700",
-                      color: sosActive ? "#FFF" : theme.textPrimary,
+                      color: sosActive ? "#FFF" : "#1E1B4B",
                     }}
                   >
                     {contact.name}
@@ -21182,7 +21144,7 @@ const EmergencySOScreen = ({ onBack }) => {
                   <Text
                     style={{
                       fontSize: RFValue(12),
-                      color: sosActive ? "#FCA5A5" : theme.textSecondary,
+                      color: sosActive ? "#FCA5A5" : "#6B7280",
                     }}
                   >
                     {contact.phone}
@@ -21973,12 +21935,7 @@ const PharmacyProfileScreen = ({ onLogout }) => {
                 >
                   Product #{idx + 1}
                 </Text>
-                <TouchableOpacity
-                  onPress={() => removeProduct(idx)}
-                  accessibilityLabel="Remove product"
-                  accessibilityRole="button"
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
+                <TouchableOpacity onPress={() => removeProduct(idx)}>
                   <Ionicons
                     name="trash-outline"
                     size={RFValue(18)}
@@ -22238,23 +22195,22 @@ const StaffManagementScreen = () => {
 // ========================================
 
 const ModernHeader = ({ title, subtitle }) => {
-  const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   return (
     <View
       style={{
-        backgroundColor: theme.card,
+        backgroundColor: "#FFFFFF",
         padding: RFValue(20),
         paddingTop: safeTopContentPadding(insets, 14),
         borderBottomWidth: 1,
-        borderBottomColor: theme.cardBorder,
+        borderBottomColor: "#F3F4F6",
       }}
     >
       <Text
         style={{
           fontSize: RFValue(20),
           fontWeight: "800",
-          color: theme.textPrimary,
+          color: "#1E1B4B",
         }}
       >
         {title}
@@ -22263,7 +22219,7 @@ const ModernHeader = ({ title, subtitle }) => {
         <Text
           style={{
             fontSize: RFValue(12),
-            color: theme.textSecondary,
+            color: "#6B7280",
             marginTop: RFValue(2),
           }}
         >
@@ -22275,7 +22231,6 @@ const ModernHeader = ({ title, subtitle }) => {
 };
 
 const PatientWoundScreen = () => {
-  const { theme } = useTheme();
   const {
     wounds,
     setWounds,
@@ -22312,10 +22267,10 @@ const PatientWoundScreen = () => {
 
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.bg }}
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
       edges={["bottom", "left", "right"]}
     >
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.statusBarBg} />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <ModernHeader title="Wound Tracker" subtitle="Manage your recovery" />
 
       <ScrollView
@@ -22327,20 +22282,20 @@ const PatientWoundScreen = () => {
         <TouchableOpacity
           onPress={() => onSetShowNewWound(true)}
           style={{
-            backgroundColor: theme.accentLight,
+            backgroundColor: "#EEF2FF",
             borderStyle: "dashed",
             borderWidth: 2,
-            borderColor: theme.accent,
+            borderColor: "#4338CA",
             borderRadius: RFValue(16),
             padding: RFValue(20),
             alignItems: "center",
             marginBottom: RFValue(20),
           }}
         >
-          <Ionicons name="add-circle" size={RFValue(32)} color={theme.accent} />
+          <Ionicons name="add-circle" size={RFValue(32)} color="#4338CA" />
           <Text
             style={{
-              color: theme.accent,
+              color: "#4338CA",
               fontWeight: "700",
               marginTop: RFValue(8),
             }}
@@ -22353,7 +22308,7 @@ const PatientWoundScreen = () => {
           style={{
             fontSize: RFValue(16),
             fontWeight: "800",
-            color: theme.textPrimary,
+            color: "#1E1B4B",
             marginBottom: RFValue(12),
           }}
         >
@@ -22366,7 +22321,7 @@ const PatientWoundScreen = () => {
               key={w.id}
               onPress={() => onSelectWound(w.id)}
               style={{
-                backgroundColor: theme.card,
+                backgroundColor: "#FFF",
                 borderRadius: RFValue(16),
                 padding: RFValue(16),
                 marginBottom: RFValue(12),
@@ -22382,7 +22337,7 @@ const PatientWoundScreen = () => {
                   width: RFValue(50),
                   height: RFValue(50),
                   borderRadius: RFValue(10),
-                  backgroundColor: theme.bg,
+                  backgroundColor: "#F3F4F6",
                   justifyContent: "center",
                   alignItems: "center",
                   marginRight: RFValue(12),
@@ -22408,12 +22363,12 @@ const PatientWoundScreen = () => {
                   style={{
                     fontSize: RFValue(15),
                     fontWeight: "700",
-                    color: theme.textPrimary,
+                    color: "#1E1B4B",
                   }}
                 >
                   {w.description}
                 </Text>
-                <Text style={{ fontSize: RFValue(12), color: theme.textSecondary }}>
+                <Text style={{ fontSize: RFValue(12), color: "#6B7280" }}>
                   {w.date}
                 </Text>
               </View>
@@ -22421,8 +22376,8 @@ const PatientWoundScreen = () => {
                 style={{
                   backgroundColor:
                     w.status === "Medication Prescribed"
-                      ? theme.successLight
-                      : theme.warningLight,
+                      ? "#ECFDF5"
+                      : "#FEF3C7",
                   paddingHorizontal: RFValue(8),
                   paddingVertical: RFValue(4),
                   borderRadius: RFValue(8),
@@ -22448,9 +22403,9 @@ const PatientWoundScreen = () => {
             <Ionicons
               name="medkit-outline"
               size={RFValue(48)}
-              color={theme.textTertiary}
+              color="#E5E7EB"
             />
-            <Text style={{ color: theme.textTertiary, marginTop: RFValue(12) }}>
+            <Text style={{ color: "#9CA3AF", marginTop: RFValue(12) }}>
               No wound reports yet
             </Text>
           </View>
@@ -22461,7 +22416,6 @@ const PatientWoundScreen = () => {
 };
 
 const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
-  const { theme } = useTheme();
   const [desc, setDesc] = useState("");
   const [image, setImage] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -22569,13 +22523,12 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.statusBarBg} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#FFF" }}>
       <Modal visible={submitting} transparent animationType="fade">
         <GlassOverlay>
           <View
             style={{
-              backgroundColor: theme.card,
+              backgroundColor: "#FFF",
               borderRadius: RFValue(20),
               paddingVertical: RFValue(28),
               paddingHorizontal: RFValue(32),
@@ -22589,13 +22542,13 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
               elevation: 16,
             }}
           >
-            <ActivityIndicator size="large" color={theme.accent} />
+            <ActivityIndicator size="large" color="#4338CA" />
             <Text
               style={{
                 marginTop: RFValue(18),
                 fontSize: RFValue(16),
                 fontWeight: "800",
-                color: theme.textPrimary,
+                color: "#1E1B4B",
                 textAlign: "center",
               }}
             >
@@ -22605,7 +22558,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
               style={{
                 marginTop: RFValue(10),
                 fontSize: RFValue(13),
-                color: theme.textSecondary,
+                color: "#6B7280",
                 textAlign: "center",
               }}
             >
@@ -22616,12 +22569,11 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
       </Modal>
       <View
         style={{
-          backgroundColor: theme.card,
           padding: RFValue(20),
           flexDirection: "row",
           alignItems: "center",
           borderBottomWidth: 1,
-          borderBottomColor: theme.cardBorder,
+          borderBottomColor: "#F3F4F6",
         }}
       >
         <TouchableOpacity
@@ -22629,10 +22581,10 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           disabled={submitting}
           style={{ marginRight: RFValue(16), opacity: submitting ? 0.35 : 1 }}
         >
-          <Ionicons name="arrow-back" size={RFValue(24)} color={theme.textPrimary} />
+          <Ionicons name="arrow-back" size={RFValue(24)} color="#1E1B4B" />
         </TouchableOpacity>
         <Text
-          style={{ fontSize: RFValue(18), fontWeight: "800", color: theme.textPrimary }}
+          style={{ fontSize: RFValue(18), fontWeight: "800", color: "#1E1B4B" }}
         >
           Report Wound
         </Text>
@@ -22641,13 +22593,13 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         scrollEnabled={!submitting}
-        contentContainerStyle={{ padding: RFValue(20), paddingBottom: tabScrollBottomPadding() }}
+        contentContainerStyle={{ padding: RFValue(20) }}
       >
         <Text
           style={{
             fontSize: RFValue(14),
             fontWeight: "700",
-            color: theme.textPrimary,
+            color: "#374151",
             marginBottom: RFValue(10),
           }}
         >
@@ -22658,13 +22610,13 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           style={{
             width: "100%",
             height: RFValue(200),
-            backgroundColor: theme.inputBg,
+            backgroundColor: "#F9FAFB",
             borderRadius: RFValue(16),
             justifyContent: "center",
             alignItems: "center",
             marginBottom: RFValue(20),
             borderWidth: 2,
-            borderColor: theme.cardBorder,
+            borderColor: "#E5E7EB",
             borderStyle: "dashed",
             overflow: "hidden",
             opacity: submitting ? 0.55 : 1,
@@ -22692,8 +22644,8 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
             />
           ) : (
             <View style={{ alignItems: "center", padding: RFValue(16) }}>
-              <Ionicons name="camera" size={RFValue(48)} color={theme.textTertiary} />
-              <Text style={{ color: theme.textTertiary, marginTop: RFValue(8) }}>
+              <Ionicons name="camera" size={RFValue(48)} color="#9CA3AF" />
+              <Text style={{ color: "#9CA3AF", marginTop: RFValue(8) }}>
                 Tap to capture or upload photo
               </Text>
             </View>
@@ -22704,7 +22656,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           style={{
             fontSize: RFValue(14),
             fontWeight: "700",
-            color: theme.textPrimary,
+            color: "#374151",
             marginBottom: RFValue(10),
           }}
         >
@@ -22713,17 +22665,16 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
         <TextInput
           multiline
           placeholder="Describe how it happened, pain level, etc."
-          placeholderTextColor={theme.textTertiary}
           style={{
-            backgroundColor: theme.inputBg,
+            backgroundColor: "#F9FAFB",
             borderRadius: RFValue(16),
             padding: RFValue(16),
             height: RFValue(120),
             textAlignVertical: "top",
             fontSize: RFValue(14),
-            color: theme.textPrimary,
+            color: "#1E1B4B",
             borderWidth: 1,
-            borderColor: theme.inputBorder,
+            borderColor: "#E5E7EB",
           }}
           value={desc}
           onChangeText={setDesc}
@@ -22734,7 +22685,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           style={{
             fontSize: RFValue(14),
             fontWeight: "700",
-            color: theme.textPrimary,
+            color: "#374151",
             marginBottom: RFValue(10),
             marginTop: RFValue(8),
           }}
@@ -22748,8 +22699,8 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
               alignItems: "center",
             }}
           >
-            <ActivityIndicator color={theme.accent} />
-            <Text style={{ color: theme.textTertiary, marginTop: RFValue(8) }}>
+            <ActivityIndicator color="#4338CA" />
+            <Text style={{ color: "#9CA3AF", marginTop: RFValue(8) }}>
               Loading doctors…
             </Text>
           </View>
@@ -22770,8 +22721,8 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
                   padding: RFValue(14),
                   borderRadius: RFValue(14),
                   borderWidth: 2,
-                  borderColor: selected ? theme.accent : theme.cardBorder,
-                  backgroundColor: selected ? theme.accentLight : theme.card,
+                  borderColor: selected ? "#4338CA" : "#E5E7EB",
+                  backgroundColor: selected ? "#EEF2FF" : "#FFF",
                   marginBottom: RFValue(10),
                 }}
               >
@@ -22779,7 +22730,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
                   style={{
                     fontSize: RFValue(15),
                     fontWeight: "700",
-                    color: theme.textPrimary,
+                    color: "#1E1B4B",
                   }}
                 >
                   {d.name}
@@ -22787,7 +22738,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
                 <Text
                   style={{
                     fontSize: RFValue(12),
-                    color: theme.textSecondary,
+                    color: "#6B7280",
                     marginTop: RFValue(4),
                   }}
                 >
@@ -22814,7 +22765,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           onPress={handleSubmit}
           disabled={submitting}
           style={{
-            backgroundColor: theme.accent,
+            backgroundColor: submitting ? "#6366F1" : "#4338CA",
             borderRadius: RFValue(16),
             paddingVertical: RFValue(16),
             alignItems: "center",
@@ -24406,7 +24357,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: tabScrollBottomPadding(),
+          paddingBottom: RFValue(40),
         }}
       >
         {errorMessage ? (
