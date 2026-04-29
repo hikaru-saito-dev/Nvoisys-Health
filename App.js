@@ -2880,9 +2880,9 @@ const ri = (size) => {
   return Math.round(PixelRatio.roundToNearestPixel(size * s));
 };
 
-/** Bottom padding for ScrollViews on routes that sit above the custom tab bar. */
+/** Small content gutter below scroll areas; tab bar now sits in layout (not over content). */
 const tabScrollBottomPadding = () =>
-  Math.round(Math.max(118, 88 * UI_SCALE + 48));
+  Math.round(Math.max(RFValue(20), 16 * UI_SCALE + 12));
 
 const ResponsiveInfo = {
   deviceType: DEVICE_TYPE,
@@ -3967,7 +3967,10 @@ const PatientHomeScreen = () => {
         doctors={packageDoctors}
         onOpenChatWithDoctor={handleOpenChatWithDoctor}
         onAfterPackagePayment={handleAfterPackagePayment}
-        scrollContentBottomInset={tabScrollBottomPadding()}
+        scrollContentBottomInset={Math.max(
+          tabScrollBottomPadding(),
+          Math.round(88 * UI_SCALE + 40),
+        )}
       />
     );
 
@@ -4030,7 +4033,7 @@ const PatientHomeScreen = () => {
     <View style={{ flex: 1 }}>
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["bottom", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle="light-content" backgroundColor={theme.accent} />
       {dataLoading ? (
@@ -6889,9 +6892,7 @@ const PatientChatScreen = () => {
             contentContainerStyle={{
               padding: RFValue(16),
               paddingBottom:
-                tabScrollBottomPadding() +
-                RFValue(72) +
-                Math.max(insets.bottom, 8),
+                RFValue(36) + Math.max(insets.bottom, 8),
             }}
             style={{ flex: 1, minHeight: 0 }}
             keyboardShouldPersistTaps="handled"
@@ -7126,8 +7127,7 @@ const PatientChatScreen = () => {
                 position: "absolute",
                 right: RFValue(16),
                 bottom:
-                  tabScrollBottomPadding() +
-                  RFValue(56) +
+                  RFValue(100) +
                   Math.max(insets.bottom, RFValue(8)),
                 backgroundColor: theme.accent,
                 paddingHorizontal: RFValue(14),
@@ -21377,7 +21377,6 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const tabIconSize = Math.min(ri(22), DEVICE_TYPE === "tablet" ? 26 : 24);
   const tabLabelSize = Math.min(RFText(10, { max: 1.06 }), 12);
   const muted = theme.textTertiary || "#9CA3AF";
-  const floatBottom = Math.max(insets.bottom, 10) + 10;
   const bottomPad = Math.max(
     insets.bottom,
     Platform.OS === "android" ? RFValue(18) : RFValue(10),
@@ -21400,12 +21399,8 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   return (
     <View
       style={{
-        position: "absolute",
         flexDirection: "row",
-        bottom: floatBottom,
-        left: 16,
-        right: 16,
-        borderRadius: RFValue(28),
+        width: "100%",
         backgroundColor: theme.tabBarBg,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.tabBarBorder,
@@ -21413,10 +21408,10 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
         paddingTop: Math.min(RFValue(9), 11),
         minHeight: Math.round(RFValue(58) + bottomPad),
         shadowColor: theme.shadowColor,
-        shadowOpacity: 0.06,
-        shadowOffset: { width: 0, height: -3 },
-        shadowRadius: 12,
-        elevation: 8,
+        shadowOpacity: 0.08,
+        shadowOffset: { width: 0, height: -2 },
+        shadowRadius: 10,
+        elevation: 16,
       }}
       onLayout={(e) => setTabBarWidth(e.nativeEvent.layout.width)}
     >
@@ -24357,7 +24352,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: RFValue(40),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
         {errorMessage ? (
