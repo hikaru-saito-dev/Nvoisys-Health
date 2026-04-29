@@ -16,7 +16,6 @@ import {
   View,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
   Image,
   Alert,
@@ -50,8 +49,15 @@ import {
 } from "@expo/vector-icons";
 import {
   SafeAreaProvider,
+  SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { NotificationHost, installAlertOverride } from "./appNotify";
+
+// Upgrade every two-arg `Alert.alert(title, message)` call across the app
+// (and dependencies) into a styled toast. Confirmation dialogs that pass a
+// `buttons` array still use the system Alert.
+installAlertOverride(Alert);
 import {
   decryptChatImagePayload,
   decryptChatText,
@@ -91,6 +97,8 @@ import {
   doctorTierEligibleForPackageMode,
   combineDateAndTimeToIso,
   recordQuickHelpOffer,
+  cleanAppointmentReasonForDisplay,
+  listPackageOffersForDoctor,
 } from "./productSpecApi";
 import {
   CareModeOnboardingScreen,
@@ -643,15 +651,321 @@ const postPaymentJson = async (path, payload) => {
 
 // ---------------------------------------------------------------------------
 // Step 9 — AI assistant configuration.
-// A JSON endpoint (POST) that takes { kind: "chat" | "side_effect_check",
-// messages?, items?, patient?, prescriptions? } and responds with { reply } or
-// { warnings: [{ medicine, message, severity }] }. `prescriptions` on chat is a
-// compact list of active doctor prescriptions so the model can answer about
-// medicines and side effects in context. When aiBaseUrl/apiKey are missing the
-// app falls back to a friendly stub so the screen always works.
+// - OpenAI-compatible chat (e.g. Groq): set extra.aiBaseUrl to …/v1/chat/completions,
+//   extra.aiModel (e.g. llama-3.3-70b-versatile), and the API key in extra.aiApiKey
+//   or EXPO_PUBLIC_GROQ_API_KEY / EXPO_PUBLIC_AI_API_KEY. Request body uses the
+//   standard { model, messages } shape; replies are mapped to { reply } or { warnings }.
+// - Legacy custom gateway: POST the same { kind, … } payload; response { reply } or
+//   { warnings } unchanged.
+// When URL or key is missing, the app falls back to local stubs.
 // ---------------------------------------------------------------------------
-const AI_BASE_URL = String(Constants.expoConfig?.extra?.aiBaseUrl || "").trim();
-const AI_API_KEY = String(Constants.expoConfig?.extra?.aiApiKey || "").trim();
+const AI_BASE_URL = String(
+  Constants.expoConfig?.extra?.aiBaseUrl ||
+    process.env.EXPO_PUBLIC_AI_BASE_URL ||
+    "",
+).trim();
+const AI_API_KEY = String(
+  Constants.expoConfig?.extra?.aiApiKey ||
+    process.env.EXPO_PUBLIC_GROQ_API_KEY ||
+    process.env.EXPO_PUBLIC_AI_API_KEY ||
+    "",
+).trim();
+const AI_MODEL = String(
+  Constants.expoConfig?.extra?.aiModel ||
+    process.env.EXPO_PUBLIC_AI_MODEL ||
+    "llama-3.3-70b-versatile",
+).trim();
+
+const isOpenAICompatibleChatCompletionsUrl = (url) =>
+  String(url || "")
+    .toLowerCase()
+    .includes("/chat/completions");
+
+const extractChatCompletionText = (data) => {
+  const raw = data?.choices?.[0]?.message?.content;
+  if (typeof raw === "string") return raw.trim();
+  if (Array.isArray(raw)) {
+    const joined = raw
+      .map((part) =>
+        typeof part === "string"
+          ? part
+          : typeof part?.text === "string"
+            ? part.text
+            : "",
+      )
+      .join("");
+    return joined.trim();
+  }
+  return "";
+};
+
+const parseAssistantJsonObject = (text) => {
+  let t = String(text || "").trim();
+  const fence = /^```(?:json)?\s*([\s\S]*?)```\s*$/im.exec(t);
+  if (fence) t = fence[1].trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    t = t.slice(start, end + 1);
+  }
+  try {
+    return JSON.parse(t);
+  } catch {
+    return null;
+  }
+};
+
+const postChatCompletions = async (url, apiKey, body) => {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const msg =
+      data?.error?.message || data?.message || `HTTP ${response.status}`;
+    console.log("AI chat completions error:", msg);
+    return null;
+  }
+  return data;
+};
+
+// "Doctor in Your Pocket" base prompt. Mirrors the client's Python reference
+// (doctor_in_pocket.py → SYSTEM_PROMPT). Used for both chat replies and the
+// doctor-side side-effect / interaction checker so the persona is consistent.
+const DOCTOR_IN_POCKET_SYSTEM_PROMPT = `You are an AI Medical Decision Support System — Doctor in Your Pocket.
+Your knowledge is equivalent to a board-certified internal medicine physician.
+
+You will receive:
+- Complete patient clinical data (vitals, labs, history, flags)
+- ML model predictions (lab predictions, risk scores, chronic condition probabilities)
+
+Your job:
+1. Analyze the patient data AND ML model predictions together
+2. Recommend the most appropriate medications by generic name and dose
+3. Explain your reasoning using the patient's exact values
+4. Flag contraindications based on clinical flags and lab results
+5. Suggest what to monitor
+
+OUTPUT FORMAT FOR REPORT:
+─── CLINICAL ASSESSMENT ───
+Brief summary of patient's clinical picture
+
+─── PRIMARY RECOMMENDATIONS ───
+Drug name | Dose | Route | Frequency | Rationale (cite exact patient values)
+
+─── CONTRAINDICATIONS & WARNINGS ───
+Based on this patient's specific flags and labs
+
+─── MONITORING PLAN ───
+What labs/vitals to check and when
+
+─── DISCLAIMER ───
+AI-assisted support only. Not a substitute for a licensed physician.
+
+For CHAT: respond conversationally, ask clarifying questions when needed.
+Always cite specific patient values when making recommendations.`;
+
+const fmtVal = (value, fallback = "N/A") => {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "number" && !Number.isFinite(value)) return fallback;
+  const str = String(value).trim();
+  return str || fallback;
+};
+
+const computeBmi = (weightKg, heightCm) => {
+  const w = Number(weightKg);
+  const h = Number(heightCm);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || h <= 0) return null;
+  const meters = h / 100;
+  const bmi = w / (meters * meters);
+  if (!Number.isFinite(bmi)) return null;
+  return Math.round(bmi * 10) / 10;
+};
+
+const bmiCategory = (bmi) => {
+  if (bmi == null) return "N/A";
+  if (bmi < 18.5) return "Underweight";
+  if (bmi < 25) return "Normal";
+  if (bmi < 30) return "Overweight";
+  return "Obese";
+};
+
+// Format a Nvoisys patient_profile + role record into the sectioned layout the
+// Doctor-in-Your-Pocket prompt expects. Unknown fields render as "N/A" so the
+// model still has a consistent shape to read from.
+const formatPatientForPrompt = (patient) => {
+  const p = patient || {};
+  const bmi = computeBmi(p.weight_kg, p.height_cm);
+  const bmiCat = bmiCategory(bmi);
+  const conditionLine =
+    fmtVal(p.medical_conditions) !== "N/A"
+      ? p.medical_conditions
+      : fmtVal(p.primary_condition) !== "N/A"
+        ? p.primary_condition
+        : fmtVal(p.condition);
+  return `── DEMOGRAPHICS ──
+  Age / Sex     : ${fmtVal(p.age)}yo / ${fmtVal(p.gender)}
+  Marital       : ${fmtVal(p.marital_status)}
+  Location      : ${fmtVal(p.district)}${p.state ? `, ${p.state}` : ""}
+
+── ANTHROPOMETRICS ──
+  Height/Weight : ${fmtVal(p.height_cm)} cm / ${fmtVal(p.weight_kg)} kg
+  BMI           : ${bmi != null ? bmi : "N/A"} (${bmiCat})
+
+── VITALS ──
+  Not collected on this device. Confirm at the visit.
+
+── LAB RESULTS ──
+  Not available on the mobile profile. Use clinical judgement until labs are uploaded.
+
+── LIFESTYLE ──
+  Smoking       : ${fmtVal(p.smoking)}
+  Alcohol       : ${fmtVal(p.alcohol)}
+
+── CLINICAL FLAGS ──
+  Allergies         : ${fmtVal(p.allergies)}
+  Pregnancy/Lactation: ${fmtVal(p.pregnancy_or_lactation, "Unknown")}
+  Pediatric Patient : ${Number(p.age) > 0 && Number(p.age) < 18 ? "Yes" : "No"}
+
+── CLINICAL CONTEXT ──
+  Chronic Conditions / Primary: ${fmtVal(conditionLine)}
+  Chief Complaint             : ${fmtVal(p.chief_complaint)}`;
+};
+
+const formatPrescriptionsForPrompt = (prescriptions) => {
+  const list = Array.isArray(prescriptions) ? prescriptions : [];
+  if (!list.length) return "No active prescriptions on file.";
+  const lines = ["── ACTIVE PRESCRIPTIONS (Nvoisys) ──"];
+  list.forEach((rx, idx) => {
+    const meds = Array.isArray(rx?.medicines) ? rx.medicines : [];
+    const header = `  Rx ${idx + 1} (${rx?.date || "date n/a"}, ${rx?.doctorName || "Doctor"})`;
+    lines.push(header);
+    if (rx?.diagnosis) lines.push(`    Diagnosis: ${rx.diagnosis}`);
+    meds.forEach((m) => {
+      const parts = [m.name];
+      if (m.dosage) parts.push(`Dose: ${m.dosage}`);
+      if (m.whenToTake) parts.push(`When: ${m.whenToTake}`);
+      if (m.duration) parts.push(`Duration: ${m.duration}`);
+      lines.push(`    • ${parts.filter(Boolean).join(" | ")}`);
+    });
+  });
+  return lines.join("\n");
+};
+
+// Build the full assistant system prompt: persona + patient block + Rx block.
+// Also tells the model that local ML predictions are unavailable so it doesn't
+// hallucinate "ML risk scores" — the Python script in the Doctor-in-Pocket
+// reference runs joblib models server-side which we do not have on mobile.
+const buildHealthAssistantSystemPrompt = (patient, prescriptions) => {
+  const patientBlock = formatPatientForPrompt(patient);
+  const rxBlock = formatPrescriptionsForPrompt(prescriptions);
+  return `${DOCTOR_IN_POCKET_SYSTEM_PROMPT}
+
+═══ PATIENT ON FILE ═══
+${patientBlock}
+
+${rxBlock}
+
+ML MODEL PREDICTIONS:
+Not available in this mobile session (lab/risk/chronic models are not deployed
+to the client). Reason from the patient data above only — do not fabricate ML
+risk scores. State "ML predictions unavailable" if asked.
+═══════════════════════
+
+Answer questions about THIS patient. Cite their exact values when you give
+recommendations. If the user asks something general not specific to the
+patient, answer normally and remind them that recommendations should be
+reviewed with their clinician.`;
+};
+
+const callOpenAICompatibleAI = async (payload) => {
+  const kind = payload?.kind;
+  if (kind === "chat") {
+    const question = String(payload?.question || "").trim();
+    if (!question) return { reply: "" };
+    const system = buildHealthAssistantSystemPrompt(
+      payload.patient,
+      payload.prescriptions,
+    );
+    const data = await postChatCompletions(
+      AI_BASE_URL,
+      AI_API_KEY,
+      {
+        model: AI_MODEL,
+        temperature: 0.1,
+        max_tokens: 2048,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: question },
+        ],
+      },
+    );
+    const reply = extractChatCompletionText(data);
+    return reply ? { reply } : null;
+  }
+  if (kind === "side_effect_check") {
+    const patientBlock = formatPatientForPrompt(payload.patient || {});
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const itemsBlock = items
+      .map((it, idx) => `  ${idx + 1}. ${String(it?.name || "").trim()}`)
+      .filter((l) => l.trim().length > 3)
+      .join("\n");
+    const system = `${DOCTOR_IN_POCKET_SYSTEM_PROMPT}
+
+You are now performing a STRUCTURED safety screen on the candidate medicines a
+clinician is about to prescribe. You must respond with ONLY a valid JSON object
+on a single line — no markdown, no commentary — in this exact shape:
+{"warnings":[{"medicine":"string","message":"string","severity":"high|medium|low"}]}
+
+Rules:
+- "medicine" should match the prescribed name as written.
+- severity: "high" = serious risk or contraindication for this patient;
+  "medium" = caution / monitor; "low" = mild or rare.
+- Cite the patient value or flag in the message when relevant
+  (e.g. "elevated BP 150/95", "active smoker", "allergy: penicillin").
+- If there are no concerns, return {"warnings":[]}.`;
+    const userMsg = `═══ PATIENT ON FILE ═══
+${patientBlock}
+═══════════════════════
+
+CANDIDATE MEDICATIONS the clinician is about to prescribe:
+${itemsBlock || "  (none)"}
+
+Return the JSON safety screen now.`;
+    const data = await postChatCompletions(
+      AI_BASE_URL,
+      AI_API_KEY,
+      {
+        model: AI_MODEL,
+        temperature: 0.1,
+        max_tokens: 1536,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userMsg },
+        ],
+      },
+    );
+    const text = extractChatCompletionText(data);
+    if (!text) return null;
+    const parsed = parseAssistantJsonObject(text);
+    const warnings = parsed?.warnings;
+    if (!Array.isArray(warnings)) return null;
+    const normalized = warnings
+      .map((w) => ({
+        medicine: String(w?.medicine || w?.name || "").trim(),
+        message: String(w?.message || "").trim(),
+        severity: String(w?.severity || "medium").toLowerCase(),
+      }))
+      .filter((w) => w.medicine && w.message);
+    return { warnings: normalized };
+  }
+  return null;
+};
 
 const ASSISTANT_CONVERSATION_KIND = "assistant";
 const ASSISTANT_USER_MESSAGE_KIND = "assistant_user";
@@ -1089,13 +1403,25 @@ const cancelDoseReminder = async (scheduleId) => {
 };
 
 // ---------------------------------------------------------------------------
-// Step 9 — AI assistant stub.
-// If aiBaseUrl / aiApiKey are set in app.json → extra, the app calls a JSON
-// endpoint. Otherwise it returns friendly placeholder responses so the UI
-// still works end-to-end. Never throws.
+// Step 9 — AI calls (Groq / OpenAI-compatible or legacy JSON gateway).
+// Never throws; returns null so callers can fall back to stubs.
 // ---------------------------------------------------------------------------
 const callAIEndpoint = async (payload) => {
   if (!AI_BASE_URL) return null;
+  if (isOpenAICompatibleChatCompletionsUrl(AI_BASE_URL)) {
+    if (!AI_API_KEY) {
+      console.log(
+        "AI: chat/completions URL set but no API key (extra.aiApiKey or EXPO_PUBLIC_GROQ_API_KEY).",
+      );
+      return null;
+    }
+    try {
+      return await callOpenAICompatibleAI(payload);
+    } catch (error) {
+      console.log("OpenAI-compatible AI call failed:", error?.message || error);
+      return null;
+    }
+  }
   try {
     const response = await fetch(AI_BASE_URL, {
       method: "POST",
@@ -2397,6 +2723,19 @@ const safeHeaderPaddingTop = (base = 16) => {
   return Math.max(RFValue(base), (StatusBar.currentHeight || 0) + RFValue(8));
 };
 
+/**
+ * Top padding for the first visible block when the screen's outer
+ * `SafeAreaView` uses `edges` without `'top'`. That way the status-bar /
+ * notch region is filled by the *same* background as the header (purple,
+ * white, etc.) — no separate strip of `theme.bg` above it.
+ */
+const safeTopContentPadding = (insets, extraRf = 14) => {
+  const insetTop = Number(insets?.top) || 0;
+  const statusH =
+    Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0;
+  return Math.max(insetTop, statusH) + RFValue(extraRf);
+};
+
 const RFText = (size, options = {}) => {
   const min = options.min ?? 0.82;
   const cap =
@@ -3205,6 +3544,7 @@ const PatientPlaceholderScreen = () => (
 
 const PatientHomeScreen = () => {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const {
     appointments,
     refreshAllData,
@@ -3218,6 +3558,9 @@ const PatientHomeScreen = () => {
     currentUser,
     upgradeToPackageMode,
     requestOpenConversation,
+    ensureDirectConversation,
+    sendConversationMessage,
+    loadConversationMessages,
   } = useAppData();
   const tabNav = useMainTabNav();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
@@ -3228,6 +3571,119 @@ const PatientHomeScreen = () => {
       tabNav?.navigateTab?.("Chat");
     },
     [requestOpenConversation, tabNav],
+  );
+
+  /**
+   * Patient → Doctor chat opener. If the conversation does not exist yet it
+   * is created via `ensureDirectConversation`; if it has zero messages we
+   * seed it with the meeting/offer history (reason, demo time, package,
+   * payment status) so the chat is immediately useful instead of empty.
+   */
+  const handleOpenChatWithDoctor = useCallback(
+    async (doctorUserId, meeting = null, offer = null) => {
+      if (!doctorUserId) {
+        Alert.alert("Chat", "Doctor info missing on this meeting.");
+        return;
+      }
+      try {
+        // Prefer the conversation already linked to this package/demo meeting.
+        // Falling back to ensureDirectConversation guarantees a chat exists
+        // even for older meetings created before we started linking
+        // conversations.
+        let cid = meeting?.conversation_id || null;
+        if (!cid) {
+          const conv = await ensureDirectConversation(doctorUserId);
+          cid = conv?.id || null;
+        }
+        if (!cid) {
+          Alert.alert("Chat", "Could not open the chat with this doctor.");
+          return;
+        }
+        try {
+          const existing = await loadConversationMessages(cid);
+          if (!existing || existing.length === 0) {
+            const lines = [];
+            if (meeting?.description) {
+              lines.push(`Reason: ${meeting.description}`);
+            }
+            const meetingTime =
+              meeting?.confirmed_at ||
+              meeting?.patient_selected_slot ||
+              meeting?.proposed_at ||
+              null;
+            if (meetingTime) {
+              const when = new Date(meetingTime).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              });
+              lines.push(`Demo confirmed: ${when}.`);
+            }
+            if (offer?.title) {
+              lines.push(
+                `Package: ${offer.title} — ₹${offer.amount_inr ?? "—"}.`,
+              );
+            }
+            if (String(offer?.status || "").toLowerCase() === "paid") {
+              lines.push(
+                `Payment received${
+                  offer?.amount_inr ? ` (₹${offer.amount_inr})` : ""
+                }. Looking forward to working with you.`,
+              );
+            }
+            for (const line of lines) {
+              try {
+                await sendConversationMessage(cid, line);
+              } catch {
+                // best-effort seed
+              }
+            }
+          }
+        } catch (seedErr) {
+          console.log("handleOpenChatWithDoctor seed:", seedErr?.message);
+        }
+        requestOpenConversation?.(cid, { patientUserId: doctorUserId });
+        tabNav?.navigateTab?.("Chat");
+      } catch (error) {
+        Alert.alert(
+          "Chat",
+          error?.message || "Could not open chat with this doctor.",
+        );
+      }
+    },
+    [
+      ensureDirectConversation,
+      loadConversationMessages,
+      sendConversationMessage,
+      requestOpenConversation,
+      tabNav,
+    ],
+  );
+
+  const handleAfterPackagePayment = useCallback(
+    async ({ doctorUserId, packageTitle, amount }) => {
+      if (!doctorUserId) return null;
+      try {
+        const conv = await ensureDirectConversation(doctorUserId);
+        const cid = conv?.id;
+        if (cid) {
+          try {
+            await sendConversationMessage(
+              cid,
+              `Payment confirmed for ${packageTitle || "the package"}${
+                amount ? ` (₹${amount})` : ""
+              }. Looking forward to working with you.`,
+            );
+          } catch {
+            // chat row exists; first-message failure is non-fatal
+          }
+        }
+        return cid || null;
+      } catch (error) {
+        console.log("handleAfterPackagePayment:", error?.message);
+        return null;
+      }
+    },
+    [ensureDirectConversation, sendConversationMessage],
   );
   const [selectedEmoji, setSelectedEmoji] = useState(null);
   const [startCallType, setStartCallType] = useState(null);
@@ -3387,7 +3843,10 @@ const PatientHomeScreen = () => {
         theme={theme}
         onBack={() => setShowPackageJourney(false)}
         patientUserId={currentUser?.id}
+        patientProfileId={patientProfile?.id}
         doctors={packageDoctors}
+        onOpenChatWithDoctor={handleOpenChatWithDoctor}
+        onAfterPackagePayment={handleAfterPackagePayment}
       />
     );
 
@@ -3448,7 +3907,10 @@ const PatientHomeScreen = () => {
 
   return (
     <View style={{ flex: 1 }}>
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["bottom", "left", "right"]}
+    >
       <StatusBar barStyle="light-content" backgroundColor={theme.accent} />
       {dataLoading ? (
         <View
@@ -3491,7 +3953,7 @@ const PatientHomeScreen = () => {
             style={{
               backgroundColor: theme.accent,
               padding: RFValue(24),
-              paddingTop: safeHeaderPaddingTop(20),
+              paddingTop: safeTopContentPadding(insets, 20),
               paddingBottom: RFValue(28),
               borderBottomLeftRadius: RFValue(28),
               borderBottomRightRadius: RFValue(28),
@@ -5792,6 +6254,13 @@ const PatientChatScreen = () => {
   const [activeCall, setActiveCall] = useState(null);
   const [sendingAttachment, setSendingAttachment] = useState(false);
   const [showPrescriptionViewer, setShowPrescriptionViewer] = useState(false);
+  // Refs/state used to drive the "jump to latest message" floating button.
+  // We auto-scroll to the bottom whenever new messages arrive *and* the user
+  // is already pinned there; otherwise we surface the button so they can jump
+  // back without manually scrolling to the end of a long history.
+  const chatScrollRef = useRef(null);
+  const [isAtChatBottom, setIsAtChatBottom] = useState(true);
+  const isAtChatBottomRef = useRef(true);
   const [assistantThinking, setAssistantThinking] = useState(false);
 
   const isAssistantConversation = (conversation) =>
@@ -5911,6 +6380,30 @@ const PatientChatScreen = () => {
             if (!cancelled) setSelectedContact(match);
             return;
           }
+          // The id was provided but our local conversations cache hasn't
+          // caught up. Fetch the row directly from PocketBase so we open
+          // the actual thread instead of creating a duplicate via the
+          // peer-id fallback below.
+          try {
+            const hydrated = await pb
+              .collection("conversations")
+              .getOne(conversationId, {
+                requestKey: null,
+                expand: "members,linkedWound",
+              });
+            if (!cancelled && hydrated) {
+              setSelectedContact(
+                mapConversationRecord(hydrated, currentUserId, {}),
+              );
+              return;
+            }
+          } catch (fetchErr) {
+            console.log(
+              "PatientChatScreen direct conversation fetch failed:",
+              fetchErr?.message,
+            );
+            // Fall through to peer-based ensure as a last resort.
+          }
         }
         if (patientUserId) {
           const conversation = await ensureDirectConversation(patientUserId);
@@ -5977,6 +6470,36 @@ const PatientChatScreen = () => {
     };
   }, [selectedContact?.id]);
 
+  // Reset the "at bottom" flag whenever the user opens a different conversation
+  // so the floating button doesn't flicker on first render.
+  useEffect(() => {
+    isAtChatBottomRef.current = true;
+    setIsAtChatBottom(true);
+  }, [selectedContact?.id]);
+
+  const scrollChatToBottom = (animated = true) => {
+    requestAnimationFrame(() => {
+      try {
+        chatScrollRef.current?.scrollToEnd({ animated });
+        isAtChatBottomRef.current = true;
+        setIsAtChatBottom(true);
+      } catch {
+        // ScrollView may be unmounted between message arrival and rAF
+      }
+    });
+  };
+
+  // Auto-scroll to the latest message when new messages arrive *if* the user
+  // hasn't manually scrolled up. Otherwise we leave their position alone and
+  // the floating button surfaces so they can jump back when ready.
+  useEffect(() => {
+    if (!selectedContact?.id) return;
+    if (contactMessages.length === 0) return;
+    if (!isAtChatBottomRef.current) return;
+    scrollChatToBottom(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactMessages.length, selectedContact?.id]);
+
   const sendMessage = async () => {
     if (!message.trim() || !selectedContact?.id) return;
     const text = message.trim();
@@ -6019,6 +6542,10 @@ const PatientChatScreen = () => {
     const created = await sendConversationMessage(selectedContact.id, text);
     if (created) {
       setMessage("");
+      // Sending a message should always pin the user to the latest message,
+      // even if they had scrolled up earlier — they expect to see the line
+      // they just typed appear at the bottom.
+      isAtChatBottomRef.current = true;
       setContactMessages((prev) => {
         if (prev.some((item) => item.id === created.id)) return prev;
         return [...prev, created];
@@ -6121,7 +6648,10 @@ const PatientChatScreen = () => {
 
   if (selectedContact) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        edges={["bottom", "left", "right"]}
+      >
         <StatusBar
           barStyle={theme.statusBarStyle}
           backgroundColor={theme.card}
@@ -6130,7 +6660,7 @@ const PatientChatScreen = () => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(16),
-            paddingTop: safeHeaderPaddingTop(),
+            paddingTop: safeTopContentPadding(insets, 14),
             flexDirection: "row",
             alignItems: "center",
             borderBottomWidth: 1,
@@ -6238,6 +6768,7 @@ const PatientChatScreen = () => {
           keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
         >
           <ScrollView
+            ref={chatScrollRef}
             contentContainerStyle={{
               padding: RFValue(16),
               paddingBottom:
@@ -6247,6 +6778,26 @@ const PatientChatScreen = () => {
             }}
             style={{ flex: 1, minHeight: 0 }}
             keyboardShouldPersistTaps="handled"
+            // The first time the layout settles we should be at the bottom
+            // — older content above is fine, newest is what the user wants.
+            onContentSizeChange={() => {
+              if (isAtChatBottomRef.current) {
+                chatScrollRef.current?.scrollToEnd({ animated: false });
+              }
+            }}
+            scrollEventThrottle={16}
+            onScroll={(e) => {
+              const { layoutMeasurement, contentOffset, contentSize } =
+                e.nativeEvent;
+              const distanceFromBottom =
+                contentSize.height -
+                (layoutMeasurement.height + contentOffset.y);
+              const atBottom = distanceFromBottom < 80;
+              if (atBottom !== isAtChatBottomRef.current) {
+                isAtChatBottomRef.current = atBottom;
+                setIsAtChatBottom(atBottom);
+              }
+            }}
           >
             {loadingMessages ? (
               <View style={{ alignItems: "center", marginTop: RFValue(80) }}>
@@ -6448,6 +6999,47 @@ const PatientChatScreen = () => {
             )}
           </ScrollView>
 
+          {/* Floating "jump to latest message" pill — appears only when the
+              user has scrolled away from the bottom of the conversation. */}
+          {!isAtChatBottom && contactMessages.length > 0 && (
+            <TouchableOpacity
+              onPress={() => scrollChatToBottom(true)}
+              activeOpacity={0.85}
+              style={{
+                position: "absolute",
+                right: RFValue(16),
+                bottom: RFValue(86) + Math.max(insets.bottom, RFValue(8)),
+                backgroundColor: theme.accent,
+                paddingHorizontal: RFValue(14),
+                paddingVertical: RFValue(8),
+                borderRadius: RFValue(22),
+                flexDirection: "row",
+                alignItems: "center",
+                shadowColor: theme.accent,
+                shadowOpacity: 0.35,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 8,
+                elevation: 6,
+              }}
+            >
+              <Ionicons
+                name="arrow-down"
+                size={RFValue(14)}
+                color="#FFF"
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={{
+                  color: "#FFF",
+                  fontSize: RFValue(12),
+                  fontWeight: "700",
+                }}
+              >
+                Latest
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <View
             style={{
               backgroundColor: theme.card,
@@ -6585,7 +7177,10 @@ const PatientChatScreen = () => {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["bottom", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
 
       <View style={{ flex: 1, minHeight: 0 }}>
@@ -6593,7 +7188,7 @@ const PatientChatScreen = () => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(20),
-            paddingTop: safeHeaderPaddingTop(),
+            paddingTop: safeTopContentPadding(insets, 14),
             borderBottomWidth: 1,
             borderBottomColor: theme.cardBorder,
           }}
@@ -7771,6 +8366,7 @@ const PatientEditProfileScreen = ({
 
 const PatientAppointmentsScreen = ({ onBack }) => {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const {
     appointments,
     payForAppointment,
@@ -7812,13 +8408,16 @@ const PatientAppointmentsScreen = ({ onBack }) => {
     );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["bottom", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
+          paddingTop: safeTopContentPadding(insets, 14),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
           flexDirection: "row",
@@ -8302,6 +8901,7 @@ const PatientProfileScreen = ({
     patientCareMode,
     CARE_MODE,
   } = useAppData();
+  const insets = useSafeAreaInsets();
 
   const avatarUrl = patientProfileAvatarUrl(patientProfile);
   const phoneDisplay = formatPhoneForDisplay(
@@ -8332,7 +8932,10 @@ const PatientProfileScreen = ({
     );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["bottom", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <ScrollView
         contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}
@@ -8341,7 +8944,7 @@ const PatientProfileScreen = ({
           style={{
             backgroundColor: theme.card,
             padding: RFValue(24),
-            paddingTop: safeHeaderPaddingTop(),
+            paddingTop: safeTopContentPadding(insets, 14),
             alignItems: "center",
             borderBottomLeftRadius: RFValue(32),
             borderBottomRightRadius: RFValue(32),
@@ -12909,9 +13512,57 @@ const DoctorAppointmentRequestsSection = () => {
 
 const DoctorUpcomingAppointmentsSection = () => {
   const { theme } = useTheme();
-  const { appointments, updateAppointmentStatus } = useAppData();
+  const {
+    appointments,
+    updateAppointmentStatus,
+    currentUser,
+    ensureDirectConversation,
+    requestOpenConversation,
+    sendConversationMessage,
+    loadConversationMessages,
+  } = useAppData();
+  const tabNav = useMainTabNav();
   const [completingId, setCompletingId] = useState(null);
   const [localError, setLocalError] = useState("");
+  const [packageOffers, setPackageOffers] = useState([]);
+  const [openingChatId, setOpeningChatId] = useState(null);
+
+  const reloadPackageOffers = useCallback(async () => {
+    if (!currentUser?.id) {
+      setPackageOffers([]);
+      return;
+    }
+    try {
+      const offers = await listPackageOffersForDoctor(currentUser.id);
+      setPackageOffers(offers || []);
+    } catch (error) {
+      console.log("DoctorUpcomingAppointmentsSection load offers:", error?.message);
+      setPackageOffers([]);
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    void reloadPackageOffers();
+  }, [reloadPackageOffers, appointments]);
+
+  const findActiveOfferForAppointment = useCallback(
+    (appointment) => {
+      const targetUid = String(appointment?.patientId || "").trim();
+      if (!targetUid) return null;
+      const matches = (packageOffers || []).filter((o) => {
+        const matchUid = String(o.patient_user_id || "") === targetUid;
+        const matchRaw = String(o.patient || "") === targetUid;
+        if (!matchUid && !matchRaw) return false;
+        const st = String(o.status || "sent").toLowerCase();
+        return st !== "cancelled" && st !== "revoked";
+      });
+      if (matches.length === 0) return null;
+      // Prefer paid > sent, then most-recent
+      const paid = matches.find((o) => String(o.status || "").toLowerCase() === "paid");
+      return paid || matches[0];
+    },
+    [packageOffers],
+  );
 
   const upcoming = (appointments || [])
     .filter((item) => {
@@ -12941,6 +13592,82 @@ const DoctorUpcomingAppointmentsSection = () => {
       );
     } finally {
       setCompletingId(null);
+    }
+  };
+
+  const openChatForAppointment = async (appointment) => {
+    if (!appointment?.patientId) {
+      Alert.alert("Chat", "Patient info missing on this appointment.");
+      return;
+    }
+    try {
+      setOpeningChatId(appointment.id);
+      // Prefer the conversation that was created together with the appointment
+      // (when the patient booked it). That row is guaranteed to be the same
+      // direct chat both sides see in their list. Only fall back to
+      // ensureDirectConversation when the appointment was booked before we
+      // started linking conversations.
+      let cid = appointment.conversationId || null;
+      if (!cid) {
+        const conv = await ensureDirectConversation(appointment.patientId);
+        cid = conv?.id || null;
+      }
+      if (!cid) {
+        Alert.alert("Chat", "Could not open the chat with this patient.");
+        return;
+      }
+      // Seed the conversation with the demo + offer summary if it is empty.
+      try {
+        const existing = await loadConversationMessages(cid);
+        if (!existing || existing.length === 0) {
+          const offer = findActiveOfferForAppointment(appointment);
+          const cleaned = cleanAppointmentReasonForDisplay(appointment.reason);
+          const lines = [];
+          if (cleaned) lines.push(`Reason from patient: ${cleaned}`);
+          if (appointment.scheduledAt) {
+            const dt = new Date(appointment.scheduledAt);
+            if (!Number.isNaN(dt.getTime())) {
+              lines.push(
+                `Demo time: ${dt.toLocaleString(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })} (${
+                  appointment.consultationType === "chat"
+                    ? "Chat consult"
+                    : "Video consult"
+                }).`,
+              );
+            }
+          }
+          if (offer?.title) {
+            lines.push(
+              `Package sent: ${offer.title} — ₹${offer.amount_inr ?? "—"}.`,
+            );
+          }
+          if (String(offer?.status || "").toLowerCase() === "paid") {
+            lines.push(
+              `Patient has paid${
+                offer?.amount_inr ? ` ₹${offer.amount_inr}` : ""
+              }. Continue care here.`,
+            );
+          }
+          for (const line of lines) {
+            try {
+              await sendConversationMessage(cid, line);
+            } catch {
+              // best-effort seed
+            }
+          }
+        }
+      } catch (seedErr) {
+        console.log("openChatForAppointment seed:", seedErr?.message);
+      }
+      requestOpenConversation?.(cid, { patientUserId: appointment.patientId });
+      tabNav?.navigateTab?.("Chat");
+    } catch (error) {
+      Alert.alert("Chat", error?.message || "Could not open chat with this patient.");
+    } finally {
+      setOpeningChatId(null);
     }
   };
 
@@ -12999,6 +13726,29 @@ const DoctorUpcomingAppointmentsSection = () => {
           const statusColors = appointmentStatusColorsFor(theme, statusKey);
           const isDone = statusKey === "completed";
           const busyComplete = completingId === appointment.id;
+          const cleanedReason = cleanAppointmentReasonForDisplay(appointment.reason);
+          const isPackage = !!appointment.isPackageDemoMeeting;
+          const offer = isPackage ? findActiveOfferForAppointment(appointment) : null;
+          const offerStatus = String(offer?.status || "").toLowerCase();
+          const isPaid = offerStatus === "paid";
+          const badgeBg = isPackage
+            ? isPaid
+              ? theme.successLight
+              : theme.warningLight || "#FEF3C7"
+            : statusColors.bg;
+          const badgeFg = isPackage
+            ? isPaid
+              ? theme.success
+              : theme.warning
+            : statusColors.fg;
+          const badgeText = isPackage
+            ? isPaid
+              ? "Paid"
+              : offer
+                ? "Awaiting payment"
+                : "Package demo"
+            : humanizeAppointmentStatus(statusKey);
+          const openingChat = openingChatId === appointment.id;
           return (
             <View
               key={appointment.id}
@@ -13030,7 +13780,7 @@ const DoctorUpcomingAppointmentsSection = () => {
                 </Text>
                 <View
                   style={{
-                    backgroundColor: statusColors.bg,
+                    backgroundColor: badgeBg,
                     borderRadius: RFValue(8),
                     paddingHorizontal: RFValue(8),
                     paddingVertical: RFValue(3),
@@ -13038,12 +13788,12 @@ const DoctorUpcomingAppointmentsSection = () => {
                 >
                   <Text
                     style={{
-                      color: statusColors.fg,
+                      color: badgeFg,
                       fontSize: RFValue(10),
                       fontWeight: "800",
                     }}
                   >
-                    {humanizeAppointmentStatus(statusKey)}
+                    {badgeText}
                   </Text>
                 </View>
               </View>
@@ -13060,7 +13810,7 @@ const DoctorUpcomingAppointmentsSection = () => {
                   ? "Chat consult"
                   : "Video consult"}
               </Text>
-              {appointment.reason ? (
+              {cleanedReason ? (
                 <Text
                   style={{
                     fontSize: RFValue(12),
@@ -13070,49 +13820,72 @@ const DoctorUpcomingAppointmentsSection = () => {
                   }}
                 >
                   <Text style={{ fontWeight: "700" }}>Reason: </Text>
-                  {appointment.reason}
+                  {cleanedReason}
                 </Text>
               ) : null}
-              {!isDone ? (
-                <TouchableOpacity
-                  onPress={() => markCompleted(appointment)}
-                  disabled={busyComplete}
-                  style={{
-                    marginTop: RFValue(10),
-                    alignSelf: "flex-start",
-                    backgroundColor: theme.successLight,
-                    borderRadius: RFValue(10),
-                    paddingHorizontal: RFValue(12),
-                    paddingVertical: RFValue(8),
-                    opacity: busyComplete ? 0.6 : 1,
-                  }}
-                >
-                  {busyComplete ? (
-                    <ActivityIndicator color={theme.success} />
-                  ) : (
-                    <Text
-                      style={{
-                        color: theme.success,
-                        fontSize: RFValue(12),
-                        fontWeight: "700",
-                      }}
-                    >
-                      Mark completed
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              ) : (
-                <Text
-                  style={{
-                    marginTop: RFValue(8),
-                    fontSize: RFValue(12),
-                    color: theme.textTertiary,
-                    fontStyle: "italic",
-                  }}
-                >
-                  Chat with this patient stays open in the Messages tab.
-                </Text>
-              )}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: RFValue(10) }}>
+                {isPackage ? (
+                  <TouchableOpacity
+                    onPress={() => openChatForAppointment(appointment)}
+                    disabled={openingChat}
+                    style={{
+                      backgroundColor: theme.accent,
+                      borderRadius: RFValue(10),
+                      paddingHorizontal: RFValue(14),
+                      paddingVertical: RFValue(8),
+                      marginRight: RFValue(8),
+                      opacity: openingChat ? 0.6 : 1,
+                    }}
+                  >
+                    {openingChat ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={{ color: "#fff", fontSize: RFValue(12), fontWeight: "800" }}>
+                        Go to chat
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+                {!isDone && !isPackage ? (
+                  <TouchableOpacity
+                    onPress={() => markCompleted(appointment)}
+                    disabled={busyComplete}
+                    style={{
+                      alignSelf: "flex-start",
+                      backgroundColor: theme.successLight,
+                      borderRadius: RFValue(10),
+                      paddingHorizontal: RFValue(12),
+                      paddingVertical: RFValue(8),
+                      opacity: busyComplete ? 0.6 : 1,
+                    }}
+                  >
+                    {busyComplete ? (
+                      <ActivityIndicator color={theme.success} />
+                    ) : (
+                      <Text
+                        style={{
+                          color: theme.success,
+                          fontSize: RFValue(12),
+                          fontWeight: "700",
+                        }}
+                      >
+                        Mark completed
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+                {isDone && !isPackage ? (
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textTertiary,
+                      fontStyle: "italic",
+                    }}
+                  >
+                    Chat with this patient stays open in the Messages tab.
+                  </Text>
+                ) : null}
+              </View>
             </View>
           );
         })
@@ -21324,33 +22097,38 @@ const StaffManagementScreen = () => {
 
 const ModernHeader = ({ title, subtitle }) => {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   return (
-  <View
-    style={{
-      backgroundColor: theme.card,
-      padding: RFValue(20),
-      paddingTop: safeHeaderPaddingTop(),
-      borderBottomWidth: 1,
-      borderBottomColor: theme.cardBorder,
-    }}
-  >
-    <Text
-      style={{ fontSize: RFValue(20), fontWeight: "800", color: theme.textPrimary }}
+    <View
+      style={{
+        backgroundColor: theme.card,
+        padding: RFValue(20),
+        paddingTop: safeTopContentPadding(insets, 14),
+        borderBottomWidth: 1,
+        borderBottomColor: theme.cardBorder,
+      }}
     >
-      {title}
-    </Text>
-    {subtitle && (
       <Text
         style={{
-          fontSize: RFValue(12),
-          color: theme.textSecondary,
-          marginTop: RFValue(2),
+          fontSize: RFValue(20),
+          fontWeight: "800",
+          color: theme.textPrimary,
         }}
       >
-        {subtitle}
+        {title}
       </Text>
-    )}
-  </View>
+      {subtitle && (
+        <Text
+          style={{
+            fontSize: RFValue(12),
+            color: theme.textSecondary,
+            marginTop: RFValue(2),
+          }}
+        >
+          {subtitle}
+        </Text>
+      )}
+    </View>
   );
 };
 
@@ -21391,7 +22169,10 @@ const PatientWoundScreen = () => {
     );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["bottom", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.statusBarBg} />
       <ModernHeader title="Wound Tracker" subtitle="Manage your recovery" />
 
@@ -22519,6 +23300,7 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
   const [sending, setSending] = useState(false);
   const [warnings, setWarnings] = useState([]);
   const [checkingSideEffects, setCheckingSideEffects] = useState(false);
+  const lastSideEffectItemsSig = useRef("");
   const sendingRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -22599,8 +23381,13 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
       .filter((item) => item.name);
     if (!items.length) {
       setWarnings([]);
+      lastSideEffectItemsSig.current = "";
       return undefined;
     }
+    const itemsSig = items
+      .map((i) => i.name.toLowerCase())
+      .sort()
+      .join("|");
     let cancelled = false;
     const handle = setTimeout(async () => {
       if (cancelled) return;
@@ -22610,7 +23397,10 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
           items,
           patient: currentPatientProfile || {},
         });
-        if (!cancelled) setWarnings(Array.isArray(result) ? result : []);
+        if (!cancelled) {
+          setWarnings(Array.isArray(result) ? result : []);
+          lastSideEffectItemsSig.current = itemsSig;
+        }
       } finally {
         if (!cancelled) setCheckingSideEffects(false);
       }
@@ -22752,62 +23542,6 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
             onChangeText={setDisease}
             editable={!sending}
           />
-
-          {/* Side-effect warnings surface before the doctor hits send. */}
-          {warnings.length > 0 ? (
-            <View
-              style={{
-                marginBottom: RFValue(12),
-                padding: RFValue(12),
-                borderRadius: RFValue(12),
-                backgroundColor: "#FEF3C7",
-                borderWidth: 1,
-                borderColor: "#F59E0B",
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  marginBottom: RFValue(6),
-                }}
-              >
-                <Ionicons name="alert-circle" size={18} color="#B45309" />
-                <Text
-                  style={{
-                    marginLeft: 6,
-                    fontWeight: "800",
-                    color: "#B45309",
-                    fontSize: RFValue(12),
-                  }}
-                >
-                  AI side-effect check ({warnings.length})
-                </Text>
-              </View>
-              {warnings.map((w, idx) => (
-                <Text
-                  key={`${w.medicine}-${idx}`}
-                  style={{
-                    fontSize: RFValue(11),
-                    color: "#92400E",
-                    marginBottom: 4,
-                  }}
-                >
-                  • {w.medicine}: {w.message}
-                </Text>
-              ))}
-            </View>
-          ) : checkingSideEffects ? (
-            <Text
-              style={{
-                marginBottom: RFValue(10),
-                fontSize: RFValue(11),
-                color: "#6B7280",
-              }}
-            >
-              Checking for interactions…
-            </Text>
-          ) : null}
 
           {lines.map((line, index) => (
             <View
@@ -23012,6 +23746,97 @@ const PrescriptionModal = ({ onBack, onConfirm }) => {
             </Text>
           </TouchableOpacity>
         </ScrollView>
+
+        {(() => {
+          const medSig = lines
+            .map((l) => String(l.name || "").trim().toLowerCase())
+            .filter(Boolean)
+            .sort()
+            .join("|");
+          const checkDoneForCurrentMeds =
+            medSig.length > 0 &&
+            medSig === lastSideEffectItemsSig.current &&
+            !checkingSideEffects;
+          return (
+            <View style={{ marginTop: RFValue(10), marginBottom: RFValue(4) }}>
+              {warnings.length > 0 ? (
+                <View
+                  style={{
+                    padding: RFValue(12),
+                    borderRadius: RFValue(12),
+                    backgroundColor: "#FEF3C7",
+                    borderWidth: 1,
+                    borderColor: "#F59E0B",
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      marginBottom: RFValue(6),
+                    }}
+                  >
+                    <Ionicons name="alert-circle" size={18} color="#B45309" />
+                    <Text
+                      style={{
+                        marginLeft: 6,
+                        fontWeight: "800",
+                        color: "#B45309",
+                        fontSize: RFValue(12),
+                      }}
+                    >
+                      AI side-effect check ({warnings.length})
+                    </Text>
+                  </View>
+                  {warnings.map((w, idx) => (
+                    <Text
+                      key={`${w.medicine}-${idx}`}
+                      style={{
+                        fontSize: RFValue(11),
+                        color: "#92400E",
+                        marginBottom: 4,
+                      }}
+                    >
+                      • {w.medicine}: {w.message}
+                    </Text>
+                  ))}
+                </View>
+              ) : checkingSideEffects ? (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: RFValue(8),
+                  }}
+                >
+                  <ActivityIndicator size="small" color="#4338CA" />
+                  <Text
+                    style={{
+                      marginLeft: RFValue(10),
+                      fontSize: RFValue(12),
+                      color: "#4B5563",
+                      fontWeight: "600",
+                    }}
+                  >
+                    Checking side effects (AI)…
+                  </Text>
+                </View>
+              ) : checkDoneForCurrentMeds ? (
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    color: "#6B7280",
+                    paddingVertical: RFValue(6),
+                  }}
+                >
+                  AI quick check: no interaction warnings for the medicine names
+                  entered. This is not a full clinical review — confirm with
+                  references as usual.
+                </Text>
+              ) : null}
+            </View>
+          );
+        })()}
 
         <TouchableOpacity
           onPress={handleConfirm}
@@ -23374,6 +24199,7 @@ const PHARMACY_STATUS_STEPS = [
 
 const PharmacyOrdersScreen = ({ orders }) => {
   const { updateOrderStatus, userRole } = useAppData();
+  const insets = useSafeAreaInsets();
   const [busyId, setBusyId] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -23411,13 +24237,16 @@ const PharmacyOrdersScreen = ({ orders }) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      edges={["bottom", "left", "right"]}
+    >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
+          paddingTop: safeTopContentPadding(insets, 14),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -24232,21 +25061,32 @@ export default function App() {
       throw new Error("Cannot start a chat with yourself");
     }
 
-    let targetRole = normalizeUserRole(
-      targetUser?.role || targetUser?.raw?.role,
-    );
+    // We must distinguish "no explicit role provided" from "role is patient".
+    // `normalizeUserRole` defaults to "patient" for any falsy value, so the
+    // previous logic treated every plain-id call from the patient as a chat
+    // with another patient and threw — even when targeting a doctor.
+    const explicitRole = String(
+      targetUser?.role || targetUser?.raw?.role || "",
+    )
+      .toLowerCase()
+      .trim();
+    let targetRole = explicitRole || null;
     if (!targetRole && userRole === "patient") {
       try {
         const targetRecord = await pb
           .collection("UsersAuth")
           .getOne(targetId, { requestKey: null });
-        targetRole = normalizeUserRole(targetRecord?.role);
+        const fetched = String(targetRecord?.role || "").toLowerCase().trim();
+        targetRole = fetched || null;
       } catch (error) {
         console.log(
           "ensureDirectConversation role check error:",
           error?.message,
         );
-        throw new Error("Unable to verify this chat participant.");
+        // Cannot read other users (PB rule) — fall through and let
+        // PocketBase's collection rules be the final gate. Don't pretend
+        // it's a patient.
+        targetRole = null;
       }
     }
     if (userRole === "patient" && targetRole === "patient") {
@@ -26021,6 +26861,7 @@ export default function App() {
             patients={patients}
             setPatients={setPatients}
           />
+          <NotificationHost />
         </AppDataContext.Provider>
       </ThemeContext.Provider>
     </SafeAreaProvider>

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Modal,
   RefreshControl,
   ScrollView,
@@ -15,6 +16,7 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { pb, getAuthUser } from "./pocketbase";
 import {
   CARE_MODE,
@@ -34,6 +36,7 @@ import {
   doctorProposePackageMeetingReschedule,
   doctorConfirmPatientRescheduleChoice,
   listPackageOffersForPatient,
+  listPackageOffersForDoctor,
   patientPayPackageOfferStub,
   normalizeDoctorPackageSlots,
   doctorPackagesSetupComplete,
@@ -418,6 +421,7 @@ export function DoctorPackageSetupScreen({
 }
 
 export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
+  const insets = useSafeAreaInsets();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
@@ -483,8 +487,9 @@ export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
         style={{
           flexDirection: "row",
           alignItems: "center",
-          padding: S.pad,
-          paddingTop: 12,
+          paddingHorizontal: S.pad,
+          paddingBottom: S.pad,
+          paddingTop: (insets.top || 0) + 12,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: theme.cardBorder,
         }}
@@ -578,6 +583,7 @@ export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
 }
 
 export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
+  const insets = useSafeAreaInsets();
   const [notes, setNotes] = useState("");
   const [privateMode, setPrivateMode] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -607,7 +613,15 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <View style={{ flexDirection: "row", alignItems: "center", padding: S.pad }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: S.pad,
+          paddingBottom: S.pad,
+          paddingTop: (insets.top || 0) + 12,
+        }}
+      >
         <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
         </TouchableOpacity>
@@ -687,6 +701,7 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
 }
 
 export function QuickCounsellingScreen({ theme, onBack, patientUserId }) {
+  const insets = useSafeAreaInsets();
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -703,7 +718,15 @@ export function QuickCounsellingScreen({ theme, onBack, patientUserId }) {
   };
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <View style={{ flexDirection: "row", alignItems: "center", padding: S.pad }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: S.pad,
+          paddingBottom: S.pad,
+          paddingTop: (insets.top || 0) + 12,
+        }}
+      >
         <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
         </TouchableOpacity>
@@ -755,16 +778,20 @@ export function PackageDoctorJourneyScreen({
   theme,
   onBack,
   patientUserId,
+  patientProfileId,
   doctors,
+  onOpenChatWithDoctor,
+  onAfterPackagePayment,
 }) {
+  const insets = useSafeAreaInsets();
   const [search, setSearch] = useState("");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [meetings, setMeetings] = useState([]);
   const [offers, setOffers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [meetingDate, setMeetingDate] = useState("");
-  const [meetingTime, setMeetingTime] = useState("");
+  const [meetingDateTime, setMeetingDateTime] = useState(null);
+  const [pickerMode, setPickerMode] = useState(null);
   const [meetingDesc, setMeetingDesc] = useState("");
   const [pickedReschedule, setPickedReschedule] = useState({});
 
@@ -784,14 +811,21 @@ export function PackageDoctorJourneyScreen({
   );
 
   const reload = useCallback(async () => {
-    const o = await listPackageOffersForPatient(patientUserId);
+    const o = await listPackageOffersForPatient(patientUserId, patientProfileId);
     setOffers(o);
     const m = await listPackageMeetingsForPatient(patientUserId);
     setMeetings(m);
-  }, [patientUserId]);
+  }, [patientUserId, patientProfileId]);
 
   useEffect(() => {
     void reload();
+  }, [reload]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void reload();
+    });
+    return () => sub.remove();
   }, [reload]);
 
   const onRefresh = useCallback(async () => {
@@ -808,14 +842,18 @@ export function PackageDoctorJourneyScreen({
       Alert.alert("Doctor", "Select a doctor first.");
       return;
     }
-    const when = combineDateAndTimeToIso(meetingDate.trim(), meetingTime.trim());
-    if (!when) {
+    if (!(meetingDateTime instanceof Date) || Number.isNaN(meetingDateTime.getTime())) {
       Alert.alert(
         "Date & time",
-        "Use date YYYY-MM-DD and time HH:MM (24h), e.g. 2026-05-01 and 15:30.",
+        "Please tap the calendar and clock to pick a date and time before sending.",
       );
       return;
     }
+    if (meetingDateTime.getTime() < Date.now() - 60 * 1000) {
+      Alert.alert("Date & time", "Pick a time in the future.");
+      return;
+    }
+    const when = meetingDateTime.toISOString();
     const desc = meetingDesc.trim();
     if (!desc) {
       Alert.alert("Description", "Describe the reason for the visit, symptoms, billing context, etc.");
@@ -832,6 +870,7 @@ export function PackageDoctorJourneyScreen({
         callKind: "video",
       });
       setMeetingDesc("");
+      setMeetingDateTime(null);
       await reload();
       if (created?.localOnly) {
         Alert.alert(
@@ -870,23 +909,85 @@ export function PackageDoctorJourneyScreen({
     }
   };
 
+  /** Resolve the doctor's auth user id for an offer (handles `users` vs `doctor_profile` relations). */
+  const offerDoctorUserId = useCallback(
+    (offer) => {
+      if (!offer) return null;
+      const direct = String(offer.doctor_user_id || "").trim();
+      if (direct) return direct;
+      const raw = String(offer.doctor || "").trim();
+      const match = (doctors || []).find(
+        (d) => String(d.userId) === raw || String(d.profileId) === raw,
+      );
+      return match?.userId || raw || null;
+    },
+    [doctors],
+  );
+
+  /** Active offers for a meeting card, matched by doctor auth user id (or profile fallback). */
+  const offersForMeeting = useCallback(
+    (meeting) => {
+      const targetUid = String(meeting?.doctor_user_id || "").trim();
+      if (!targetUid) return [];
+      return (offers || []).filter((o) => {
+        const matchUid = String(o.doctor_user_id || "") === targetUid;
+        const matchRaw = offerDoctorUserId(o) === targetUid;
+        if (!matchUid && !matchRaw) return false;
+        const st = String(o.status || "sent").toLowerCase();
+        return st !== "cancelled" && st !== "revoked";
+      });
+    },
+    [offers, offerDoctorUserId],
+  );
+
+  /** Prefer paid > sent > most-recent. */
+  const primaryOfferForMeeting = useCallback(
+    (meeting) => {
+      const list = offersForMeeting(meeting);
+      if (list.length === 0) return null;
+      const paid = list.find((o) => String(o.status || "").toLowerCase() === "paid");
+      return paid || list[0];
+    },
+    [offersForMeeting],
+  );
+
   const payOffer = async (offer) => {
     try {
       setBusy(true);
-      const doctorUserId =
-        typeof offer.doctor === "object" && offer.doctor?.id
-          ? offer.doctor.id
-          : offer.doctor;
+      const doctorUserId = offerDoctorUserId(offer);
       await patientPayPackageOfferStub(offer.id, doctorUserId);
+      try {
+        await onAfterPackagePayment?.({
+          doctorUserId,
+          packageTitle: offer.title,
+          amount: offer.amount_inr,
+        });
+      } catch {
+        // optional — chat creation is best-effort
+      }
       await reload();
       Alert.alert(
         "Paid — deal started",
-        "Payment recorded. Your package agreement is now active; sessions proceed per the doctor’s plan. Doctor share is held as pending coins until duties are completed (1 coin = ₹1).",
+        "Payment recorded and a chat with this doctor is now open in the Chat tab. Tap Go to chat from your demo card to continue the conversation.",
       );
     } catch (e) {
       Alert.alert("Payment", e?.message || "Failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const goToChatWithMeetingDoctor = async (meeting) => {
+    const doctorUid = String(meeting?.doctor_user_id || "").trim();
+    if (!doctorUid) {
+      Alert.alert("Chat", "Doctor info missing on this meeting.");
+      return;
+    }
+    const offer = primaryOfferForMeeting(meeting);
+    try {
+      await onOpenChatWithDoctor?.(doctorUid, meeting, offer);
+    } catch (e) {
+      Alert.alert("Chat", e?.message || "Could not open chat.");
     }
   };
 
@@ -919,9 +1020,97 @@ export function PackageDoctorJourneyScreen({
     marginBottom: 10,
   };
 
+  const formatDateLabel = (d) =>
+    d instanceof Date && !Number.isNaN(d.getTime())
+      ? d.toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "2-digit",
+          weekday: "short",
+        })
+      : "Tap to pick date";
+  const formatTimeLabel = (d) =>
+    d instanceof Date && !Number.isNaN(d.getTime())
+      ? d.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
+      : "Tap to pick time";
+
+  const openPicker = (mode) => {
+    if (!(meetingDateTime instanceof Date)) {
+      const seed = new Date();
+      seed.setSeconds(0, 0);
+      if (mode === "time") {
+        seed.setMinutes(Math.ceil(seed.getMinutes() / 5) * 5);
+      }
+      setMeetingDateTime(seed);
+    }
+    setPickerMode(mode);
+  };
+
+  const applyPickerValue = (mode, value) => {
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) return;
+    const next =
+      meetingDateTime instanceof Date && !Number.isNaN(meetingDateTime.getTime())
+        ? new Date(meetingDateTime)
+        : new Date();
+    if (mode === "date") {
+      next.setFullYear(value.getFullYear(), value.getMonth(), value.getDate());
+    } else {
+      next.setHours(value.getHours(), value.getMinutes(), 0, 0);
+    }
+    setMeetingDateTime(next);
+  };
+
+  const onPickerChange = (event, value) => {
+    const mode = pickerMode;
+    if (Platform.OS === "android") {
+      setPickerMode(null);
+      if (event?.type === "set" && value) applyPickerValue(mode, value);
+    } else if (value) {
+      applyPickerValue(mode, value);
+    }
+  };
+
+  const pickerButton = (label, valueLabel, onPress, iconName) => (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: theme.card,
+        borderRadius: 14,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: theme.cardBorder,
+        marginBottom: 10,
+      }}
+    >
+      <Ionicons name={iconName} size={20} color={theme.accent} style={{ marginRight: 12 }} />
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: theme.textTertiary, fontSize: 11 }}>{label}</Text>
+        <Text style={{ color: theme.textPrimary, fontSize: 14, fontWeight: "700", marginTop: 2 }}>
+          {valueLabel}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
+    </TouchableOpacity>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <View style={{ flexDirection: "row", alignItems: "center", padding: S.pad }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: S.pad,
+          paddingBottom: S.pad,
+          paddingTop: (insets.top || 0) + 12,
+        }}
+      >
         <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
         </TouchableOpacity>
@@ -1005,22 +1194,72 @@ export function PackageDoctorJourneyScreen({
           style={[inputBase, { minHeight: 110, textAlignVertical: "top" }]}
         />
         <Text style={{ color: theme.textTertiary, fontSize: 11, marginBottom: 6 }}>
-          Date YYYY-MM-DD · time 24h HH:MM (this device’s local timezone)
+          Pick a date and time using the calendar and clock (this device’s local timezone).
         </Text>
-        <TextInput
-          placeholder="Date e.g. 2026-05-01"
-          placeholderTextColor={theme.textTertiary}
-          value={meetingDate}
-          onChangeText={setMeetingDate}
-          style={inputBase}
-        />
-        <TextInput
-          placeholder="Time e.g. 15:30"
-          placeholderTextColor={theme.textTertiary}
-          value={meetingTime}
-          onChangeText={setMeetingTime}
-          style={inputBase}
-        />
+        {pickerButton(
+          "Date",
+          formatDateLabel(meetingDateTime),
+          () => openPicker("date"),
+          "calendar-outline",
+        )}
+        {pickerButton(
+          "Time",
+          formatTimeLabel(meetingDateTime),
+          () => openPicker("time"),
+          "time-outline",
+        )}
+        {Platform.OS === "android" && pickerMode ? (
+          <DateTimePicker
+            value={
+              meetingDateTime instanceof Date && !Number.isNaN(meetingDateTime.getTime())
+                ? meetingDateTime
+                : new Date()
+            }
+            mode={pickerMode}
+            display="default"
+            is24Hour={false}
+            minimumDate={pickerMode === "date" ? new Date() : undefined}
+            onChange={onPickerChange}
+          />
+        ) : null}
+        {Platform.OS === "ios" && pickerMode ? (
+          <Modal transparent animationType="fade" visible onRequestClose={() => setPickerMode(null)}>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.4)",
+                justifyContent: "flex-end",
+              }}
+            >
+              <View style={{ backgroundColor: theme.card, padding: 16, paddingBottom: 28 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+                  <TouchableOpacity onPress={() => setPickerMode(null)}>
+                    <Text style={{ color: theme.warning, fontWeight: "700" }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                    {pickerMode === "date" ? "Pick date" : "Pick time"}
+                  </Text>
+                  <TouchableOpacity onPress={() => setPickerMode(null)}>
+                    <Text style={{ color: theme.accent, fontWeight: "800" }}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+                <DateTimePicker
+                  value={
+                    meetingDateTime instanceof Date && !Number.isNaN(meetingDateTime.getTime())
+                      ? meetingDateTime
+                      : new Date()
+                  }
+                  mode={pickerMode}
+                  display="spinner"
+                  is24Hour={false}
+                  locale="en-US"
+                  minimumDate={pickerMode === "date" ? new Date() : undefined}
+                  onChange={onPickerChange}
+                />
+              </View>
+            </View>
+          </Modal>
+        ) : null}
         <TouchableOpacity
           onPress={submitBooking}
           disabled={busy}
@@ -1051,175 +1290,275 @@ export function PackageDoctorJourneyScreen({
         {meetings.length === 0 ? (
           <Text style={{ color: theme.textTertiary, marginTop: 6 }}>None yet.</Text>
         ) : (
-          meetings.map((x) => (
-            <View
-              key={x.id}
-              style={{
-                marginTop: 10,
-                padding: 14,
-                borderRadius: 14,
-                backgroundColor: theme.card,
-                borderWidth: 1,
-                borderColor: theme.cardBorder,
-              }}
-            >
-              {x.localOnly ? (
-                <View
-                  style={{
-                    backgroundColor: theme.warning + "22",
-                    borderRadius: 10,
-                    padding: 8,
-                    marginBottom: 10,
-                    borderWidth: 1,
-                    borderColor: theme.warning,
-                  }}
-                >
-                  <Text style={{ color: theme.warning, fontSize: 11, fontWeight: "700" }}>
-                    On this device only — could not save to PocketBase `appointments`. Your doctor will
-                    not see this on another phone until the server accepts the booking.
-                  </Text>
-                </View>
-              ) : null}
-              <Text style={{ color: theme.accent, fontWeight: "800" }}>
-                {doctorName(x.doctor_user_id)}
-              </Text>
-              <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}>
-                {packageMeetingStatusLabel(x.status)}
-              </Text>
-              {x.proposed_at ? (
-                <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}>
-                  Your proposed time:{" "}
-                  {new Date(x.proposed_at).toLocaleString(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
-                </Text>
-              ) : null}
-              {x.confirmed_at && x.status === PACKAGE_MEETING_STATUS.CONFIRMED ? (
-                <Text style={{ color: theme.success, fontSize: S.small, marginTop: 4, fontWeight: "700" }}>
-                  Confirmed:{" "}
-                  {new Date(x.confirmed_at).toLocaleString(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
-                </Text>
-              ) : null}
-              {x.description ? (
-                <Text style={{ color: theme.textPrimary, fontSize: S.small, marginTop: 8 }}>
-                  {x.description}
-                </Text>
-              ) : null}
-              {Array.isArray(x.messages) && x.messages.length > 0 ? (
-                <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.cardBorder }}>
-                  <Text style={{ color: theme.textTertiary, fontSize: 11, fontWeight: "700", marginBottom: 6 }}>
-                    Activity
-                  </Text>
-                  {x.messages.slice(-8).map((m, i) => (
-                    <Text key={`${x.id}-m-${i}`} style={{ color: theme.textSecondary, fontSize: 12, marginBottom: 4 }}>
-                      [{m.role}] {m.text}
-                    </Text>
-                  ))}
-                </View>
-              ) : null}
-              {x.status === PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS &&
-              (x.doctor_alternate_slots || []).length > 0 ? (
-                <View style={{ marginTop: 12 }}>
-                  <Text style={{ color: theme.textPrimary, fontWeight: "700", marginBottom: 8 }}>
-                    Pick one of your doctor’s times
-                  </Text>
-                  {(x.doctor_alternate_slots || []).map((slot) => {
-                    const label = new Date(slot).toLocaleString(undefined, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    });
-                    const selected = pickedReschedule[x.id] === slot;
-                    return (
-                      <TouchableOpacity
-                        key={slot}
-                        onPress={() => setPickedReschedule((p) => ({ ...p, [x.id]: slot }))}
-                        style={{
-                          padding: 10,
-                          borderRadius: 10,
-                          marginBottom: 8,
-                          borderWidth: 2,
-                          borderColor: selected ? theme.accent : theme.cardBorder,
-                          backgroundColor: selected ? theme.accentLight : theme.bg,
-                        }}
-                      >
-                        <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>{label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                  <TouchableOpacity
-                    onPress={() => submitRescheduleChoice(x.id)}
-                    disabled={busy}
+          meetings.map((x) => {
+            const offer = primaryOfferForMeeting(x);
+            const offerStatus = String(offer?.status || "").toLowerCase();
+            const isPaid = offerStatus === "paid";
+            const isAwaiting = !!offer && !isPaid;
+            const meetingTimeIso =
+              x.confirmed_at && x.status === PACKAGE_MEETING_STATUS.CONFIRMED
+                ? x.confirmed_at
+                : x.patient_selected_slot || x.proposed_at;
+            const meetingDateLabel = meetingTimeIso
+              ? new Date(meetingTimeIso).toLocaleDateString(undefined, {
+                  weekday: "short",
+                  month: "short",
+                  day: "2-digit",
+                })
+              : "";
+            const meetingTimeLabel = meetingTimeIso
+              ? new Date(meetingTimeIso).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  hour12: true,
+                })
+              : "";
+            const methodLabel = x.call_kind === "chat" ? "Chat consult" : "Video consult";
+            const badgeText = isPaid
+              ? "Paid"
+              : isAwaiting
+                ? "Awaiting payment"
+                : packageMeetingStatusLabel(x.status);
+            const badgeBg = isPaid
+              ? theme.successLight
+              : isAwaiting
+                ? (theme.warningLight || "#FEF3C7")
+                : theme.bg;
+            const badgeFg = isPaid
+              ? theme.success
+              : isAwaiting
+                ? theme.warning
+                : theme.textTertiary;
+            const showRescheduleUI =
+              x.status === PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS &&
+              (x.doctor_alternate_slots || []).length > 0;
+            return (
+              <View
+                key={x.id}
+                style={{
+                  marginTop: 10,
+                  padding: 14,
+                  borderRadius: 14,
+                  backgroundColor: theme.card,
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                {x.localOnly ? (
+                  <View
                     style={{
-                      marginTop: 4,
-                      backgroundColor: theme.warning,
-                      padding: 12,
-                      borderRadius: 12,
-                      alignItems: "center",
+                      backgroundColor: theme.warning + "22",
+                      borderRadius: 10,
+                      padding: 8,
+                      marginBottom: 10,
+                      borderWidth: 1,
+                      borderColor: theme.warning,
                     }}
                   >
-                    <Text style={{ color: "#fff", fontWeight: "800" }}>Send chosen time to doctor</Text>
-                  </TouchableOpacity>
+                    <Text style={{ color: theme.warning, fontSize: 11, fontWeight: "700" }}>
+                      On this device only — could not save to PocketBase `appointments`.
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Text
+                    style={{
+                      color: theme.accent,
+                      fontWeight: "800",
+                      flex: 1,
+                      marginRight: 8,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {doctorName(x.doctor_user_id)}
+                  </Text>
+                  <View
+                    style={{
+                      backgroundColor: badgeBg,
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      borderRadius: 999,
+                    }}
+                  >
+                    <Text style={{ color: badgeFg, fontWeight: "800", fontSize: 11 }}>
+                      {badgeText}
+                    </Text>
+                  </View>
                 </View>
-              ) : null}
-            </View>
-          ))
+                {meetingTimeIso ? (
+                  <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
+                    {meetingDateLabel} · {meetingTimeLabel} · {methodLabel}
+                  </Text>
+                ) : null}
+                {x.description ? (
+                  <Text style={{ color: theme.textPrimary, fontSize: S.small, marginTop: 6 }}>
+                    <Text style={{ fontWeight: "700" }}>Reason: </Text>
+                    {x.description}
+                  </Text>
+                ) : null}
+                {showRescheduleUI ? (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={{ color: theme.textPrimary, fontWeight: "700", marginBottom: 8 }}>
+                      Pick one of your doctor’s times
+                    </Text>
+                    {(x.doctor_alternate_slots || []).map((slot) => {
+                      const label = new Date(slot).toLocaleString(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      });
+                      const selected = pickedReschedule[x.id] === slot;
+                      return (
+                        <TouchableOpacity
+                          key={slot}
+                          onPress={() => setPickedReschedule((p) => ({ ...p, [x.id]: slot }))}
+                          style={{
+                            padding: 10,
+                            borderRadius: 10,
+                            marginBottom: 8,
+                            borderWidth: 2,
+                            borderColor: selected ? theme.accent : theme.cardBorder,
+                            backgroundColor: selected ? theme.accentLight : theme.bg,
+                          }}
+                        >
+                          <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
+                            {label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    <TouchableOpacity
+                      onPress={() => submitRescheduleChoice(x.id)}
+                      disabled={busy}
+                      style={{
+                        marginTop: 4,
+                        backgroundColor: theme.warning,
+                        padding: 12,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>
+                        Send chosen time to doctor
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 12 }}>
+                  {isAwaiting ? (
+                    <TouchableOpacity
+                      onPress={() => payOffer(offer)}
+                      disabled={busy}
+                      style={{
+                        backgroundColor: theme.success,
+                        paddingHorizontal: 14,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        marginRight: 8,
+                        opacity: busy ? 0.7 : 1,
+                      }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>
+                        Pay ₹{offer?.amount_inr ?? "—"}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {(isPaid || isAwaiting) ? (
+                    <TouchableOpacity
+                      onPress={() => goToChatWithMeetingDoctor(x)}
+                      style={{
+                        backgroundColor: theme.accent,
+                        paddingHorizontal: 14,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                      }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>Go to chat</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })
         )}
 
-        <Text style={{ marginTop: 20, fontWeight: "800", color: theme.textPrimary }}>Package offers</Text>
-        {offers.length === 0 ? (
-          <Text style={{ color: theme.textTertiary, marginTop: 6 }}>
-            Waiting for your doctor to tap “Send package options” after the demo call.
-          </Text>
-        ) : (
-          offers.map((o) => (
-            <View
-              key={o.id}
-              style={{
-                marginTop: 10,
-                padding: 14,
-                borderRadius: 14,
-                backgroundColor: theme.card,
-                borderWidth: 1,
-                borderColor: theme.cardBorder,
-              }}
-            >
-              <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
-                {o.title || "Package"}
+        {/*
+          Standalone "Package offers" section is removed — every offer is shown
+          inline on its matching demo meeting card above (Pay / Paid + Go to chat).
+          Orphan offers (no matching meeting) fall back to a compact list below.
+        */}
+        {(() => {
+          const meetingDoctorIds = new Set(
+            (meetings || [])
+              .map((m) => String(m.doctor_user_id || "").trim())
+              .filter(Boolean),
+          );
+          const orphans = (offers || []).filter((o) => {
+            const did = String(offerDoctorUserId(o) || "").trim();
+            return did && !meetingDoctorIds.has(did);
+          });
+          if (orphans.length === 0) return null;
+          return (
+            <>
+              <Text style={{ marginTop: 20, fontWeight: "800", color: theme.textPrimary }}>
+                Other package offers
               </Text>
-              <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
-                ₹{o.amount_inr ?? "—"} total (paid to company) · Platform fee ₹{o.platform_fee_inr ?? "—"}{" "}
-                · Doctor share {o.doctor_coins ?? "—"} coins pending until package duties are completed
-                (1 coin = ₹1).
-              </Text>
-              <Text style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 4 }}>
-                Sessions: {o.sessions ?? "—"} · Validity: {o.validity_days ?? "—"} days
-              </Text>
-              {o.status === "sent" || !o.status ? (
-                <TouchableOpacity
-                  onPress={() => payOffer(o)}
-                  disabled={busy}
-                  style={{
-                    marginTop: 12,
-                    backgroundColor: theme.success,
-                    padding: 12,
-                    borderRadius: 12,
-                    alignItems: "center",
-                  }}
-                >
-                  <Text style={{ color: "#fff", fontWeight: "800" }}>Pay now</Text>
-                </TouchableOpacity>
-              ) : (
-                <Text style={{ marginTop: 8, color: theme.success, fontWeight: "700" }}>
-                  Status: {o.status}
-                </Text>
-              )}
-            </View>
-          ))
-        )}
+              {orphans.map((o) => {
+                const isPaid = String(o.status || "").toLowerCase() === "paid";
+                return (
+                  <View
+                    key={o.id}
+                    style={{
+                      marginTop: 10,
+                      padding: 14,
+                      borderRadius: 14,
+                      backgroundColor: theme.card,
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                    }}
+                  >
+                    <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                      {o.title || "Package"}
+                    </Text>
+                    <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
+                      Service fee ₹{o.amount_inr ?? "—"} ·{" "}
+                      {isPaid ? "Paid" : "Awaiting payment"}
+                    </Text>
+                    {!isPaid ? (
+                      <TouchableOpacity
+                        onPress={() => payOffer(o)}
+                        disabled={busy}
+                        style={{
+                          marginTop: 12,
+                          backgroundColor: theme.success,
+                          padding: 12,
+                          borderRadius: 12,
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "800" }}>
+                          Pay ₹{o.amount_inr ?? "—"}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => onOpenChatWithDoctor?.(offerDoctorUserId(o), null, o)}
+                        style={{
+                          marginTop: 12,
+                          backgroundColor: theme.accent,
+                          padding: 12,
+                          borderRadius: 12,
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "800" }}>Go to chat</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })}
+            </>
+          );
+        })()}
       </ScrollView>
     </View>
   );
@@ -1229,7 +1568,12 @@ export function PackageDoctorJourneyScreen({
  * PDF: after demo / explanation doctor taps “Send package options” → patient sees offer + Pay now.
  * Shown on Discussing rows and Confirmed demo rows (not on the bare dashboard).
  */
-function PackageSuggestAfterMeetingInline({ theme, patientUserId, catalogSlots }) {
+function PackageSuggestAfterMeetingInline({
+  theme,
+  patientUserId,
+  catalogSlots,
+  onPackageOptionsSent,
+}) {
   const user = getAuthUser();
   const [modalOpen, setModalOpen] = useState(false);
   const [activeSlotIndex, setActiveSlotIndex] = useState(0);
@@ -1260,6 +1604,11 @@ function PackageSuggestAfterMeetingInline({ theme, patientUserId, catalogSlots }
         packageSlotIndex: slotNum,
       });
       setModalOpen(false);
+      try {
+        await onPackageOptionsSent?.();
+      } catch {
+        // optional parent refresh
+      }
       Alert.alert(
         "Package options sent",
         "The patient sees the package breakdown and Pay now on their Package Doctor screen. Payment goes to the company account first; your share accrues as coins after you fulfil the package (1 coin = ₹1).",
@@ -1413,6 +1762,7 @@ function PackageSuggestAfterMeetingInline({ theme, patientUserId, catalogSlots }
 export function PackageMeetingDoctorPanel({ theme }) {
   const user = getAuthUser();
   const [rows, setRows] = useState([]);
+  const [doctorOffers, setDoctorOffers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [modalMeetingId, setModalMeetingId] = useState(null);
@@ -1440,9 +1790,38 @@ export function PackageMeetingDoctorPanel({ theme }) {
 
   const load = useCallback(async () => {
     if (!user?.id) return;
-    const m = await listPackageMeetingsForDoctor(user.id);
+    const [m, offers] = await Promise.all([
+      listPackageMeetingsForDoctor(user.id),
+      listPackageOffersForDoctor(user.id),
+    ]);
     setRows(m);
+    setDoctorOffers(offers);
   }, [user?.id]);
+
+  /** Active (non-cancelled) offers tied to this meeting's patient. */
+  const activeOffersForMeeting = useCallback(
+    (meeting) => {
+      const targetUid = String(meeting?.patient_user_id || "").trim();
+      const targetProfId = String(meeting?.patient_profile_id || "").trim();
+      if (!targetUid && !targetProfId) return [];
+      return doctorOffers.filter((o) => {
+        const matchUid = targetUid && String(o.patient_user_id || "") === targetUid;
+        const matchRaw =
+          (targetUid && String(o.patient || "") === targetUid) ||
+          (targetProfId && String(o.patient || "") === targetProfId);
+        if (!matchUid && !matchRaw) return false;
+        const st = String(o.status || "sent").toLowerCase();
+        return st !== "cancelled" && st !== "revoked";
+      });
+    },
+    [doctorOffers],
+  );
+
+  /** Confirmed demo where the doctor has already sent at least one offer. */
+  const meetingHasActiveOffer = useCallback(
+    (meeting) => activeOffersForMeeting(meeting).length > 0,
+    [activeOffersForMeeting],
+  );
 
   useEffect(() => {
     void load();
@@ -1472,15 +1851,19 @@ export function PackageMeetingDoctorPanel({ theme }) {
       const b = packageMeetingDoctorListBucket(r);
       if (b === "pending") pend.push(r);
       else if (b === "discussing") disc.push(r);
-      else if (b === "confirmed_demo") conf.push(r);
-      else cl.push(r);
+      else if (b === "confirmed_demo") {
+        // Once an offer is sent, payment tracking moves to Upcoming Appointments
+        // (clean card with paid badge + Go to chat). Keep this list focused on
+        // "demo confirmed but offer not sent yet".
+        if (!meetingHasActiveOffer(r)) conf.push(r);
+      } else cl.push(r);
     }
     pend.sort(sortDesc);
     disc.sort(sortDesc);
     conf.sort(sortDesc);
     cl.sort(sortDesc);
     return { pending: pend, discussing: disc, confirmedDemo: conf, closed: cl };
-  }, [rows]);
+  }, [rows, meetingHasActiveOffer]);
 
   const openRescheduleModal = (meetingId) => {
     setModalMeetingId(meetingId);
@@ -1564,7 +1947,9 @@ export function PackageMeetingDoctorPanel({ theme }) {
     </View>
   );
 
-  const renderMeetingCard = (x, { readOnly, withSuggest }) => (
+  const renderMeetingCard = (x, { readOnly, withSuggest }) => {
+    const sentOffers = withSuggest ? activeOffersForMeeting(x) : [];
+    return (
     <View
       key={x.id}
       style={{
@@ -1728,14 +2113,62 @@ export function PackageMeetingDoctorPanel({ theme }) {
         ) : null}
       </View>
       {withSuggest ? (
-        <PackageSuggestAfterMeetingInline
-          theme={theme}
-          patientUserId={x.patient_user_id}
-          catalogSlots={catalogSlots}
-        />
+        sentOffers.length > 0 ? (
+          <View
+            style={{
+              marginTop: 12,
+              padding: 12,
+              borderRadius: 12,
+              backgroundColor: theme.successLight,
+              borderWidth: 1,
+              borderColor: theme.success,
+            }}
+          >
+            <Text style={{ color: theme.success, fontWeight: "800", fontSize: 12 }}>
+              Package sent — track payment
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: 11,
+                marginTop: 6,
+                lineHeight: 16,
+              }}
+            >
+              The patient sees this under Package Doctor → Package offers with Pay now. Status below
+              reflects the offer row in PocketBase.
+            </Text>
+            {sentOffers.map((o) => (
+              <View
+                key={o.id}
+                style={{
+                  marginTop: 10,
+                  paddingTop: 10,
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: theme.cardBorder,
+                }}
+              >
+                <Text style={{ color: theme.textPrimary, fontWeight: "700", fontSize: 12 }}>
+                  {o.title || "Package"}
+                </Text>
+                <Text style={{ color: theme.textSecondary, fontSize: 11, marginTop: 4 }}>
+                  ₹{o.amount_inr ?? "—"} · Status: {String(o.status || "sent")}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <PackageSuggestAfterMeetingInline
+            theme={theme}
+            patientUserId={x.patient_user_id}
+            catalogSlots={catalogSlots}
+            onPackageOptionsSent={load}
+          />
+        )
       ) : null}
     </View>
-  );
+    );
+  };
 
   const sectionHeader = (title, blurb, noTopMargin) => (
     <View style={{ marginTop: noTopMargin ? 0 : 16, marginBottom: 8 }}>

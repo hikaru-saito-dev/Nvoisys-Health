@@ -623,6 +623,20 @@ async function resolveDoctorProfileIdForUser(doctorUserId) {
   }
 }
 
+/** For `package_offers.patient` when the relation targets `patient_profile` instead of auth users. */
+async function resolvePatientProfileIdForAuthUser(patientAuthUserId) {
+  if (!patientAuthUserId) return null;
+  try {
+    const p = await pb.collection("patient_profile").getFirstListItem(
+      `user="${patientAuthUserId}"`,
+      { requestKey: null },
+    );
+    return p?.id || null;
+  } catch {
+    return null;
+  }
+}
+
 async function doctorIdsForAppointmentCreate(doctorUserId, doctorProfileId) {
   const profileId =
     doctorProfileId || (await resolveDoctorProfileIdForUser(doctorUserId)) || null;
@@ -723,8 +737,16 @@ function decodeWorkflowFromDescription(full, fallback = {}) {
   return { patient_description, workflow: merged };
 }
 
-export function decodePackageMeetingFromPbRow(row) {
-  if (!row) return null;
+/**
+ * Full meeting workflow from an `appointments` row — prefers `workflow_json`
+ * over parsing `reason` only. Doctor update paths must use this (not
+ * `decodeWorkflowFromDescription(reason)` alone) or patient/doctor auth ids
+ * embedded in JSON can be lost when `reason` is truncated or out of sync.
+ */
+export function decodeMeetingWorkflowFromAppointmentRow(row) {
+  if (!row) {
+    return buildWorkflowPayload({ patientDescription: "" });
+  }
   const reasonText = appointmentReasonField(row);
   const fromJson = row.workflow_json ?? row.meeting_workflow;
   let workflow;
@@ -748,6 +770,12 @@ export function decodePackageMeetingFromPbRow(row) {
       workflow.proposed_at = row.scheduled_at;
     }
   }
+  return workflow;
+}
+
+export function decodePackageMeetingFromPbRow(row) {
+  if (!row) return null;
+  const workflow = decodeMeetingWorkflowFromAppointmentRow(row);
   const patient_user_id =
     String(workflow.patient_auth_user_id || "").trim() || expandRelId(row.patient);
   const doctor_user_id =
@@ -767,6 +795,7 @@ export function decodePackageMeetingFromPbRow(row) {
     call_kind: row.consultation_type || row.call_kind || "video",
     updated_at: row.updated || row.created || new Date().toISOString(),
     appointment_status: String(row.status || "").trim().toLowerCase() || null,
+    conversation_id: typeof row.conversation === "string" ? row.conversation : "",
   };
 }
 
@@ -831,8 +860,18 @@ export async function listPackageMeetingsForDoctor(doctorUserId) {
   const rows = await pbListPackageAppointmentRowsForDoctorMerged(doctorUserId);
   const out = rows.map(decodePackageMeetingFromPbRow).filter(Boolean);
   const merged = await mergeMeetingsForUser(out, { patientUserId: null, doctorUserId });
-  await Promise.all(merged.map((m) => schedulePackageMeetingThirtyMinReminder(m)));
-  return merged;
+  const profileByPatientUser = new Map();
+  for (const m of merged) {
+    const uid = m.patient_user_id;
+    if (!uid || profileByPatientUser.has(uid)) continue;
+    profileByPatientUser.set(uid, await resolvePatientProfileIdForAuthUser(uid));
+  }
+  const enriched = merged.map((m) => ({
+    ...m,
+    patient_profile_id: profileByPatientUser.get(m.patient_user_id) || null,
+  }));
+  await Promise.all(enriched.map((m) => schedulePackageMeetingThirtyMinReminder(m)));
+  return enriched;
 }
 
 function pushMessage(workflow, role, text) {
@@ -1097,10 +1136,7 @@ export async function doctorAcceptPackageMeetingInitial(meetingId) {
   if (m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR) {
     throw new Error("This meeting is not waiting for your first response.");
   }
-  const wf = decodeWorkflowFromDescription(appointmentReasonField(row), {
-    scheduled_at: row.scheduled_at,
-    status: row.status,
-  }).workflow;
+  const wf = decodeMeetingWorkflowFromAppointmentRow(row);
   const proposed = m.proposed_at || row.scheduled_at;
   let next = {
     ...wf,
@@ -1163,10 +1199,7 @@ export async function doctorProposePackageMeetingReschedule(meetingId, alternate
   ) {
     throw new Error("Reschedule is not available for this meeting state.");
   }
-  const wf = decodeWorkflowFromDescription(appointmentReasonField(row), {
-    scheduled_at: row.scheduled_at,
-    status: row.status,
-  }).workflow;
+  const wf = decodeMeetingWorkflowFromAppointmentRow(row);
   let next = {
     ...wf,
     status: PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS,
@@ -1226,10 +1259,7 @@ export async function patientChooseRescheduleSlot(meetingId, chosenIso) {
   if (!allowed) {
     throw new Error("Pick one of the listed slots from your doctor.");
   }
-  const wf = decodeWorkflowFromDescription(appointmentReasonField(row), {
-    scheduled_at: row.scheduled_at,
-    status: row.status,
-  }).workflow;
+  const wf = decodeMeetingWorkflowFromAppointmentRow(row);
   let next = {
     ...wf,
     status: PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK,
@@ -1270,10 +1300,7 @@ export async function doctorConfirmPatientRescheduleChoice(meetingId) {
   if (m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK || !m.patient_selected_slot) {
     throw new Error("Nothing to confirm yet.");
   }
-  const wf = decodeWorkflowFromDescription(appointmentReasonField(row), {
-    scheduled_at: row.scheduled_at,
-    status: row.status,
-  }).workflow;
+  const wf = decodeMeetingWorkflowFromAppointmentRow(row);
   const when = m.patient_selected_slot;
   let next = {
     ...wf,
@@ -1320,8 +1347,8 @@ export async function doctorSendPackageOffer({
   try {
     const row = await pb.collection("package_offers").create(payload);
     await notifyLocal(
-      "Package options received",
-      `${title} — review and pay when ready.`,
+      "Package options sent",
+      `${title} — the patient can open Package Doctor → Package offers and tap Pay now.`,
     );
     return row;
   } catch (error) {
@@ -1373,17 +1400,167 @@ export async function doctorSendPackageOfferFromSlot({
   });
 }
 
-export async function listPackageOffersForPatient(patientUserId) {
-  if (!patientUserId) return [];
+/** Relation id whether PB expanded the field or stored a plain id string. */
+const relationId = (val) => {
+  if (val && typeof val === "object" && val.id) return String(val.id);
+  if (val == null) return "";
+  return String(val).trim();
+};
+
+/**
+ * Strip the embedded `---NVHS_MEETING_WORKFLOW---` JSON block from an
+ * appointment `reason` field so the doctor's Upcoming Appointments card
+ * shows just the patient's free-text description.
+ */
+export function cleanAppointmentReasonForDisplay(reason) {
+  const raw = String(reason || "");
+  if (!raw) return "";
+  const idx = raw.indexOf("---NVHS_MEETING_WORKFLOW---");
+  return (idx >= 0 ? raw.slice(0, idx) : raw).trim();
+}
+
+/** Resolve the auth user id behind a `patient_profile`/`doctor_profile` relation id. */
+async function resolveAuthUserIdForRelationId(profileCollection, relationIdValue) {
+  if (!relationIdValue) return null;
   try {
-    return await pb.collection("package_offers").getFullList({
+    const rec = await pb.collection(profileCollection).getOne(relationIdValue, {
       requestKey: null,
-      sort: "-created",
-      filter: `patient="${patientUserId}"`,
     });
+    return rec?.user || null;
   } catch {
-    return [];
+    return null;
   }
+}
+
+/** Plain object for UI — avoids RecordModel quirks in React state. */
+function normalizePackageOfferRecord(r) {
+  if (!r) return null;
+  const src = typeof r.toJSON === "function" ? r.toJSON() : { ...r };
+  return {
+    id: src.id,
+    title: src.title ?? "",
+    amount_inr: src.amount_inr ?? src.amountInr,
+    platform_fee_inr: src.platform_fee_inr ?? src.platformFeeInr,
+    doctor_coins: src.doctor_coins ?? src.doctorCoins,
+    sessions: src.sessions,
+    validity_days: src.validity_days ?? src.validityDays,
+    status: src.status ?? "sent",
+    patient: relationId(src.patient),
+    doctor: relationId(src.doctor),
+    patient_user_id: "",
+    doctor_user_id: "",
+    created: src.created || src.updated || "",
+  };
+}
+
+/**
+ * Many PocketBase set-ups relate `package_offers.patient` to `patient_profile`
+ * (and `doctor` to `doctor_profile`). UI matches against auth user ids — this
+ * helper enriches each offer with `patient_user_id` / `doctor_user_id` so
+ * downstream code can ignore the schema variant.
+ */
+async function enrichOffersWithAuthUserIds(offers) {
+  const list = Array.isArray(offers) ? offers : [];
+  const uniquePatients = [...new Set(list.map((o) => o.patient).filter(Boolean))];
+  const uniqueDoctors = [...new Set(list.map((o) => o.doctor).filter(Boolean))];
+  const patientCache = new Map();
+  const doctorCache = new Map();
+  for (const id of uniquePatients) {
+    const fromProfile = await resolveAuthUserIdForRelationId("patient_profile", id);
+    patientCache.set(id, fromProfile || id);
+  }
+  for (const id of uniqueDoctors) {
+    const fromProfile = await resolveAuthUserIdForRelationId("doctor_profile", id);
+    doctorCache.set(id, fromProfile || id);
+  }
+  return list.map((o) => ({
+    ...o,
+    patient_user_id: patientCache.get(o.patient) || o.patient,
+    doctor_user_id: doctorCache.get(o.doctor) || o.doctor,
+  }));
+}
+
+/**
+ * List package offers for the signed-in patient. PocketBase often relates
+ * `package_offers.patient` → `patient_profile` while the app passes auth user
+ * ids — query both ids and merge (dedupe by offer id).
+ */
+export async function listPackageOffersForPatient(
+  patientAuthUserId,
+  patientProfileIdHint = null,
+) {
+  if (!patientAuthUserId && !patientProfileIdHint) return [];
+  const resolvedProfile =
+    patientProfileIdHint ||
+    (patientAuthUserId
+      ? await resolvePatientProfileIdForAuthUser(patientAuthUserId)
+      : null);
+  const tryIds = [
+    ...new Set(
+      [patientAuthUserId, resolvedProfile].filter(Boolean).map(String),
+    ),
+  ];
+  const byId = new Map();
+  for (const id of tryIds) {
+    try {
+      const rows = await pb.collection("package_offers").getFullList({
+        requestKey: null,
+        sort: "-created",
+        filter: `patient="${id}"`,
+      });
+      console.log(
+        `listPackageOffersForPatient: filter patient="${id}" → ${rows?.length || 0} row(s)`,
+      );
+      for (const r of rows || []) {
+        const n = normalizePackageOfferRecord(r);
+        if (n?.id) byId.set(n.id, n);
+      }
+    } catch (error) {
+      console.log(
+        "listPackageOffersForPatient:",
+        id,
+        formatPocketBaseClientError(error) || error?.message || error,
+      );
+    }
+  }
+  const enriched = await enrichOffersWithAuthUserIds(Array.from(byId.values()));
+  return enriched.sort((a, b) =>
+    String(b.created || "").localeCompare(String(a.created || "")),
+  );
+}
+
+/** Offers this doctor created — `doctor` may point at `users` or `doctor_profile`. */
+export async function listPackageOffersForDoctor(doctorUserId) {
+  if (!doctorUserId) return [];
+  const profileId = await resolveDoctorProfileIdForUser(doctorUserId);
+  const tryIds = [...new Set([doctorUserId, profileId].filter(Boolean).map(String))];
+  const byId = new Map();
+  for (const id of tryIds) {
+    try {
+      const rows = await pb.collection("package_offers").getFullList({
+        requestKey: null,
+        sort: "-created",
+        filter: `doctor="${id}"`,
+      });
+      console.log(
+        `listPackageOffersForDoctor: filter doctor="${id}" → ${rows?.length || 0} row(s)`,
+      );
+      for (const r of rows || []) {
+        const n = normalizePackageOfferRecord(r);
+        if (n?.id) byId.set(n.id, n);
+      }
+    } catch (error) {
+      console.log(
+        "listPackageOffersForDoctor:",
+        id,
+        formatPocketBaseClientError(error) || error?.message || error,
+      );
+    }
+  }
+  const enriched = await enrichOffersWithAuthUserIds(Array.from(byId.values()));
+  return enriched.sort((a, b) =>
+    String(b.created || "").localeCompare(String(a.created || "")),
+  );
 }
 
 /**

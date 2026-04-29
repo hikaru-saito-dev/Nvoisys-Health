@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -38,7 +37,6 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.myapp"
     },
@@ -64,7 +62,8 @@
       "expo-notifications",
       "@livekit/react-native-expo-plugin",
       "expo-font",
-      "expo-image"
+      "expo-image",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -74,18 +73,18 @@
       "router": {},
       "pbAppointmentsCollection": "appointments",
       "pbAppointmentDoctorIsProfile": false,
-      "paymentMode": "stub",
+      "paymentMode": "razorpay",
       "stripePublishableKey": "",
       "razorpayKeyId": "",
-      "paymentMode": "razorpay",
       "paymentBackendUrl": "https://api.nvoisyshealth.com",
       "razorpayReturnUrl": "myapp://payment/razorpay",
-      "aiBaseUrl": "",
-      "aiApiKey": "",
+      "aiBaseUrl": "https://api.groq.com/openai/v1/chat/completions",
+      "aiModel": "llama-3.3-70b-versatile",
+      "aiApiKey": "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",
       "eas": {
-        "projectId": "7726d1ea-0781-416e-b26f-6fa676d403fb"
+        "projectId": "451505f1-1efa-413e-8cfb-197124c84d8f"
       }
     },
-    "owner": "kokoshiro_dev"
+    "owner": "kokoshiro_clover"
   }
 }
