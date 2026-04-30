@@ -2888,6 +2888,19 @@ const ri = (size) => {
  */
 const tabScrollBottomPadding = () => RFValue(8);
 
+/**
+ * Android IME draws a suggestion/toolbar row above the keys that
+ * `adjustResize` + `KeyboardAvoidingView` often still overlap slightly.
+ * Derive a small composer-only margin from the reported keyboard height
+ * (clamped) so tall keyboards do not create a large empty band.
+ */
+const androidComposerKeyboardLift = (e) => {
+  const h = Number(e?.endCoordinates?.height) || 0;
+  if (h <= 0) return 0;
+  const logical = Math.min(46, Math.max(22, Math.round(h * 0.088)));
+  return RFValue(logical);
+};
+
 const ResponsiveInfo = {
   deviceType: DEVICE_TYPE,
   screenWidth: SCREEN_WIDTH,
@@ -6388,6 +6401,8 @@ const PatientChatScreen = () => {
   const [assistantThinking, setAssistantThinking] = useState(false);
   /** Lifts the "Latest" pill when the keyboard is open so it stays tappable. */
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  /** Android only: clears IME strip overlap; 0 when keyboard closed. */
+  const [androidComposerLift, setAndroidComposerLift] = useState(0);
 
   const isAssistantConversation = (conversation) =>
     conversation?.kind === ASSISTANT_CONVERSATION_KIND;
@@ -6608,8 +6623,16 @@ const PatientChatScreen = () => {
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEv =
       Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const onShow = Keyboard.addListener(showEv, () => setKeyboardVisible(true));
-    const onHide = Keyboard.addListener(hideEv, () => setKeyboardVisible(false));
+    const onShow = Keyboard.addListener(showEv, (e) => {
+      setKeyboardVisible(true);
+      if (Platform.OS === "android") {
+        setAndroidComposerLift(androidComposerKeyboardLift(e));
+      }
+    });
+    const onHide = Keyboard.addListener(hideEv, () => {
+      setKeyboardVisible(false);
+      setAndroidComposerLift(0);
+    });
     return () => {
       onShow.remove();
       onHide.remove();
@@ -7146,7 +7169,10 @@ const PatientChatScreen = () => {
                 right: RFValue(16),
                 bottom:
                   RFValue(56) +
-                  (keyboardVisible ? RFValue(52) : 0) +
+                  androidComposerLift +
+                  (keyboardVisible && Platform.OS === "ios"
+                    ? RFValue(40)
+                    : 0) +
                   Math.max(insets.bottom, RFValue(6)),
                 backgroundColor: theme.accent,
                 paddingHorizontal: RFValue(14),
@@ -7185,6 +7211,7 @@ const PatientChatScreen = () => {
               paddingHorizontal: RFValue(12),
               paddingTop: RFValue(8),
               paddingBottom: RFValue(10),
+              marginBottom: androidComposerLift,
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
@@ -22871,6 +22898,22 @@ const WoundDetailScreen = ({
     );
   }, [prescriptions, wound?.id]);
 
+  const [androidComposerLift, setAndroidComposerLift] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return undefined;
+    const onShow = Keyboard.addListener("keyboardDidShow", (e) => {
+      setAndroidComposerLift(androidComposerKeyboardLift(e));
+    });
+    const onHide = Keyboard.addListener("keyboardDidHide", () => {
+      setAndroidComposerLift(0);
+    });
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+
   useEffect(() => {
     conversationIdRef.current = localWound?.conversation || null;
   }, [localWound?.conversation]);
@@ -23286,6 +23329,7 @@ const WoundDetailScreen = ({
         <View
           style={{
             padding: RFValue(12),
+            marginBottom: androidComposerLift,
             backgroundColor: "#FFF",
             borderTopWidth: 1,
             borderTopColor: "#F3F4F6",
