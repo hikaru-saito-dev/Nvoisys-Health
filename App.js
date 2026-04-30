@@ -6770,7 +6770,7 @@ const PatientChatScreen = () => {
     return (
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.bg }}
-        edges={["left", "right"]}
+        edges={["top", "left", "right"]}
       >
         <StatusBar
           barStyle={theme.statusBarStyle}
@@ -6780,7 +6780,7 @@ const PatientChatScreen = () => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(16),
-            paddingTop: safeTopContentPadding(insets, 14),
+            paddingTop: safeHeaderPaddingTop(),
             flexDirection: "row",
             alignItems: "center",
             borderBottomWidth: 1,
@@ -6883,16 +6883,15 @@ const PatientChatScreen = () => {
         </View>
 
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={{ flex: 1, minHeight: 0 }}
+          behavior="padding"
           keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
         >
           <ScrollView
             ref={chatScrollRef}
             contentContainerStyle={{
               padding: RFValue(16),
-              paddingBottom:
-                RFValue(36) + Math.max(insets.bottom, 8),
+              paddingBottom: RFValue(12),
             }}
             style={{ flex: 1, minHeight: 0 }}
             keyboardShouldPersistTaps="handled"
@@ -7164,7 +7163,7 @@ const PatientChatScreen = () => {
             style={{
               backgroundColor: theme.card,
               paddingHorizontal: RFValue(12),
-              paddingTop: RFValue(6),
+              paddingTop: RFValue(8),
               paddingBottom: RFValue(10),
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
@@ -7235,8 +7234,7 @@ const PatientChatScreen = () => {
                     RFValue(120),
                     Math.round(SHORT_SIDE * 0.22),
                   ),
-                  paddingVertical: RFValue(6),
-                  minHeight: RFValue(40),
+                  paddingVertical: RFValue(8),
                   fontSize: RFValue(14),
                   color: theme.textPrimary,
                 }}
@@ -7294,7 +7292,7 @@ const PatientChatScreen = () => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["bottom", "left", "right"]}
+      edges={["top", "left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
 
@@ -7303,7 +7301,7 @@ const PatientChatScreen = () => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(20),
-            paddingTop: safeTopContentPadding(insets, 14),
+            paddingTop: safeHeaderPaddingTop(),
             borderBottomWidth: 1,
             borderBottomColor: theme.cardBorder,
           }}
@@ -21378,10 +21376,9 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
   const tabIconSize = Math.min(ri(22), DEVICE_TYPE === "tablet" ? 26 : 24);
   const tabLabelSize = Math.min(RFText(10, { max: 1.06 }), 12);
   const muted = theme.textTertiary || "#9CA3AF";
-  const bottomPad = Math.max(
-    insets.bottom,
-    Platform.OS === "android" ? RFValue(18) : RFValue(10),
-  );
+  // Home-indicator / gesture inset only — outer tab roots omit bottom safe
+  // area so we are not double-padding above the system nav.
+  const bottomPad = Math.max(insets.bottom, RFValue(8));
 
   // Spring the shared indicator to the active tab's position
   useEffect(() => {
@@ -24353,7 +24350,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
       <ScrollView
         contentContainerStyle={{
           padding: RFValue(16),
-          paddingBottom: tabScrollBottomPadding(),
+          paddingBottom: RFValue(40),
         }}
       >
         {errorMessage ? (
@@ -27208,7 +27205,10 @@ const AppContent = ({
       );
     }
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        edges={["top", "left", "right"]}
+      >
         <StatusBar
           barStyle={theme.statusBarStyle}
           backgroundColor={theme.statusBarBg}
@@ -27313,7 +27313,10 @@ const AppContent = ({
 
   if (userRole === "pharmacy") {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        edges={["top", "left", "right"]}
+      >
         <StatusBar
           barStyle={theme.statusBarStyle}
           backgroundColor={theme.statusBarBg}
@@ -27380,7 +27383,10 @@ const AppContent = ({
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar
         barStyle={theme.statusBarStyle}
         backgroundColor={theme.statusBarBg}
