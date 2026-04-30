@@ -7800,7 +7800,10 @@ const ThemeScreen = ({ onBack }) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
@@ -8246,10 +8249,13 @@ const PatientEditProfileScreen = ({
     avatarAsset?.uri || patientProfileAvatarUrl(patientProfile);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={{ flex: 1, minHeight: 0 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View
@@ -8294,7 +8300,7 @@ const PatientEditProfileScreen = ({
         <ScrollView
           contentContainerStyle={{
             padding: RFValue(16),
-            paddingBottom: tabScrollBottomPadding() + RFValue(48),
+            paddingBottom: tabScrollBottomPadding(),
           }}
           keyboardShouldPersistTaps="handled"
         >
@@ -16266,7 +16272,10 @@ const AppointmentBookingScreen = ({
 
   if (bookingConfirmed) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        edges={["top", "left", "right"]}
+      >
         <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
         <View
           style={{
@@ -16522,7 +16531,10 @@ const AppointmentBookingScreen = ({
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
@@ -16576,6 +16588,7 @@ const AppointmentBookingScreen = ({
       </View>
 
       <ScrollView
+        style={{ flex: 1, minHeight: 0 }}
         contentContainerStyle={{
           padding: RFValue(16),
           paddingBottom: tabScrollBottomPadding(),
@@ -16986,7 +16999,6 @@ const AppointmentBookingScreen = ({
 
 const PatientDoctorBookingFlow = ({ onBack }) => {
   const { theme } = useTheme();
-  const bookingInsets = useSafeAreaInsets();
   const { fetchApprovedDoctors, patientProfile } = useAppData();
   const [step, setStep] = useState("browse");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
@@ -17088,7 +17100,10 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   if (step === "profile" && selectedDoctor) {
     const doctorItem = selectedDoctor;
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        edges={["top", "left", "right"]}
+      >
         <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
         <View style={{ flex: 1, minHeight: 0 }}>
           <View
@@ -17382,7 +17397,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             style={{
               paddingHorizontal: RFValue(16),
               paddingTop: RFValue(10),
-              paddingBottom: Math.max(bookingInsets.bottom, RFValue(12)),
+              paddingBottom: RFValue(10),
               backgroundColor: theme.card,
               borderTopWidth: StyleSheet.hairlineWidth,
               borderTopColor: theme.cardBorder,
@@ -17414,7 +17429,10 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
@@ -22585,7 +22603,10 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#FFF" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#FFF" }}
+      edges={["top", "left", "right"]}
+    >
       <Modal visible={submitting} transparent animationType="fade">
         <GlassOverlay>
           <View
@@ -22655,7 +22676,11 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         scrollEnabled={!submitting}
-        contentContainerStyle={{ padding: RFValue(20) }}
+        style={{ flex: 1, minHeight: 0 }}
+        contentContainerStyle={{
+          padding: RFValue(20),
+          paddingBottom: tabScrollBottomPadding(),
+        }}
       >
         <Text
           style={{
