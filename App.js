@@ -23,6 +23,7 @@ import {
   Easing,
   TextInput,
   Platform,
+  Keyboard,
   KeyboardAvoidingView,
   BackHandler,
   Modal,
@@ -6382,6 +6383,8 @@ const PatientChatScreen = () => {
   const [isAtChatBottom, setIsAtChatBottom] = useState(true);
   const isAtChatBottomRef = useRef(true);
   const [assistantThinking, setAssistantThinking] = useState(false);
+  /** Android: extra gap above keys — IME suggestion strip often overlaps slightly. */
+  const [androidKeyboardClearance, setAndroidKeyboardClearance] = useState(0);
 
   const isAssistantConversation = (conversation) =>
     conversation?.kind === ASSISTANT_CONVERSATION_KIND;
@@ -6596,6 +6599,20 @@ const PatientChatScreen = () => {
     isAtChatBottomRef.current = true;
     setIsAtChatBottom(true);
   }, [selectedContact?.id]);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return undefined;
+    const onShow = Keyboard.addListener("keyboardDidShow", () => {
+      setAndroidKeyboardClearance(RFValue(52));
+    });
+    const onHide = Keyboard.addListener("keyboardDidHide", () => {
+      setAndroidKeyboardClearance(0);
+    });
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
 
   const scrollChatToBottom = (animated = true) => {
     requestAnimationFrame(() => {
@@ -7165,6 +7182,7 @@ const PatientChatScreen = () => {
               paddingHorizontal: RFValue(12),
               paddingTop: RFValue(8),
               paddingBottom: RFValue(10),
+              marginBottom: androidKeyboardClearance,
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
