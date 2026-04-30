@@ -2881,9 +2881,12 @@ const ri = (size) => {
   return Math.round(PixelRatio.roundToNearestPixel(size * s));
 };
 
-/** Small content gutter below scroll areas; tab bar now sits in layout (not over content). */
-const tabScrollBottomPadding = () =>
-  Math.round(Math.max(RFValue(20), 16 * UI_SCALE + 12));
+/**
+ * Scroll content gutter above the tab bar. The custom tab bar is a flex
+ * sibling (not overlaying the scroll view), so only a small tail padding is
+ * needed — large values created empty bands on Profile, Home, Wound detail, etc.
+ */
+const tabScrollBottomPadding = () => RFValue(8);
 
 const ResponsiveInfo = {
   deviceType: DEVICE_TYPE,
@@ -6383,8 +6386,8 @@ const PatientChatScreen = () => {
   const [isAtChatBottom, setIsAtChatBottom] = useState(true);
   const isAtChatBottomRef = useRef(true);
   const [assistantThinking, setAssistantThinking] = useState(false);
-  /** Android: extra gap above keys — IME suggestion strip often overlaps slightly. */
-  const [androidKeyboardClearance, setAndroidKeyboardClearance] = useState(0);
+  /** Lifts the "Latest" pill when the keyboard is open so it stays tappable. */
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   const isAssistantConversation = (conversation) =>
     conversation?.kind === ASSISTANT_CONVERSATION_KIND;
@@ -6601,13 +6604,12 @@ const PatientChatScreen = () => {
   }, [selectedContact?.id]);
 
   useEffect(() => {
-    if (Platform.OS !== "android") return undefined;
-    const onShow = Keyboard.addListener("keyboardDidShow", () => {
-      setAndroidKeyboardClearance(RFValue(52));
-    });
-    const onHide = Keyboard.addListener("keyboardDidHide", () => {
-      setAndroidKeyboardClearance(0);
-    });
+    const showEv =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEv =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEv, () => setKeyboardVisible(true));
+    const onHide = Keyboard.addListener(hideEv, () => setKeyboardVisible(false));
     return () => {
       onShow.remove();
       onHide.remove();
@@ -7144,6 +7146,7 @@ const PatientChatScreen = () => {
                 right: RFValue(16),
                 bottom:
                   RFValue(56) +
+                  (keyboardVisible ? RFValue(52) : 0) +
                   Math.max(insets.bottom, RFValue(6)),
                 backgroundColor: theme.accent,
                 paddingHorizontal: RFValue(14),
@@ -7182,7 +7185,6 @@ const PatientChatScreen = () => {
               paddingHorizontal: RFValue(12),
               paddingTop: RFValue(8),
               paddingBottom: RFValue(10),
-              marginBottom: androidKeyboardClearance,
               borderTopWidth: 1,
               borderTopColor: theme.cardBorder,
               flexDirection: "row",
@@ -8541,7 +8543,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["bottom", "left", "right"]}
+      edges={["top", "left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
@@ -9065,7 +9067,7 @@ const PatientProfileScreen = ({
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["bottom", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <ScrollView
@@ -14102,14 +14104,16 @@ const DoctorDashboard = ({ wounds, patients }) => {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle="light-content" backgroundColor={theme.accent} />
       <ScrollView
         showsVerticalScrollIndicator={false}
         style={{ flex: 1, minHeight: 0 }}
         contentContainerStyle={{
           paddingBottom: tabScrollBottomPadding(),
-          flexGrow: 1,
         }}
       >
         {/* Header Block */}
@@ -14539,7 +14543,10 @@ const DoctorPatientsScreen = ({ patients }) => {
     level === "High" ? "#FEF2F2" : level === "Medium" ? "#FEF3C7" : "#ECFDF5";
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
@@ -15085,7 +15092,10 @@ const DoctorProfileScreen = ({ onLogout }) => {
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      edges={["left", "right"]}
+    >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <ScrollView
         contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}
@@ -20235,7 +20245,10 @@ const MedicationTrackerScreen = ({ onBack }) => {
   const mealLabel = (meal) => MEAL_TIMING_LABEL[meal] || "";
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
@@ -21719,7 +21732,10 @@ const PharmacyProfileScreen = ({ onLogout }) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
       <View
         style={{
@@ -22095,7 +22111,10 @@ const StaffManagementScreen = () => {
   ];
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
@@ -22116,7 +22135,12 @@ const StaffManagementScreen = () => {
           Staff Management
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: RFValue(16) }}>
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: tabScrollBottomPadding(),
+        }}
+      >
         {staff.map((s, idx) => (
           <View
             key={idx}
@@ -22279,7 +22303,7 @@ const PatientWoundScreen = () => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      edges={["bottom", "left", "right"]}
+      edges={["top", "left", "right"]}
     >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <ModernHeader title="Wound Tracker" subtitle="Manage your recovery" />
@@ -22814,6 +22838,7 @@ const WoundDetailScreen = ({
   setWounds,
   setMedOrders,
 }) => {
+  const insets = useSafeAreaInsets();
   const [message, setMessage] = useState("");
   const [chat, setChat] = useState([]);
   const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
@@ -22963,7 +22988,10 @@ const WoundDetailScreen = ({
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      edges={["top", "left", "right"]}
+    >
       <View
         style={{
           padding: RFValue(20),
@@ -23045,13 +23073,15 @@ const WoundDetailScreen = ({
       </View>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-        keyboardVerticalOffset={0}
+        behavior="padding"
+        style={{ flex: 1, minHeight: 0 }}
+        keyboardVerticalOffset={
+          Platform.OS === "ios" ? insets.top + RFValue(56) : 0
+        }
       >
         <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}
+          style={{ flex: 1, minHeight: 0 }}
+          contentContainerStyle={{ paddingBottom: RFValue(8) }}
           keyboardShouldPersistTaps="handled"
         >
           <View style={{ padding: RFValue(16) }}>
@@ -23997,7 +24027,10 @@ const DoctorWoundsScreen = () => {
     );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
@@ -24112,7 +24145,10 @@ const PharmacyDashboard = ({ orders }) => {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#8B5CF6" />
       <View
         style={{
@@ -24343,7 +24379,7 @@ const PharmacyOrdersScreen = ({ orders }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      edges={["bottom", "left", "right"]}
+      edges={["top", "left", "right"]}
     >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
