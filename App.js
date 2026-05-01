@@ -25065,26 +25065,34 @@ export default function App() {
     return patientCount >= 2;
   };
 
+  /** Latest message per thread: small `getList(1,1)` calls (batched) — avoids loading every message in the database. */
   const loadMessagePreviewMap = async (conversationIds) => {
     if (!conversationIds.length) return {};
-    try {
-      const allMessages = await pb.collection("messages").getFullList({
-        requestKey: null,
-        sort: "-created",
-        expand: "sender",
-      });
-      const previewMap = {};
-      allMessages.forEach((record) => {
-        if (!conversationIds.includes(record.conversation)) return;
-        if (!previewMap[record.conversation]) {
-          previewMap[record.conversation] = mapMessageRecord(record);
-        }
-      });
-      return previewMap;
-    } catch (error) {
-      console.log("loadMessagePreviewMap error:", error);
-      return {};
+    const ids = [...new Set(conversationIds)].filter(Boolean);
+    const previewMap = {};
+    const CONCURRENCY = 12;
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const slice = ids.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        slice.map(async (cid) => {
+          try {
+            const result = await pb.collection("messages").getList(1, 1, {
+              requestKey: null,
+              filter: `conversation="${cid}"`,
+              sort: "-created",
+              expand: "sender",
+            });
+            const first = result?.items?.[0];
+            if (first) {
+              previewMap[cid] = mapMessageRecord(first);
+            }
+          } catch (error) {
+            console.log("loadMessagePreviewMap conv:", cid, error?.message);
+          }
+        }),
+      );
     }
+    return previewMap;
   };
 
   // Lazy loader for the `hospitals` collection. Called on demand by the
@@ -25239,61 +25247,73 @@ export default function App() {
       setDataLoading(true);
       setDataError("");
 
-      const [woundRecords, orderRecords, conversationRecords] =
-        await Promise.all([
-          pb.collection("wounds").getFullList({
-            requestKey: null,
-            sort: "-created",
-            expand: "patient,doctor,conversation",
-          }),
-          pb.collection("orders").getFullList({
-            requestKey: null,
-            sort: "-updated,-created",
-            expand: "patient,conversation,wound.doctor,pharmacy",
-          }),
-          pb.collection("conversations").getFullList({
-            requestKey: null,
-            sort: "-updated,-created",
-            expand: "members,linkedWound",
-          }),
-        ]);
-
-      let prescriptionRecords = [];
-      try {
-        prescriptionRecords = await pb.collection("prescriptions").getFullList({
-          requestKey: null,
-          sort: "-created",
-          expand: "patient,doctor,wound,conversation",
-        });
-      } catch (error) {
-        console.log("prescriptions fetch skipped:", error?.message);
-      }
-
-      let appointmentRecords = [];
       const appointmentExpand = PB_APPOINTMENT_DOCTOR_IS_PROFILE
         ? "doctor.user,patient"
         : "doctor,patient";
-      try {
-        appointmentRecords = await pb
-          .collection(PB_APPOINTMENTS_COLLECTION)
-          .getFullList({
-            requestKey: null,
-            sort: "scheduled_at",
-            expand: appointmentExpand,
-          });
-      } catch (sortError) {
+
+      const fetchPrescriptionsSafe = async () => {
         try {
-          appointmentRecords = await pb
+          return await pb.collection("prescriptions").getFullList({
+            requestKey: null,
+            sort: "-created",
+            expand: "patient,doctor,wound,conversation",
+          });
+        } catch (error) {
+          console.log("prescriptions fetch skipped:", error?.message);
+          return [];
+        }
+      };
+
+      const fetchAppointmentsSafe = async () => {
+        try {
+          return await pb
             .collection(PB_APPOINTMENTS_COLLECTION)
             .getFullList({
               requestKey: null,
-              sort: "-created",
+              sort: "scheduled_at",
               expand: appointmentExpand,
             });
-        } catch (error) {
-          console.log("appointments fetch skipped:", error?.message);
+        } catch (sortError) {
+          try {
+            return await pb
+              .collection(PB_APPOINTMENTS_COLLECTION)
+              .getFullList({
+                requestKey: null,
+                sort: "-created",
+                expand: appointmentExpand,
+              });
+          } catch (error) {
+            console.log("appointments fetch skipped:", error?.message);
+            return [];
+          }
         }
-      }
+      };
+
+      const [
+        woundRecords,
+        orderRecords,
+        conversationRecords,
+        prescriptionRecords,
+        appointmentRecords,
+      ] = await Promise.all([
+        pb.collection("wounds").getFullList({
+          requestKey: null,
+          sort: "-created",
+          expand: "patient,doctor,conversation",
+        }),
+        pb.collection("orders").getFullList({
+          requestKey: null,
+          sort: "-updated,-created",
+          expand: "patient,conversation,wound.doctor,pharmacy",
+        }),
+        pb.collection("conversations").getFullList({
+          requestKey: null,
+          sort: "-updated,-created",
+          expand: "members,linkedWound",
+        }),
+        fetchPrescriptionsSafe(),
+        fetchAppointmentsSafe(),
+      ]);
 
       const allWounds = woundRecords.map(mapWoundRecord);
       const allOrders = orderRecords.map(mapOrderRecord);
@@ -25544,6 +25564,7 @@ export default function App() {
   };
 
   const loadConversationMessages = async (conversationId) => {
+    if (!conversationId) return [];
     try {
       const records = await pb.collection("messages").getFullList({
         requestKey: null,
@@ -25553,15 +25574,8 @@ export default function App() {
       });
       return records.map(mapMessageRecord);
     } catch (error) {
-      console.log("loadConversationMessages filter error:", error);
-      const fallbackRecords = await pb.collection("messages").getFullList({
-        requestKey: null,
-        sort: "created",
-        expand: "sender",
-      });
-      return fallbackRecords
-        .filter((record) => record.conversation === conversationId)
-        .map(mapMessageRecord);
+      console.log("loadConversationMessages filter error:", error?.message);
+      return [];
     }
   };
 

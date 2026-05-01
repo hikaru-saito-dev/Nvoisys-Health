@@ -875,11 +875,15 @@ export async function listPackageMeetingsForDoctor(doctorUserId) {
   const out = rows.map(decodePackageMeetingFromPbRow).filter(Boolean);
   const merged = await mergeMeetingsForUser(out, { patientUserId: null, doctorUserId });
   const profileByPatientUser = new Map();
-  for (const m of merged) {
-    const uid = m.patient_user_id;
-    if (!uid || profileByPatientUser.has(uid)) continue;
-    profileByPatientUser.set(uid, await resolvePatientProfileIdForAuthUser(uid));
-  }
+  const uniquePatientUids = [
+    ...new Set((merged || []).map((m) => String(m?.patient_user_id || "").trim()).filter(Boolean)),
+  ];
+  await Promise.all(
+    uniquePatientUids.map(async (uid) => {
+      const profileId = await resolvePatientProfileIdForAuthUser(uid);
+      profileByPatientUser.set(uid, profileId);
+    }),
+  );
   const enriched = merged
     .map((m) => ({
       ...m,
@@ -1610,14 +1614,16 @@ async function enrichOffersWithAuthUserIds(offers) {
   const uniqueDoctors = [...new Set(list.map((o) => o.doctor).filter(Boolean))];
   const patientCache = new Map();
   const doctorCache = new Map();
-  for (const id of uniquePatients) {
-    const fromProfile = await resolveAuthUserIdForRelationId("patient_profile", id);
-    patientCache.set(id, fromProfile || id);
-  }
-  for (const id of uniqueDoctors) {
-    const fromProfile = await resolveAuthUserIdForRelationId("doctor_profile", id);
-    doctorCache.set(id, fromProfile || id);
-  }
+  await Promise.all([
+    ...uniquePatients.map(async (id) => {
+      const fromProfile = await resolveAuthUserIdForRelationId("patient_profile", id);
+      patientCache.set(id, fromProfile || id);
+    }),
+    ...uniqueDoctors.map(async (id) => {
+      const fromProfile = await resolveAuthUserIdForRelationId("doctor_profile", id);
+      doctorCache.set(id, fromProfile || id);
+    }),
+  ]);
   return list.map((o) => ({
     ...o,
     patient_user_id: patientCache.get(o.patient) || o.patient,
@@ -1645,27 +1651,36 @@ export async function listPackageOffersForPatient(
       [patientAuthUserId, resolvedProfile].filter(Boolean).map(String),
     ),
   ];
-  const byId = new Map();
-  for (const id of tryIds) {
-    try {
-      const rows = await pb.collection("package_offers").getFullList({
-        requestKey: null,
-        sort: "-created",
-        filter: `patient="${id}"`,
-      });
-      console.log(
-        `listPackageOffersForPatient: filter patient="${id}" → ${rows?.length || 0} row(s)`,
-      );
-      for (const r of rows || []) {
-        const n = normalizePackageOfferRecord(r);
-        if (n?.id) byId.set(n.id, n);
+  const partialMaps = await Promise.all(
+    tryIds.map(async (id) => {
+      const local = new Map();
+      try {
+        const rows = await pb.collection("package_offers").getFullList({
+          requestKey: null,
+          sort: "-created",
+          filter: `patient="${id}"`,
+        });
+        console.log(
+          `listPackageOffersForPatient: filter patient="${id}" → ${rows?.length || 0} row(s)`,
+        );
+        for (const r of rows || []) {
+          const n = normalizePackageOfferRecord(r);
+          if (n?.id) local.set(n.id, n);
+        }
+      } catch (error) {
+        console.log(
+          "listPackageOffersForPatient:",
+          id,
+          formatPocketBaseClientError(error) || error?.message || error,
+        );
       }
-    } catch (error) {
-      console.log(
-        "listPackageOffersForPatient:",
-        id,
-        formatPocketBaseClientError(error) || error?.message || error,
-      );
+      return local;
+    }),
+  );
+  const byId = new Map();
+  for (const local of partialMaps) {
+    for (const [k, v] of local) {
+      byId.set(k, v);
     }
   }
   const enriched = await enrichOffersWithAuthUserIds(Array.from(byId.values()));
@@ -1679,27 +1694,36 @@ export async function listPackageOffersForDoctor(doctorUserId) {
   if (!doctorUserId) return [];
   const profileId = await resolveDoctorProfileIdForUser(doctorUserId);
   const tryIds = [...new Set([doctorUserId, profileId].filter(Boolean).map(String))];
-  const byId = new Map();
-  for (const id of tryIds) {
-    try {
-      const rows = await pb.collection("package_offers").getFullList({
-        requestKey: null,
-        sort: "-created",
-        filter: `doctor="${id}"`,
-      });
-      console.log(
-        `listPackageOffersForDoctor: filter doctor="${id}" → ${rows?.length || 0} row(s)`,
-      );
-      for (const r of rows || []) {
-        const n = normalizePackageOfferRecord(r);
-        if (n?.id) byId.set(n.id, n);
+  const partialMaps = await Promise.all(
+    tryIds.map(async (id) => {
+      const local = new Map();
+      try {
+        const rows = await pb.collection("package_offers").getFullList({
+          requestKey: null,
+          sort: "-created",
+          filter: `doctor="${id}"`,
+        });
+        console.log(
+          `listPackageOffersForDoctor: filter doctor="${id}" → ${rows?.length || 0} row(s)`,
+        );
+        for (const r of rows || []) {
+          const n = normalizePackageOfferRecord(r);
+          if (n?.id) local.set(n.id, n);
+        }
+      } catch (error) {
+        console.log(
+          "listPackageOffersForDoctor:",
+          id,
+          formatPocketBaseClientError(error) || error?.message || error,
+        );
       }
-    } catch (error) {
-      console.log(
-        "listPackageOffersForDoctor:",
-        id,
-        formatPocketBaseClientError(error) || error?.message || error,
-      );
+      return local;
+    }),
+  );
+  const byId = new Map();
+  for (const local of partialMaps) {
+    for (const [k, v] of local) {
+      byId.set(k, v);
     }
   }
   const enriched = await enrichOffersWithAuthUserIds(Array.from(byId.values()));
