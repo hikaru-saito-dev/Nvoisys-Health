@@ -41,18 +41,55 @@ export const pb = new PocketBase(PB_URL, authStore);
  * - `consultation_type` (select): include at least `video`, `chat` (or relax / omit field)
  * - `status` (select): include `requested`, `pending`, `approved`, `rejected` or `declined`,
  *   **`ask_reschedule`** (doctor proposes new times; patient picks on same row), **`cancelled`**,
- *   `paid`, `completed`, and often `scheduled` for older rows
- * - `reason` (text, optional but recommended)
- * - `conversation` (relation → conversations, optional)
+ *   `paid`, `completed`, and often `scheduled` for older rows (Package Doctor demos use
+ *   `requested` → `approved` → patient cancel uses **`cancelled`**)
+ * - `reason` (text, optional but recommended) — long text; package demos append
+ *   `---NVHS_MEETING_WORKFLOW---` + JSON
+ * - **`workflow_json` (JSON, optional but strongly recommended)** — stores the meeting workflow
+ *   without truncation. Keys the app reads/writes include: `status` (e.g. `awaiting_doctor`,
+ *   `doctor_proposed_slots`, `awaiting_doctor_after_patient_pick`, `confirmed`), `proposed_at`,
+ *   `confirmed_at`, `patient_selected_slot`, `doctor_alternate_slots`, `messages`,
+ *   `patient_auth_user_id`, `doctor_auth_user_id`, **`package_offer_id`**, **`package_request_label`**,
+ *   **`demo_conversation_id`**. If this field is missing, the app falls back to parsing `reason` only
+ *   (easier to hit length limits).
+ * - `conversation` (relation → **conversations**, optional) — set to the **per-demo-meeting** chat
+ *   when the patient or doctor opens “Go to chat” for that package appointment (see `conversations`
+ *   below).
  * - `consultationFee` or fee on doctor_profile (optional; app reads fee for “Pay fee”)
- * - **Package Doctor demo meetings** reuse this collection: the app writes the same relations +
- *   `scheduled_at` / `consultation_type` / `status`, and encodes negotiation in **`reason`** after
- *   the marker `---NVHS_MEETING_WORKFLOW---` (optional JSON **`workflow_json`**). List filters keep
- *   normal bookings separate. Set **`pbAppointmentDoctorIsProfile`** in `app.json` to match whether
- *   `doctor` points at **doctor_profile** or **users**.
+ * - **Package Doctor demo meetings** reuse this collection: same relations + `scheduled_at` /
+ *   `consultation_type` / `status`, plus `workflow_json` / `reason` as above. Set
+ *   **`pbAppointmentDoctorIsProfile`** in `app.json` to match whether `doctor` points at
+ *   **doctor_profile** or **users**.
  *
- * **API rules:** patients need **Create** where `patient = @request.auth.id`;
- * doctors need **List/Update** for their side of the workflow.
+ * **`conversations` (for Package Doctor demo threads)**  
+ * The app creates a **separate** conversation per package-demo appointment (not the generic DM).
+ * Recommended fields (names must match your Admin schema — check **API rules** generated names):
+ * - `members` — relation to auth users (multi), exactly **patient + doctor** user ids
+ * - `title` — text (short label, e.g. “Package demo”)
+ * - **`kind`** — text, optional — app tries value `package_demo`; if Create fails (unknown field),
+ *   it retries **without** `kind`
+ * - **`lastMessageAt`** or **`last_message_at`** — datetime — use the same casing as your existing
+ *   `conversations` rows / `ensureDirectConversation` in `App.js`
+ *
+ * **`package_offers`**  
+ * Unchanged core: `patient`, `doctor`, `title`, `amount_inr`, `platform_fee_inr`, `doctor_coins`,
+ * `sessions`, `validity_days`, `notes`, `status` (`sent` / `paid` / …). The app **links** an offer
+ * to a demo meeting by storing **`package_offer_id`** on the appointment’s **`workflow_json`**
+ * (no extra relation required on `package_offers`).
+ *
+ * **API rules (minimum)**  
+ * - **appointments — Create:** patient can create when `@request.auth.id` is set and
+ *   `patient = @request.auth.id` (and doctor points at allowed doctor ids / profile ids).
+ * - **appointments — Update:** patient may update **own** rows (cancel package request, workflow);
+ *   doctor may update rows where they are the assigned doctor (accept, reschedule, confirm,
+ *   attach package link via workflow). Use `@request.auth.id` and your `doctor` / `patient` relation
+ *   shape (user id vs profile id) in filters.
+ * - **appointments — List:** patient lists own; doctor lists where doctor relation matches (often two
+ *   list rules if `doctor` can be profile or user id).
+ * - **conversations — Create:** allow authenticated users who are members of `members` to create, or
+ *   a broader rule if you trust member ids from the app.
+ * - **conversations — List / View:** user must be in `members`.
+ * - **messages — Create:** sender must be `@request.auth.id` and a member of the conversation.
  */
 export function getPbAppointmentsCollection() {
   return (

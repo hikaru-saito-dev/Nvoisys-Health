@@ -794,8 +794,16 @@ export function decodePackageMeetingFromPbRow(row) {
     scheduled_at: row.scheduled_at || null,
     call_kind: row.consultation_type || row.call_kind || "video",
     updated_at: row.updated || row.created || new Date().toISOString(),
+    /** PocketBase `created` — ignore older package_offers from prior demos with the same doctor. */
+    appointment_created: row.created ? String(row.created) : "",
+    package_offer_id: String(workflow.package_offer_id || "").trim() || null,
+    package_request_label: String(workflow.package_request_label || "").trim() || null,
+    demo_conversation_id: String(workflow.demo_conversation_id || "").trim() || null,
     appointment_status: String(row.status || "").trim().toLowerCase() || null,
-    conversation_id: typeof row.conversation === "string" ? row.conversation : "",
+    conversation_id:
+      String(workflow.demo_conversation_id || "").trim() ||
+      (typeof row.conversation === "string" ? row.conversation : "") ||
+      "",
   };
 }
 
@@ -846,13 +854,19 @@ export async function schedulePackageMeetingThirtyMinReminder(meeting) {
   }
 }
 
+function isTerminalPackageAppointmentMeeting(m) {
+  const pb = String(m?.appointment_status || "").trim().toLowerCase();
+  return pb === "cancelled" || pb === "canceled" || pb === "declined";
+}
+
 export async function listPackageMeetingsForPatient(patientUserId) {
   if (!patientUserId) return [];
   const rows = await pbListPackageAppointmentRowsForPatient(patientUserId);
   const out = rows.map(decodePackageMeetingFromPbRow).filter(Boolean);
   const merged = await mergeMeetingsForUser(out, { patientUserId, doctorUserId: null });
-  await Promise.all(merged.map((m) => schedulePackageMeetingThirtyMinReminder(m)));
-  return merged;
+  const visible = merged.filter((m) => !isTerminalPackageAppointmentMeeting(m));
+  await Promise.all(visible.map((m) => schedulePackageMeetingThirtyMinReminder(m)));
+  return visible;
 }
 
 export async function listPackageMeetingsForDoctor(doctorUserId) {
@@ -866,10 +880,12 @@ export async function listPackageMeetingsForDoctor(doctorUserId) {
     if (!uid || profileByPatientUser.has(uid)) continue;
     profileByPatientUser.set(uid, await resolvePatientProfileIdForAuthUser(uid));
   }
-  const enriched = merged.map((m) => ({
-    ...m,
-    patient_profile_id: profileByPatientUser.get(m.patient_user_id) || null,
-  }));
+  const enriched = merged
+    .map((m) => ({
+      ...m,
+      patient_profile_id: profileByPatientUser.get(m.patient_user_id) || null,
+    }))
+    .filter((m) => !isTerminalPackageAppointmentMeeting(m));
   await Promise.all(enriched.map((m) => schedulePackageMeetingThirtyMinReminder(m)));
   return enriched;
 }
@@ -940,6 +956,133 @@ async function persistMeetingRow(rowId, workflow, displayScheduledAt, consultTyp
   const meeting = decodePackageMeetingFromPbRow(row);
   await schedulePackageMeetingThirtyMinReminder(meeting);
   return meeting;
+}
+
+async function attachPackageOfferToDemoAppointmentRow(appointmentId, offerRecord, packageRequestLabel) {
+  const row = await pb.collection(appointmentsColl()).getOne(String(appointmentId), {
+    requestKey: null,
+  });
+  const workflow = decodeMeetingWorkflowFromAppointmentRow(row);
+  const offerId =
+    typeof offerRecord?.id === "string"
+      ? offerRecord.id
+      : offerRecord?.id != null
+        ? String(offerRecord.id)
+        : "";
+  const next = {
+    ...workflow,
+    package_offer_id: String(offerId || "").trim(),
+    package_request_label: String(packageRequestLabel || "").trim(),
+  };
+  return persistMeetingRow(
+    String(appointmentId),
+    next,
+    row.scheduled_at,
+    row.consultation_type || "video",
+  );
+}
+
+/**
+ * Doctor: from an approved package-demo `appointments` row, send one catalogue slot as
+ * `package_offers` and link that offer id on the appointment workflow (patient Pay button).
+ */
+export async function doctorSendAskPackageForDemoAppointment({
+  appointmentId,
+  doctorUserId,
+  patientUserId,
+  packageSlotIndex,
+}) {
+  if (!appointmentId || !doctorUserId || !patientUserId) {
+    throw new Error("Missing appointment, doctor, or patient.");
+  }
+  const idx = Math.max(0, Math.min(2, Number(packageSlotIndex) || 0));
+  const row = await pb.collection("doctor_profile").getFirstListItem(`user="${doctorUserId}"`, {
+    requestKey: null,
+  });
+  const base = normalizeDoctorPackageSlots(packageTemplatesRawFromRecord(row));
+  const localFees = await readLocalDoctorPackageFees(doctorUserId);
+  const slots = mergeLocalFeesOntoSlots(base, localFees || []);
+  const slot = slots[idx];
+  if (!slot) throw new Error("That package slot is not configured on your profile.");
+  const offerRecord = await doctorSendPackageOfferFromSlot({
+    patientUserId,
+    doctorUserId,
+    slot,
+    packageSlotIndex: idx,
+  });
+  const label = String(slot?.name || `Package ${idx + 1}`).trim();
+  await attachPackageOfferToDemoAppointmentRow(appointmentId, offerRecord, label);
+  return normalizePackageOfferRecord(offerRecord);
+}
+
+/** Patient cancels a package demo request before it is confirmed (hidden on both sides). */
+export async function patientCancelPackageDemoMeeting(meetingId) {
+  if (!meetingId) throw new Error("Missing meeting.");
+  if (String(meetingId).startsWith("local_")) {
+    await cancelPackageMeetingReminder(meetingId);
+    const all = await readLocalPackageMeetings();
+    await writeLocalPackageMeetings(all.filter((m) => m.id !== meetingId));
+    return true;
+  }
+  const coll = appointmentsColl();
+  const row = await pb.collection(coll).getOne(String(meetingId), { requestKey: null });
+  const workflow = decodeMeetingWorkflowFromAppointmentRow(row);
+  const encoded = encodeMeetingDescription(workflow);
+  await cancelPackageMeetingReminder(meetingId);
+  const attempts = [
+    { status: "cancelled", reason: encoded, workflow_json: workflow },
+    { status: "cancelled", reason: encoded },
+    { status: "cancelled" },
+  ];
+  await pbUpdateMeetingRow(String(meetingId), attempts);
+  return true;
+}
+
+const PACKAGE_DEMO_CHAT_KIND = "package_demo";
+
+/**
+ * One chat thread per package-demo appointment (not the generic doctor–patient DM).
+ * Persists `demo_conversation_id` on the meeting workflow and sets `appointments.conversation` when allowed.
+ */
+export async function ensurePackageDemoMeetingConversation(meetingId) {
+  if (!meetingId) throw new Error("Missing meeting.");
+  if (String(meetingId).startsWith("local_")) return null;
+  const coll = appointmentsColl();
+  const row = await pb.collection(coll).getOne(String(meetingId), { requestKey: null });
+  const workflow = decodeMeetingWorkflowFromAppointmentRow(row);
+  const existing = String(workflow.demo_conversation_id || "").trim();
+  if (existing) return existing;
+  const patientId =
+    String(workflow.patient_auth_user_id || "").trim() || expandRelId(row.patient);
+  const doctorId =
+    String(workflow.doctor_auth_user_id || "").trim() || expandRelId(row.doctor);
+  if (!patientId || !doctorId) throw new Error("Missing participants on this meeting.");
+  const title = "Package demo";
+  let conv;
+  try {
+    conv = await pb.collection("conversations").create({
+      members: [patientId, doctorId],
+      title,
+      kind: PACKAGE_DEMO_CHAT_KIND,
+      lastMessageAt: new Date().toISOString(),
+    });
+  } catch {
+    conv = await pb.collection("conversations").create({
+      members: [patientId, doctorId],
+      title: `${title} · ${String(meetingId).slice(0, 8)}`,
+      lastMessageAt: new Date().toISOString(),
+    });
+  }
+  const convId = conv?.id;
+  if (!convId) throw new Error("Could not create chat.");
+  const next = { ...workflow, demo_conversation_id: convId };
+  await persistMeetingRow(String(meetingId), next, row.scheduled_at, row.consultation_type || "video");
+  try {
+    await pb.collection(coll).update(String(meetingId), { conversation: convId });
+  } catch {
+    // optional relation / rules
+  }
+  return convId;
 }
 
 /**
@@ -1058,6 +1201,7 @@ export async function createPackageMeetingRequest({
   }
   if (lastErr && isPocketBaseMissingResourceError(lastErr)) {
     const id = `local_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const nowIso = new Date().toISOString();
     const meeting = {
       id,
       patient_user_id: patientUserId,
@@ -1071,7 +1215,8 @@ export async function createPackageMeetingRequest({
       confirmed_at: null,
       scheduled_at: proposed.toISOString(),
       call_kind: consult,
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
+      appointment_created: nowIso,
       localOnly: true,
     };
     await upsertLocalMeeting(meeting);

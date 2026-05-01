@@ -220,6 +220,9 @@ import {
   recordQuickHelpOffer,
   cleanAppointmentReasonForDisplay,
   listPackageOffersForDoctor,
+  decodeMeetingWorkflowFromAppointmentRow,
+  doctorSendAskPackageForDemoAppointment,
+  ensurePackageDemoMeetingConversation,
 } from "./productSpecApi";
 import {
   CareModeOnboardingScreen,
@@ -2457,6 +2460,21 @@ const mapAppointmentRecord = (record) => {
   const replyStr = String(record.reply || record.doctor_reply || "").trim();
   const rescheduleProposal = parseApptRescheduleFromReply(replyStr);
   const isPackageDemoMeeting = reasonStr.includes("NVHS_MEETING_WORKFLOW");
+  let packageOfferId = null;
+  let packageRequestLabel = null;
+  let demoConversationId = null;
+  let meetingWorkflowStatus = null;
+  if (isPackageDemoMeeting) {
+    try {
+      const wf = decodeMeetingWorkflowFromAppointmentRow(record);
+      packageOfferId = String(wf.package_offer_id || "").trim() || null;
+      packageRequestLabel = String(wf.package_request_label || "").trim() || null;
+      demoConversationId = String(wf.demo_conversation_id || "").trim() || null;
+      meetingWorkflowStatus = String(wf.status || "").trim() || null;
+    } catch {
+      // ignore decode issues
+    }
+  }
   return {
     id: record.id,
     scheduledAt,
@@ -2471,6 +2489,10 @@ const mapAppointmentRecord = (record) => {
     reply: replyStr,
     rescheduleProposal,
     isPackageDemoMeeting,
+    packageOfferId,
+    packageRequestLabel,
+    demoConversationId,
+    meetingWorkflowStatus,
     conversationId: record.conversation || null,
     patientId: record.patient || null,
     patientName:
@@ -3728,7 +3750,17 @@ const PatientHomeScreen = () => {
         // Falling back to ensureDirectConversation guarantees a chat exists
         // even for older meetings created before we started linking
         // conversations.
-        let cid = meeting?.conversation_id || null;
+        let cid =
+          meeting?.demo_conversation_id ||
+          meeting?.conversation_id ||
+          null;
+        if (!cid && meeting?.id) {
+          try {
+            cid = await ensurePackageDemoMeetingConversation(meeting.id);
+          } catch (e) {
+            console.log("ensurePackageDemoMeetingConversation:", e?.message);
+          }
+        }
         if (!cid) {
           const conv = await ensureDirectConversation(doctorUserId);
           cid = conv?.id || null;
@@ -3790,6 +3822,7 @@ const PatientHomeScreen = () => {
     },
     [
       ensureDirectConversation,
+      ensurePackageDemoMeetingConversation,
       loadConversationMessages,
       sendConversationMessage,
       requestOpenConversation,
@@ -13683,12 +13716,15 @@ const DoctorUpcomingAppointmentsSection = () => {
     requestOpenConversation,
     sendConversationMessage,
     loadConversationMessages,
+    refreshAllData,
   } = useAppData();
   const tabNav = useMainTabNav();
   const [completingId, setCompletingId] = useState(null);
   const [localError, setLocalError] = useState("");
   const [packageOffers, setPackageOffers] = useState([]);
   const [openingChatId, setOpeningChatId] = useState(null);
+  const [askPackageAppointment, setAskPackageAppointment] = useState(null);
+  const [askPackageBusy, setAskPackageBusy] = useState(false);
 
   const reloadPackageOffers = useCallback(async () => {
     if (!currentUser?.id) {
@@ -13712,6 +13748,13 @@ const DoctorUpcomingAppointmentsSection = () => {
     (appointment) => {
       const targetUid = String(appointment?.patientId || "").trim();
       if (!targetUid) return null;
+      const linkedId = String(appointment?.packageOfferId || "").trim();
+      // Package demos: only the offer id stored on this appointment counts. Do not fall back to
+      // "any paid offer for this patient" or the doctor card shows paid before Ask package is used.
+      if (appointment?.isPackageDemoMeeting) {
+        if (!linkedId) return null;
+        return (packageOffers || []).find((o) => String(o.id) === linkedId) || null;
+      }
       const matches = (packageOffers || []).filter((o) => {
         const matchUid = String(o.patient_user_id || "") === targetUid;
         const matchRaw = String(o.patient || "") === targetUid;
@@ -13720,7 +13763,6 @@ const DoctorUpcomingAppointmentsSection = () => {
         return st !== "cancelled" && st !== "revoked";
       });
       if (matches.length === 0) return null;
-      // Prefer paid > sent, then most-recent
       const paid = matches.find((o) => String(o.status || "").toLowerCase() === "paid");
       return paid || matches[0];
     },
@@ -13765,12 +13807,20 @@ const DoctorUpcomingAppointmentsSection = () => {
     }
     try {
       setOpeningChatId(appointment.id);
-      // Prefer the conversation that was created together with the appointment
-      // (when the patient booked it). That row is guaranteed to be the same
-      // direct chat both sides see in their list. Only fall back to
-      // ensureDirectConversation when the appointment was booked before we
-      // started linking conversations.
-      let cid = appointment.conversationId || null;
+      let cid = null;
+      if (appointment.isPackageDemoMeeting) {
+        try {
+          cid =
+            appointment.demoConversationId ||
+            (await ensurePackageDemoMeetingConversation(appointment.id));
+          await refreshAllData?.();
+        } catch (e) {
+          console.log("package demo chat:", e?.message);
+        }
+      }
+      if (!cid) {
+        cid = appointment.conversationId || null;
+      }
       if (!cid) {
         const conv = await ensureDirectConversation(appointment.patientId);
         cid = conv?.id || null;
@@ -13897,19 +13947,17 @@ const DoctorUpcomingAppointmentsSection = () => {
           const badgeBg = isPackage
             ? isPaid
               ? theme.successLight
-              : theme.warningLight || "#FEF3C7"
+              : theme.accentLight
             : statusColors.bg;
           const badgeFg = isPackage
             ? isPaid
               ? theme.success
-              : theme.warning
+              : theme.accent
             : statusColors.fg;
           const badgeText = isPackage
             ? isPaid
-              ? "Paid"
-              : offer
-                ? "Awaiting payment"
-                : "Package demo"
+              ? "paid"
+              : "approved"
             : humanizeAppointmentStatus(statusKey);
           const openingChat = openingChatId === appointment.id;
           return (
@@ -13988,26 +14036,48 @@ const DoctorUpcomingAppointmentsSection = () => {
               ) : null}
               <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: RFValue(10) }}>
                 {isPackage ? (
-                  <TouchableOpacity
-                    onPress={() => openChatForAppointment(appointment)}
-                    disabled={openingChat}
-                    style={{
-                      backgroundColor: theme.accent,
-                      borderRadius: RFValue(10),
-                      paddingHorizontal: RFValue(14),
-                      paddingVertical: RFValue(8),
-                      marginRight: RFValue(8),
-                      opacity: openingChat ? 0.6 : 1,
-                    }}
-                  >
-                    {openingChat ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text style={{ color: "#fff", fontSize: RFValue(12), fontWeight: "800" }}>
-                        Go to chat
-                      </Text>
-                    )}
-                  </TouchableOpacity>
+                  <>
+                    <TouchableOpacity
+                      onPress={() => openChatForAppointment(appointment)}
+                      disabled={openingChat}
+                      style={{
+                        backgroundColor: theme.accent,
+                        borderRadius: RFValue(10),
+                        paddingHorizontal: RFValue(14),
+                        paddingVertical: RFValue(8),
+                        marginRight: RFValue(8),
+                        marginBottom: RFValue(6),
+                        opacity: openingChat ? 0.6 : 1,
+                      }}
+                    >
+                      {openingChat ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <Text style={{ color: "#fff", fontSize: RFValue(12), fontWeight: "800" }}>
+                          Go to chat
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                    {!isDone && !isPaid ? (
+                      <TouchableOpacity
+                        onPress={() => setAskPackageAppointment(appointment)}
+                        disabled={!!appointment.packageOfferId}
+                        style={{
+                          backgroundColor: theme.success,
+                          borderRadius: RFValue(10),
+                          paddingHorizontal: RFValue(14),
+                          paddingVertical: RFValue(8),
+                          marginRight: RFValue(8),
+                          marginBottom: RFValue(6),
+                          opacity: appointment.packageOfferId ? 0.45 : 1,
+                        }}
+                      >
+                        <Text style={{ color: "#fff", fontSize: RFValue(12), fontWeight: "800" }}>
+                          Ask package
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </>
                 ) : null}
                 {!isDone && !isPackage ? (
                   <TouchableOpacity
@@ -14049,10 +14119,122 @@ const DoctorUpcomingAppointmentsSection = () => {
                   </Text>
                 ) : null}
               </View>
+              {isPackage && appointment.packageOfferId ? (
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    color: theme.textSecondary,
+                    marginTop: RFValue(8),
+                    lineHeight: RFValue(16),
+                  }}
+                >
+                  Already requested a package —{" "}
+                  {appointment.packageRequestLabel ||
+                    offer?.title ||
+                    "Package option sent"}
+                  {offer?.amount_inr != null ? ` · ₹${offer.amount_inr}` : ""}
+                </Text>
+              ) : null}
             </View>
           );
         })
       )}
+      <Modal
+        visible={!!askPackageAppointment}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !askPackageBusy && setAskPackageAppointment(null)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.45)",
+            justifyContent: "center",
+            padding: RFValue(20),
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: RFValue(16),
+              padding: RFValue(16),
+            }}
+          >
+            <Text
+              style={{
+                fontSize: RFValue(16),
+                fontWeight: "800",
+                color: theme.textPrimary,
+                marginBottom: RFValue(12),
+              }}
+            >
+              Send a package option
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                color: theme.textSecondary,
+                marginBottom: RFValue(12),
+                lineHeight: RFValue(18),
+              }}
+            >
+              Pick the catalogue slot you agreed on in the demo. The patient can pay from Package
+              Doctor.
+            </Text>
+            {[0, 1, 2].map((idx) => (
+              <TouchableOpacity
+                key={`pkg-slot-${idx}`}
+                disabled={askPackageBusy}
+                onPress={async () => {
+                  if (!askPackageAppointment?.id || !currentUser?.id) return;
+                  try {
+                    setAskPackageBusy(true);
+                    await doctorSendAskPackageForDemoAppointment({
+                      appointmentId: askPackageAppointment.id,
+                      doctorUserId: currentUser.id,
+                      patientUserId: askPackageAppointment.patientId,
+                      packageSlotIndex: idx,
+                    });
+                    setAskPackageAppointment(null);
+                    await refreshAllData?.();
+                    await reloadPackageOffers();
+                  } catch (e) {
+                    Alert.alert("Package", e?.message || "Could not send package option.");
+                  } finally {
+                    setAskPackageBusy(false);
+                  }
+                }}
+                style={{
+                  paddingVertical: RFValue(12),
+                  paddingHorizontal: RFValue(14),
+                  borderRadius: RFValue(12),
+                  backgroundColor: theme.accentLight,
+                  marginBottom: RFValue(8),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <Text style={{ color: theme.accent, fontWeight: "800", fontSize: RFValue(14) }}>
+                  Package {idx + 1}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              onPress={() => !askPackageBusy && setAskPackageAppointment(null)}
+              style={{
+                marginTop: RFValue(8),
+                padding: RFValue(12),
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: theme.textSecondary, fontWeight: "700" }}>Close</Text>
+            </TouchableOpacity>
+            {askPackageBusy ? (
+              <ActivityIndicator style={{ marginTop: RFValue(8) }} color={theme.accent} />
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
