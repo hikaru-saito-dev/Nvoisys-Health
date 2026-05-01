@@ -232,6 +232,7 @@ import {
   DoctorQuickRequestsPanel,
   PatientQuickRequestsTrackerPanel,
   CoinWalletDoctorPanel,
+  DoctorCoinPaymentHistoryPanel,
   PatientCoinHistoryPanel,
   AdminConsoleAppScreen,
   UpgradePackageFAB,
@@ -15509,6 +15510,32 @@ const DoctorProfileScreen = ({ onLogout }) => {
                 Avg min
               </Text>
             </View>
+          </View>
+
+          <View
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: RFValue(18),
+              padding: RFValue(16),
+              marginBottom: RFValue(16),
+              shadowColor: "#000",
+              shadowOpacity: 0.06,
+              shadowOffset: { width: 0, height: 4 },
+              shadowRadius: 12,
+              elevation: 3,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: RFValue(16),
+                fontWeight: "800",
+                color: "#1E1B4B",
+                marginBottom: RFValue(6),
+              }}
+            >
+              Payment history
+            </Text>
+            <DoctorCoinPaymentHistoryPanel theme={theme} />
           </View>
 
           {/* Settings */}

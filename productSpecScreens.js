@@ -67,6 +67,14 @@ const S = {
   pad: 16,
 };
 
+/** Turn ledger reason keys (snake_case) into readable sentence-style labels. */
+function formatCoinLedgerReasonForDisplay(reason) {
+  if (reason == null || reason === "") return "";
+  const spaced = String(reason).trim().replace(/_/g, " ").toLowerCase();
+  if (!spaced) return "";
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 export function CareModeOnboardingScreen({ theme, patientProfile, currentUser, onDone }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
@@ -3113,25 +3121,14 @@ export function PatientQuickRequestsTrackerPanel({
 
 export function CoinWalletDoctorPanel({ theme }) {
   const user = getAuthUser();
-  const [rows, setRows] = useState([]);
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    const list = await listCoinLedgerForUser(user?.id);
-    setRows(list);
-  }, [user?.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const runWithdraw = async () => {
     try {
       setBusy(true);
       await doctorWithdrawCoinsStub(user?.id, Number(withdraw));
       setWithdraw("");
-      await load();
     } catch (e) {
       Alert.alert("Withdraw", e?.message || "Failed");
     } finally {
@@ -3172,17 +3169,66 @@ export function CoinWalletDoctorPanel({ theme }) {
           <Text style={{ color: "#fff", fontWeight: "800" }}>Withdraw</Text>
         </TouchableOpacity>
       </View>
-      <ScrollView style={{ maxHeight: 160, marginTop: 10 }}>
-        {rows.length === 0 ? (
-          <Text style={{ color: theme.textTertiary }}>No ledger rows yet.</Text>
-        ) : (
-          rows.map((r) => (
-            <Text key={r.id} style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 4 }}>
-              {r.reason} · {r.delta}
+      <Text style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 10 }}>
+        Payment history is on your Profile tab.
+      </Text>
+    </View>
+  );
+}
+
+export function DoctorCoinPaymentHistoryPanel({ theme }) {
+  const user = getAuthUser();
+  const [rows, setRows] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const list = await listCoinLedgerForUser(user?.id);
+      if (!cancelled) setRows(list);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  return (
+    <View>
+      <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 10, lineHeight: 18 }}>
+        Ledger entries for your coin balance (1 coin = ₹1).
+      </Text>
+      {rows.length === 0 ? (
+        <Text style={{ color: theme.textTertiary, fontSize: S.small }}>No movements yet.</Text>
+      ) : (
+        rows.map((r, idx) => (
+          <View
+            key={r.id}
+            style={{
+              flexDirection: "row",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              marginBottom: idx === rows.length - 1 ? 0 : 10,
+              paddingBottom: idx === rows.length - 1 ? 0 : 10,
+              borderBottomWidth: idx === rows.length - 1 ? 0 : StyleSheet.hairlineWidth,
+              borderBottomColor: theme.cardBorder || "#E2E8F0",
+            }}
+          >
+            <Text
+              style={{
+                flex: 1,
+                color: theme.textSecondary,
+                fontSize: S.small,
+                lineHeight: 18,
+                marginRight: 10,
+              }}
+            >
+              {formatCoinLedgerReasonForDisplay(r.reason)}
             </Text>
-          ))
-        )}
-      </ScrollView>
+            <Text style={{ color: theme.textPrimary, fontSize: S.small, fontWeight: "800" }}>
+              {Number(r.delta) > 0 ? `+${r.delta}` : String(r.delta)}
+            </Text>
+          </View>
+        ))
+      )}
     </View>
   );
 }
@@ -3204,7 +3250,7 @@ export function PatientCoinHistoryPanel({ theme, userId }) {
       ) : (
         rows.map((r) => (
           <Text key={r.id} style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 4 }}>
-            {r.reason} · {r.delta}
+            {formatCoinLedgerReasonForDisplay(r.reason)} · {r.delta}
           </Text>
         ))
       )}
