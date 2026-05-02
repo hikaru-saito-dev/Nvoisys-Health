@@ -781,35 +781,31 @@ export function QuickCounsellingScreen({ theme, onBack, patientUserId }) {
   );
 }
 
-export function PackageDoctorJourneyScreen({
+/**
+ * Patient: unified list of package-style demo meetings + orphan offers (same cards as former
+ * “Your demo meetings” on Package Doctor). Used from the Appts tab and anywhere else we need it.
+ */
+export function PatientPackageMeetingsPanel({
   theme,
-  onBack,
   patientUserId,
   patientProfileId,
-  doctors,
+  doctors = [],
   onOpenChatWithDoctor,
   onAfterPackagePayment,
-  /** Extra ScrollView bottom inset when this screen sits above a floating tab bar (see App.js). */
+  /** Extra ScrollView bottom inset when this sits above a floating tab bar (see App.js). */
   scrollContentBottomInset = 120,
+  /** When null, no in-list title (e.g. Appts screen already has a header). */
+  sectionTitle = null,
+  emptyHint = "None yet. Use Book Appt on Home or Package journey to schedule.",
+  /** Called after pay / cancel / reschedule reload — e.g. sync `appointments` in App state. */
+  onMeetingsChanged,
 }) {
   const insets = useSafeAreaInsets();
-  const [search, setSearch] = useState("");
-  const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [meetings, setMeetings] = useState([]);
   const [offers, setOffers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [meetingDateTime, setMeetingDateTime] = useState(null);
-  const [pickerMode, setPickerMode] = useState(null);
-  const [meetingDesc, setMeetingDesc] = useState("");
   const [pickedReschedule, setPickedReschedule] = useState({});
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const base = doctors || [];
-    if (!q) return base;
-    return base.filter((d) => String(d.name || "").toLowerCase().includes(q));
-  }, [doctors, search]);
 
   const doctorName = useCallback(
     (userId) => {
@@ -820,6 +816,11 @@ export function PackageDoctorJourneyScreen({
   );
 
   const reload = useCallback(async () => {
+    if (!patientUserId) {
+      setOffers([]);
+      setMeetings([]);
+      return;
+    }
     const o = await listPackageOffersForPatient(patientUserId, patientProfileId);
     setOffers(o);
     const m = await listPackageMeetingsForPatient(patientUserId);
@@ -845,6 +846,475 @@ export function PackageDoctorJourneyScreen({
       setRefreshing(false);
     }
   }, [reload]);
+
+  const offerDoctorUserId = useCallback(
+    (offer) => {
+      if (!offer) return null;
+      const direct = String(offer.doctor_user_id || "").trim();
+      if (direct) return direct;
+      const raw = String(offer.doctor || "").trim();
+      const match = (doctors || []).find(
+        (d) => String(d.userId) === raw || String(d.profileId) === raw,
+      );
+      return match?.userId || raw || null;
+    },
+    [doctors],
+  );
+
+  const linkedOfferForMeeting = useCallback(
+    (meeting) => {
+      const oid = String(meeting?.package_offer_id || "").trim();
+      if (!oid) return null;
+      return (offers || []).find((o) => String(o.id) === oid) || null;
+    },
+    [offers],
+  );
+
+  const payOffer = async (offer) => {
+    try {
+      setBusy(true);
+      const doctorUserId = offerDoctorUserId(offer);
+      await patientPayPackageOfferStub(offer.id, doctorUserId);
+      try {
+        await onAfterPackagePayment?.({
+          doctorUserId,
+          packageTitle: offer.title,
+          amount: offer.amount_inr,
+        });
+      } catch {
+        // optional
+      }
+      await reload();
+      try {
+        await onMeetingsChanged?.();
+      } catch {
+        // ignore
+      }
+      Alert.alert(
+        "Paid — deal started",
+        "Payment recorded and a chat with this doctor is now open in the Chat tab. Tap Go to chat from your appointment card to continue the conversation.",
+      );
+    } catch (e) {
+      Alert.alert("Payment", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const goToChatWithMeetingDoctor = async (meeting) => {
+    const doctorUid = String(meeting?.doctor_user_id || "").trim();
+    if (!doctorUid) {
+      Alert.alert("Chat", "Doctor info missing on this meeting.");
+      return;
+    }
+    const offer = linkedOfferForMeeting(meeting);
+    try {
+      await onOpenChatWithDoctor?.(doctorUid, meeting, offer);
+    } catch (e) {
+      Alert.alert("Chat", e?.message || "Could not open chat.");
+    }
+  };
+
+  const submitRescheduleChoice = async (meetingId) => {
+    const iso = pickedReschedule[meetingId];
+    if (!iso) {
+      Alert.alert("Time", "Choose one of your doctor’s suggested slots.");
+      return;
+    }
+    try {
+      setBusy(true);
+      await patientChooseRescheduleSlot(meetingId, iso);
+      setPickedReschedule((p) => ({ ...p, [meetingId]: null }));
+      await reload();
+      try {
+        await onMeetingsChanged?.();
+      } catch {
+        // ignore
+      }
+      Alert.alert("Sent", "Your doctor will confirm this time.");
+    } catch (e) {
+      Alert.alert("Reschedule", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{
+        paddingHorizontal: S.pad,
+        paddingTop: 4,
+        paddingBottom: scrollContentBottomInset + (insets.bottom || 0) + 24,
+      }}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />
+      }
+    >
+      {sectionTitle ? (
+        <Text style={{ fontWeight: "800", color: theme.textPrimary, fontSize: S.title }}>
+          {sectionTitle}
+        </Text>
+      ) : null}
+      {meetings.length === 0 ? (
+        <Text style={{ color: theme.textTertiary, marginTop: sectionTitle ? 8 : 0 }}>{emptyHint}</Text>
+      ) : (
+        meetings.map((x) => {
+          const st = String(x.status || "");
+          const linkedOffer = linkedOfferForMeeting(x);
+          const offerStatus = String(linkedOffer?.status || "").toLowerCase();
+          const isPaid = offerStatus === "paid";
+          const isConfirmed = st === PACKAGE_MEETING_STATUS.CONFIRMED;
+          const isDiscussing =
+            st === PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS ||
+            st === PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK;
+          const meetingTimeIso =
+            isConfirmed && x.confirmed_at
+              ? x.confirmed_at
+              : x.patient_selected_slot || x.proposed_at;
+          const meetingDateLabel = meetingTimeIso
+            ? new Date(meetingTimeIso).toLocaleDateString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "2-digit",
+              })
+            : "";
+          const meetingTimeLabel = meetingTimeIso
+            ? new Date(meetingTimeIso).toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+                hour12: true,
+              })
+            : "";
+          const methodLabel = x.call_kind === "chat" ? "Chat consult" : "Video consult";
+          let badgeText = "pending";
+          let badgeBg = theme.bg;
+          let badgeFg = theme.textTertiary;
+          if (isPaid) {
+            badgeText = "paid";
+            badgeBg = theme.successLight;
+            badgeFg = theme.success;
+          } else if (isConfirmed) {
+            badgeText = "approved";
+            badgeBg = theme.accentLight;
+            badgeFg = theme.accent;
+          } else if (isDiscussing) {
+            badgeText = "discussing";
+            badgeBg = theme.warningLight || "#FEF3C7";
+            badgeFg = theme.warning;
+          }
+          const showRescheduleUI =
+            x.status === PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS &&
+            (x.doctor_alternate_slots || []).length > 0;
+          const showGoToChat = isConfirmed;
+          const showCancel = !isConfirmed;
+          const hasPackageSuggestion = !!linkedOffer && !isPaid;
+          const payEnabled = isConfirmed && hasPackageSuggestion && !isPaid;
+          const packageLine = isPaid
+            ? ""
+            : !linkedOffer
+              ? "The doctor has not suggested a package option yet."
+              : `Doctor suggested ${String(x.package_request_label || linkedOffer.title || "a package").trim()}. Payment: ₹${linkedOffer.amount_inr ?? "—"}.`;
+          return (
+            <View
+              key={x.id}
+              style={{
+                marginTop: 10,
+                padding: 14,
+                borderRadius: 14,
+                backgroundColor: theme.card,
+                borderWidth: 1,
+                borderColor: theme.cardBorder,
+              }}
+            >
+              {x.localOnly ? (
+                <View
+                  style={{
+                    backgroundColor: theme.warning + "22",
+                    borderRadius: 10,
+                    padding: 8,
+                    marginBottom: 10,
+                    borderWidth: 1,
+                    borderColor: theme.warning,
+                  }}
+                >
+                  <Text style={{ color: theme.warning, fontSize: 11, fontWeight: "700" }}>
+                    On this device only — could not save to PocketBase `appointments`.
+                  </Text>
+                </View>
+              ) : null}
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Text
+                  style={{
+                    color: theme.accent,
+                    fontWeight: "800",
+                    flex: 1,
+                    marginRight: 8,
+                  }}
+                  numberOfLines={1}
+                >
+                  {doctorName(x.doctor_user_id)}
+                </Text>
+                <View
+                  style={{
+                    backgroundColor: badgeBg,
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
+                    borderRadius: 999,
+                  }}
+                >
+                  <Text style={{ color: badgeFg, fontWeight: "800", fontSize: 11 }}>
+                    {badgeText}
+                  </Text>
+                </View>
+              </View>
+              {meetingTimeIso ? (
+                <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
+                  {meetingDateLabel} · {meetingTimeLabel} · {methodLabel}
+                </Text>
+              ) : null}
+              {x.description ? (
+                <Text style={{ color: theme.textPrimary, fontSize: S.small, marginTop: 6 }}>
+                  <Text style={{ fontWeight: "700" }}>Reason: </Text>
+                  {x.description}
+                </Text>
+              ) : null}
+              {isConfirmed && !isPaid ? (
+                <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 8 }}>
+                  {packageLine}
+                </Text>
+              ) : null}
+              {showRescheduleUI ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={{ color: theme.textPrimary, fontWeight: "700", marginBottom: 8 }}>
+                    Pick one of your doctor’s times
+                  </Text>
+                  {(x.doctor_alternate_slots || []).map((slot) => {
+                    const label = new Date(slot).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    });
+                    const selected = pickedReschedule[x.id] === slot;
+                    return (
+                      <TouchableOpacity
+                        key={slot}
+                        onPress={() => setPickedReschedule((p) => ({ ...p, [x.id]: slot }))}
+                        style={{
+                          padding: 10,
+                          borderRadius: 10,
+                          marginBottom: 8,
+                          borderWidth: 2,
+                          borderColor: selected ? theme.accent : theme.cardBorder,
+                          backgroundColor: selected ? theme.accentLight : theme.bg,
+                        }}
+                      >
+                        <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity
+                    onPress={() => submitRescheduleChoice(x.id)}
+                    disabled={busy}
+                    style={{
+                      marginTop: 4,
+                      backgroundColor: theme.warning,
+                      padding: 12,
+                      borderRadius: 12,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "800" }}>
+                      Send chosen time to doctor
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 12 }}>
+                {isConfirmed && !isPaid ? (
+                  <TouchableOpacity
+                    onPress={() => linkedOffer && payOffer(linkedOffer)}
+                    disabled={busy || !payEnabled}
+                    style={{
+                      backgroundColor: theme.success,
+                      paddingHorizontal: 14,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      marginRight: 8,
+                      opacity: busy || !payEnabled ? 0.45 : 1,
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "800" }}>
+                      Pay ₹{linkedOffer?.amount_inr ?? "—"}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+                {showGoToChat ? (
+                  <TouchableOpacity
+                    onPress={() => goToChatWithMeetingDoctor(x)}
+                    style={{
+                      backgroundColor: theme.accent,
+                      paddingHorizontal: 14,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      marginRight: 8,
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "800" }}>Go to chat</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {showCancel ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      Alert.alert(
+                        "Cancel this request?",
+                        "This removes the meeting for you and your doctor.",
+                        [
+                          { text: "Keep", style: "cancel" },
+                          {
+                            text: "Cancel meeting",
+                            style: "destructive",
+                            onPress: async () => {
+                              try {
+                                setBusy(true);
+                                await patientCancelPackageDemoMeeting(x.id);
+                                await reload();
+                                try {
+                                  await onMeetingsChanged?.();
+                                } catch {
+                                  // ignore
+                                }
+                              } catch (e) {
+                                Alert.alert("Cancel", e?.message || "Failed");
+                              } finally {
+                                setBusy(false);
+                              }
+                            },
+                          },
+                        ],
+                      );
+                    }}
+                    disabled={busy}
+                    style={{
+                      backgroundColor: theme.bg,
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                      paddingHorizontal: 14,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                    }}
+                  >
+                    <Text style={{ color: theme.danger || "#b91c1c", fontWeight: "800" }}>
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+          );
+        })
+      )}
+
+      {(() => {
+        const meetingDoctorIds = new Set(
+          (meetings || [])
+            .map((m) => String(m.doctor_user_id || "").trim())
+            .filter(Boolean),
+        );
+        const orphans = (offers || []).filter((o) => {
+          const did = String(offerDoctorUserId(o) || "").trim();
+          return did && !meetingDoctorIds.has(did);
+        });
+        if (orphans.length === 0) return null;
+        return (
+          <>
+            <Text style={{ marginTop: 20, fontWeight: "800", color: theme.textPrimary }}>
+              Other package offers
+            </Text>
+            {orphans.map((o) => {
+              const isPaid = String(o.status || "").toLowerCase() === "paid";
+              return (
+                <View
+                  key={o.id}
+                  style={{
+                    marginTop: 10,
+                    padding: 14,
+                    borderRadius: 14,
+                    backgroundColor: theme.card,
+                    borderWidth: 1,
+                    borderColor: theme.cardBorder,
+                  }}
+                >
+                  <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                    {o.title || "Package"}
+                  </Text>
+                  <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
+                    Service fee ₹{o.amount_inr ?? "—"} · {isPaid ? "Paid" : "Awaiting payment"}
+                  </Text>
+                  {!isPaid ? (
+                    <TouchableOpacity
+                      onPress={() => payOffer(o)}
+                      disabled={busy}
+                      style={{
+                        marginTop: 12,
+                        backgroundColor: theme.success,
+                        padding: 12,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>
+                        Pay ₹{o.amount_inr ?? "—"}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => onOpenChatWithDoctor?.(offerDoctorUserId(o), null, o)}
+                      style={{
+                        marginTop: 12,
+                        backgroundColor: theme.accent,
+                        padding: 12,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>Go to chat</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })}
+          </>
+        );
+      })()}
+    </ScrollView>
+  );
+}
+
+export function PackageDoctorJourneyScreen({
+  theme,
+  onBack,
+  patientUserId,
+  patientProfileId,
+  doctors,
+  /** Extra ScrollView bottom inset when this screen sits above a floating tab bar (see App.js). */
+  scrollContentBottomInset = 120,
+  /** Optional: open the Appts tab where all meetings are listed. */
+  onGoToAppointmentsTab,
+}) {
+  const insets = useSafeAreaInsets();
+  const [search, setSearch] = useState("");
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [meetingDateTime, setMeetingDateTime] = useState(null);
+  const [pickerMode, setPickerMode] = useState(null);
+  const [meetingDesc, setMeetingDesc] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const base = doctors || [];
+    if (!q) return base;
+    return base.filter((d) => String(d.name || "").toLowerCase().includes(q));
+  }, [doctors, search]);
 
   const submitBooking = async () => {
     if (!selectedDoctor?.userId) {
@@ -880,106 +1350,21 @@ export function PackageDoctorJourneyScreen({
       });
       setMeetingDesc("");
       setMeetingDateTime(null);
-      await reload();
       if (created?.localOnly) {
         Alert.alert(
           "Saved on this device",
-          "PocketBase could not save the appointment (permissions, rules, or network). Your request is stored on this phone so you can test the flow. Fix `appointments` Create rules and try again. Track it below.",
+          "PocketBase could not save the appointment (permissions, rules, or network). Your request is stored on this phone so you can test the flow. Fix `appointments` Create rules and try again. Track it under Appts → My appointments.",
         );
       } else {
         Alert.alert(
           "Request sent",
-          "Your doctor can accept this time or suggest other slots. Track progress below; you will get an alert 30 minutes before the confirmed meeting.",
+          "Your doctor can accept this time or suggest other slots. Track the meeting under Appts → My appointments. You will get an alert 30 minutes before the confirmed meeting.",
         );
       }
     } catch (e) {
       Alert.alert("Booking", e?.message || "Failed");
     } finally {
       setBusy(false);
-    }
-  };
-
-  const submitRescheduleChoice = async (meetingId) => {
-    const iso = pickedReschedule[meetingId];
-    if (!iso) {
-      Alert.alert("Time", "Choose one of your doctor’s suggested slots.");
-      return;
-    }
-    try {
-      setBusy(true);
-      await patientChooseRescheduleSlot(meetingId, iso);
-      setPickedReschedule((p) => ({ ...p, [meetingId]: null }));
-      await reload();
-      Alert.alert("Sent", "Your doctor will confirm this time.");
-    } catch (e) {
-      Alert.alert("Reschedule", e?.message || "Failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /** Resolve the doctor's auth user id for an offer (handles `users` vs `doctor_profile` relations). */
-  const offerDoctorUserId = useCallback(
-    (offer) => {
-      if (!offer) return null;
-      const direct = String(offer.doctor_user_id || "").trim();
-      if (direct) return direct;
-      const raw = String(offer.doctor || "").trim();
-      const match = (doctors || []).find(
-        (d) => String(d.userId) === raw || String(d.profileId) === raw,
-      );
-      return match?.userId || raw || null;
-    },
-    [doctors],
-  );
-
-  /** Package offer linked on this appointment’s workflow (`package_offer_id`) — never infer from other doctors’ offers. */
-  const linkedOfferForMeeting = useCallback(
-    (meeting) => {
-      const oid = String(meeting?.package_offer_id || "").trim();
-      if (!oid) return null;
-      return (offers || []).find((o) => String(o.id) === oid) || null;
-    },
-    [offers],
-  );
-
-  const payOffer = async (offer) => {
-    try {
-      setBusy(true);
-      const doctorUserId = offerDoctorUserId(offer);
-      await patientPayPackageOfferStub(offer.id, doctorUserId);
-      try {
-        await onAfterPackagePayment?.({
-          doctorUserId,
-          packageTitle: offer.title,
-          amount: offer.amount_inr,
-        });
-      } catch {
-        // optional — chat creation is best-effort
-      }
-      await reload();
-      Alert.alert(
-        "Paid — deal started",
-        "Payment recorded and a chat with this doctor is now open in the Chat tab. Tap Go to chat from your demo card to continue the conversation.",
-      );
-    } catch (e) {
-      Alert.alert("Payment", e?.message || "Failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const goToChatWithMeetingDoctor = async (meeting) => {
-    const doctorUid = String(meeting?.doctor_user_id || "").trim();
-    if (!doctorUid) {
-      Alert.alert("Chat", "Doctor info missing on this meeting.");
-      return;
-    }
-    const offer = linkedOfferForMeeting(meeting);
-    try {
-      await onOpenChatWithDoctor?.(doctorUid, meeting, offer);
-    } catch (e) {
-      Alert.alert("Chat", e?.message || "Could not open chat.");
     }
   };
 
@@ -1115,15 +1500,12 @@ export function PackageDoctorJourneyScreen({
           padding: S.pad,
           paddingBottom: scrollContentBottomInset + (insets.bottom || 0) + 24,
         }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />
-        }
       >
         <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 12 }}>
           Search by doctor name, book your demo date and time, and describe your visit. Your doctor
           accepts or proposes other times; once confirmed you get a reminder 30 minutes before the
           voice/video call. After the call they tap Send package options — you see the breakdown
-          here with Pay now. Payment is to the company first; the doctor’s share becomes withdrawable
+          under Appts (My appointments) with Pay now. Payment is to the company first; the doctor’s share becomes withdrawable
           coins after they complete package duties (1 coin = ₹1). Changing assigned doctor later has
           no refund; the new doctor continues remaining care.
         </Text>
@@ -1279,342 +1661,38 @@ export function PackageDoctorJourneyScreen({
           </Text>
         </TouchableOpacity>
 
-        <Text style={{ marginTop: 20, fontWeight: "800", color: theme.textPrimary }}>
-          Your demo meetings
-        </Text>
-        {meetings.length === 0 ? (
-          <Text style={{ color: theme.textTertiary, marginTop: 6 }}>None yet.</Text>
-        ) : (
-          meetings.map((x) => {
-            const st = String(x.status || "");
-            const linkedOffer = linkedOfferForMeeting(x);
-            const offerStatus = String(linkedOffer?.status || "").toLowerCase();
-            const isPaid = offerStatus === "paid";
-            const isConfirmed = st === PACKAGE_MEETING_STATUS.CONFIRMED;
-            const isDiscussing =
-              st === PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS ||
-              st === PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK;
-            const meetingTimeIso =
-              isConfirmed && x.confirmed_at
-                ? x.confirmed_at
-                : x.patient_selected_slot || x.proposed_at;
-            const meetingDateLabel = meetingTimeIso
-              ? new Date(meetingTimeIso).toLocaleDateString(undefined, {
-                  weekday: "short",
-                  month: "short",
-                  day: "2-digit",
-                })
-              : "";
-            const meetingTimeLabel = meetingTimeIso
-              ? new Date(meetingTimeIso).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  hour12: true,
-                })
-              : "";
-            const methodLabel = x.call_kind === "chat" ? "Chat consult" : "Video consult";
-            let badgeText = "pending";
-            let badgeBg = theme.bg;
-            let badgeFg = theme.textTertiary;
-            if (isPaid) {
-              badgeText = "paid";
-              badgeBg = theme.successLight;
-              badgeFg = theme.success;
-            } else if (isConfirmed) {
-              badgeText = "approved";
-              badgeBg = theme.accentLight;
-              badgeFg = theme.accent;
-            } else if (isDiscussing) {
-              badgeText = "discussing";
-              badgeBg = theme.warningLight || "#FEF3C7";
-              badgeFg = theme.warning;
-            }
-            const showRescheduleUI =
-              x.status === PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS &&
-              (x.doctor_alternate_slots || []).length > 0;
-            const showGoToChat = isConfirmed;
-            const showCancel = !isConfirmed;
-            const hasPackageSuggestion = !!linkedOffer && !isPaid;
-            const payEnabled = isConfirmed && hasPackageSuggestion && !isPaid;
-            const packageLine = isPaid
-              ? ""
-              : !linkedOffer
-                ? "The doctor has not suggested a package option yet."
-                : `Doctor suggested ${String(x.package_request_label || linkedOffer.title || "a package").trim()}. Payment: ₹${linkedOffer.amount_inr ?? "—"}.`;
-            return (
-              <View
-                key={x.id}
-                style={{
-                  marginTop: 10,
-                  padding: 14,
-                  borderRadius: 14,
-                  backgroundColor: theme.card,
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                }}
-              >
-                {x.localOnly ? (
-                  <View
-                    style={{
-                      backgroundColor: theme.warning + "22",
-                      borderRadius: 10,
-                      padding: 8,
-                      marginBottom: 10,
-                      borderWidth: 1,
-                      borderColor: theme.warning,
-                    }}
-                  >
-                    <Text style={{ color: theme.warning, fontSize: 11, fontWeight: "700" }}>
-                      On this device only — could not save to PocketBase `appointments`.
-                    </Text>
-                  </View>
-                ) : null}
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Text
-                    style={{
-                      color: theme.accent,
-                      fontWeight: "800",
-                      flex: 1,
-                      marginRight: 8,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {doctorName(x.doctor_user_id)}
-                  </Text>
-                  <View
-                    style={{
-                      backgroundColor: badgeBg,
-                      paddingHorizontal: 10,
-                      paddingVertical: 4,
-                      borderRadius: 999,
-                    }}
-                  >
-                    <Text style={{ color: badgeFg, fontWeight: "800", fontSize: 11 }}>
-                      {badgeText}
-                    </Text>
-                  </View>
-                </View>
-                {meetingTimeIso ? (
-                  <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
-                    {meetingDateLabel} · {meetingTimeLabel} · {methodLabel}
-                  </Text>
-                ) : null}
-                {x.description ? (
-                  <Text style={{ color: theme.textPrimary, fontSize: S.small, marginTop: 6 }}>
-                    <Text style={{ fontWeight: "700" }}>Reason: </Text>
-                    {x.description}
-                  </Text>
-                ) : null}
-                {isConfirmed && !isPaid ? (
-                  <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 8 }}>
-                    {packageLine}
-                  </Text>
-                ) : null}
-                {showRescheduleUI ? (
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={{ color: theme.textPrimary, fontWeight: "700", marginBottom: 8 }}>
-                      Pick one of your doctor’s times
-                    </Text>
-                    {(x.doctor_alternate_slots || []).map((slot) => {
-                      const label = new Date(slot).toLocaleString(undefined, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      });
-                      const selected = pickedReschedule[x.id] === slot;
-                      return (
-                        <TouchableOpacity
-                          key={slot}
-                          onPress={() => setPickedReschedule((p) => ({ ...p, [x.id]: slot }))}
-                          style={{
-                            padding: 10,
-                            borderRadius: 10,
-                            marginBottom: 8,
-                            borderWidth: 2,
-                            borderColor: selected ? theme.accent : theme.cardBorder,
-                            backgroundColor: selected ? theme.accentLight : theme.bg,
-                          }}
-                        >
-                          <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                            {label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    <TouchableOpacity
-                      onPress={() => submitRescheduleChoice(x.id)}
-                      disabled={busy}
-                      style={{
-                        marginTop: 4,
-                        backgroundColor: theme.warning,
-                        padding: 12,
-                        borderRadius: 12,
-                        alignItems: "center",
-                      }}
-                    >
-                      <Text style={{ color: "#fff", fontWeight: "800" }}>
-                        Send chosen time to doctor
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-                <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 12 }}>
-                  {isConfirmed && !isPaid ? (
-                    <TouchableOpacity
-                      onPress={() => linkedOffer && payOffer(linkedOffer)}
-                      disabled={busy || !payEnabled}
-                      style={{
-                        backgroundColor: theme.success,
-                        paddingHorizontal: 14,
-                        paddingVertical: 10,
-                        borderRadius: 10,
-                        marginRight: 8,
-                        opacity: busy || !payEnabled ? 0.45 : 1,
-                      }}
-                    >
-                      <Text style={{ color: "#fff", fontWeight: "800" }}>
-                        Pay ₹{linkedOffer?.amount_inr ?? "—"}
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-                  {showGoToChat ? (
-                    <TouchableOpacity
-                      onPress={() => goToChatWithMeetingDoctor(x)}
-                      style={{
-                        backgroundColor: theme.accent,
-                        paddingHorizontal: 14,
-                        paddingVertical: 10,
-                        borderRadius: 10,
-                        marginRight: 8,
-                      }}
-                    >
-                      <Text style={{ color: "#fff", fontWeight: "800" }}>Go to chat</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                  {showCancel ? (
-                    <TouchableOpacity
-                      onPress={() => {
-                        Alert.alert(
-                          "Cancel this request?",
-                          "This removes the meeting for you and your doctor.",
-                          [
-                            { text: "Keep", style: "cancel" },
-                            {
-                              text: "Cancel meeting",
-                              style: "destructive",
-                              onPress: async () => {
-                                try {
-                                  setBusy(true);
-                                  await patientCancelPackageDemoMeeting(x.id);
-                                  await reload();
-                                } catch (e) {
-                                  Alert.alert("Cancel", e?.message || "Failed");
-                                } finally {
-                                  setBusy(false);
-                                }
-                              },
-                            },
-                          ],
-                        );
-                      }}
-                      disabled={busy}
-                      style={{
-                        backgroundColor: theme.bg,
-                        borderWidth: 1,
-                        borderColor: theme.cardBorder,
-                        paddingHorizontal: 14,
-                        paddingVertical: 10,
-                        borderRadius: 10,
-                      }}
-                    >
-                      <Text style={{ color: theme.danger || "#b91c1c", fontWeight: "800" }}>
-                        Cancel
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-              </View>
-            );
-          })
-        )}
-
-        {/*
-          Standalone "Package offers" section is removed — every offer is shown
-          inline on its matching demo meeting card above (Pay / Paid + Go to chat).
-          Orphan offers (no matching meeting) fall back to a compact list below.
-        */}
-        {(() => {
-          const meetingDoctorIds = new Set(
-            (meetings || [])
-              .map((m) => String(m.doctor_user_id || "").trim())
-              .filter(Boolean),
-          );
-          const orphans = (offers || []).filter((o) => {
-            const did = String(offerDoctorUserId(o) || "").trim();
-            return did && !meetingDoctorIds.has(did);
-          });
-          if (orphans.length === 0) return null;
-          return (
-            <>
-              <Text style={{ marginTop: 20, fontWeight: "800", color: theme.textPrimary }}>
-                Other package offers
-              </Text>
-              {orphans.map((o) => {
-                const isPaid = String(o.status || "").toLowerCase() === "paid";
-                return (
-                  <View
-                    key={o.id}
-                    style={{
-                      marginTop: 10,
-                      padding: 14,
-                      borderRadius: 14,
-                      backgroundColor: theme.card,
-                      borderWidth: 1,
-                      borderColor: theme.cardBorder,
-                    }}
-                  >
-                    <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
-                      {o.title || "Package"}
-                    </Text>
-                    <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
-                      Service fee ₹{o.amount_inr ?? "—"} ·{" "}
-                      {isPaid ? "Paid" : "Awaiting payment"}
-                    </Text>
-                    {!isPaid ? (
-                      <TouchableOpacity
-                        onPress={() => payOffer(o)}
-                        disabled={busy}
-                        style={{
-                          marginTop: 12,
-                          backgroundColor: theme.success,
-                          padding: 12,
-                          borderRadius: 12,
-                          alignItems: "center",
-                        }}
-                      >
-                        <Text style={{ color: "#fff", fontWeight: "800" }}>
-                          Pay ₹{o.amount_inr ?? "—"}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <TouchableOpacity
-                        onPress={() => onOpenChatWithDoctor?.(offerDoctorUserId(o), null, o)}
-                        style={{
-                          marginTop: 12,
-                          backgroundColor: theme.accent,
-                          padding: 12,
-                          borderRadius: 12,
-                          alignItems: "center",
-                        }}
-                      >
-                        <Text style={{ color: "#fff", fontWeight: "800" }}>Go to chat</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              })}
-            </>
-          );
-        })()}
+        <View
+          style={{
+            marginTop: 24,
+            padding: 14,
+            borderRadius: 14,
+            backgroundColor: theme.accentLight,
+            borderWidth: 1,
+            borderColor: theme.accent,
+          }}
+        >
+          <Text style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 8 }}>
+            Track your meetings
+          </Text>
+          <Text style={{ color: theme.textSecondary, fontSize: S.small, lineHeight: 20 }}>
+            Whether you book from here or from Book Appt on Home, every request, reschedule, package
+            offer, and payment lives under the Appts tab — same cards and actions everywhere.
+          </Text>
+          {typeof onGoToAppointmentsTab === "function" ? (
+            <TouchableOpacity
+              onPress={onGoToAppointmentsTab}
+              style={{
+                marginTop: 12,
+                backgroundColor: theme.accent,
+                paddingVertical: 12,
+                borderRadius: 12,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "800" }}>Open Appts tab</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </ScrollView>
     </View>
   );
@@ -1667,7 +1745,7 @@ function PackageSuggestAfterMeetingInline({
       }
       Alert.alert(
         "Package options sent",
-        "The patient sees the package breakdown and Pay now on their Package Doctor screen. Payment goes to the company account first; your share accrues as coins after you fulfil the package (1 coin = ₹1).",
+        "The patient sees the package breakdown and Pay now under Appts → My appointments. Payment goes to the company account first; your share accrues as coins after you fulfil the package (1 coin = ₹1).",
       );
     } catch (e) {
       Alert.alert("Send failed", e?.message || "Failed");

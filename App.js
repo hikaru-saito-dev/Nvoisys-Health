@@ -223,6 +223,7 @@ import {
   decodeMeetingWorkflowFromAppointmentRow,
   doctorSendAskPackageForDemoAppointment,
   ensurePackageDemoMeetingConversation,
+  createPackageMeetingRequest,
 } from "./productSpecApi";
 import {
   CareModeOnboardingScreen,
@@ -231,6 +232,7 @@ import {
   QuickSolutionScreen,
   QuickCounsellingScreen,
   PackageDoctorJourneyScreen,
+  PatientPackageMeetingsPanel,
   PackageMeetingDoctorPanel,
   DoctorQuickRequestsPanel,
   PatientQuickRequestsTrackerPanel,
@@ -4016,12 +4018,14 @@ const PatientHomeScreen = () => {
         patientUserId={currentUser?.id}
         patientProfileId={patientProfile?.id}
         doctors={packageDoctors}
-        onOpenChatWithDoctor={handleOpenChatWithDoctor}
-        onAfterPackagePayment={handleAfterPackagePayment}
         scrollContentBottomInset={Math.max(
           tabScrollBottomPadding(),
           Math.round(88 * UI_SCALE + 40),
         )}
+        onGoToAppointmentsTab={() => {
+          setShowPackageJourney(false);
+          tabNav?.navigateTab?.("Appts");
+        }}
       />
     );
 
@@ -8567,45 +8571,143 @@ const PatientEditProfileScreen = ({
 const PatientAppointmentsScreen = ({ onBack }) => {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const tabNav = useMainTabNav();
   const {
-    appointments,
-    payForAppointment,
-    applyPatientRescheduleChoice,
-    cancelAppointmentByPatient,
+    currentUser,
+    patientProfile,
+    fetchApprovedDoctors,
+    refreshAllData,
+    ensureDirectConversation,
+    loadConversationMessages,
+    sendConversationMessage,
+    requestOpenConversation,
   } = useAppData();
   const showBack = typeof onBack === "function";
-  const [payingId, setPayingId] = useState(null);
-  const [payError, setPayError] = useState("");
-  const [rescheduleBusyId, setRescheduleBusyId] = useState(null);
-  const [cancelBusyId, setCancelBusyId] = useState(null);
-  const [pickedSlotIso, setPickedSlotIso] = useState({});
+  const [packageDoctors, setPackageDoctors] = useState([]);
 
-  const handlePayFee = async (appointment) => {
-    if (!appointment?.id) return;
-    setPayError("");
-    setPayingId(appointment.id);
-    try {
-      await payForAppointment(appointment);
-      Alert.alert(
-        "Payment recorded",
-        "Thanks — your consultation is now unlocked. Open the Messages tab to chat with your doctor.",
-      );
-    } catch (error) {
-      setPayError(
-        error?.message || "Unable to complete payment. Please try again.",
-      );
-    } finally {
-      setPayingId(null);
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const list = await fetchApprovedDoctors({ packageModeOnly: true });
+      if (!cancelled) setPackageDoctors(list);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchApprovedDoctors]);
 
-  const rows = [...(appointments || [])]
-    .filter((a) => !a.isPackageDemoMeeting)
-    .sort(
-      (a, b) =>
-        new Date(a.scheduledAt || 0).getTime() -
-        new Date(b.scheduledAt || 0).getTime(),
-    );
+  const handleOpenChatWithDoctor = useCallback(
+    async (doctorUserId, meeting = null, offer = null) => {
+      if (!doctorUserId) {
+        Alert.alert("Chat", "Doctor info missing on this meeting.");
+        return;
+      }
+      try {
+        let cid =
+          meeting?.demo_conversation_id ||
+          meeting?.conversation_id ||
+          null;
+        if (!cid && meeting?.id) {
+          try {
+            cid = await ensurePackageDemoMeetingConversation(meeting.id);
+          } catch (e) {
+            console.log("ensurePackageDemoMeetingConversation:", e?.message);
+          }
+        }
+        if (!cid) {
+          const conv = await ensureDirectConversation(doctorUserId);
+          cid = conv?.id || null;
+        }
+        if (!cid) {
+          Alert.alert("Chat", "Could not open the chat with this doctor.");
+          return;
+        }
+        try {
+          const existing = await loadConversationMessages(cid);
+          if (!existing || existing.length === 0) {
+            const lines = [];
+            if (meeting?.description) {
+              lines.push(`Reason: ${meeting.description}`);
+            }
+            const meetingTime =
+              meeting?.confirmed_at ||
+              meeting?.patient_selected_slot ||
+              meeting?.proposed_at ||
+              null;
+            if (meetingTime) {
+              const when = new Date(meetingTime).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              });
+              lines.push(`Demo confirmed: ${when}.`);
+            }
+            if (offer?.title) {
+              lines.push(
+                `Package: ${offer.title} — ₹${offer.amount_inr ?? "—"}.`,
+              );
+            }
+            if (String(offer?.status || "").toLowerCase() === "paid") {
+              lines.push(
+                `Payment received${
+                  offer?.amount_inr ? ` (₹${offer.amount_inr})` : ""
+                }. Looking forward to working with you.`,
+              );
+            }
+            for (const line of lines) {
+              try {
+                await sendConversationMessage(cid, line);
+              } catch {
+                // best-effort seed
+              }
+            }
+          }
+        } catch (seedErr) {
+          console.log("PatientAppointmentsScreen chat seed:", seedErr?.message);
+        }
+        requestOpenConversation?.(cid, { patientUserId: doctorUserId });
+        tabNav?.navigateTab?.("Chat");
+      } catch (error) {
+        Alert.alert(
+          "Chat",
+          error?.message || "Could not open chat with this doctor.",
+        );
+      }
+    },
+    [
+      ensureDirectConversation,
+      loadConversationMessages,
+      sendConversationMessage,
+      requestOpenConversation,
+      tabNav,
+    ],
+  );
+
+  const handleAfterPackagePayment = useCallback(
+    async ({ doctorUserId, packageTitle, amount }) => {
+      if (!doctorUserId) return null;
+      try {
+        const conv = await ensureDirectConversation(doctorUserId);
+        const cid = conv?.id;
+        if (cid) {
+          try {
+            await sendConversationMessage(
+              cid,
+              `Payment confirmed for ${packageTitle || "the package"}${
+                amount ? ` (₹${amount})` : ""
+              }. Looking forward to working with you.`,
+            );
+          } catch {
+            // non-fatal
+          }
+        }
+        return cid || null;
+      } catch (error) {
+        console.log("handleAfterPackagePayment (Appts):", error?.message);
+        return null;
+      }
+    },
+    [ensureDirectConversation, sendConversationMessage],
+  );
 
   return (
     <SafeAreaView
@@ -8654,432 +8756,19 @@ const PatientAppointmentsScreen = ({ onBack }) => {
           Appointments
         </Text>
       </View>
-      <ScrollView
-        contentContainerStyle={{
-          padding: RFValue(16),
-          paddingBottom: tabScrollBottomPadding(),
-        }}
-      >
-        {rows.length === 0 ? (
-          <View style={{ alignItems: "center", marginTop: RFValue(48) }}>
-            <Ionicons
-              name="calendar-outline"
-              size={RFValue(48)}
-              color={theme.cardBorder}
-            />
-            <Text
-              style={{
-                color: theme.textTertiary,
-                marginTop: RFValue(12),
-                textAlign: "center",
-              }}
-            >
-              No appointments yet. Tap Book Appt on Home to schedule one.
-            </Text>
-          </View>
-        ) : (
-          rows.map((appointment) => {
-            const statusKey = normalizeAppointmentStatus(appointment.statusKey);
-            const statusColors = appointmentStatusColorsFor(theme, statusKey);
-            const canConsult = appointmentStatusIsActionable(statusKey);
-            return (
-              <View
-                key={appointment.id}
-                style={{
-                  backgroundColor: theme.card,
-                  borderRadius: RFValue(16),
-                  padding: RFValue(16),
-                  marginBottom: RFValue(12),
-                  shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.06,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                  elevation: 3,
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: RFValue(16),
-                      fontWeight: "700",
-                      color: theme.textPrimary,
-                      flex: 1,
-                      marginRight: RFValue(8),
-                    }}
-                    numberOfLines={1}
-                  >
-                    {appointment.doctorName}
-                  </Text>
-                  <View
-                    style={{
-                      backgroundColor: statusColors.bg,
-                      borderRadius: RFValue(8),
-                      paddingHorizontal: RFValue(10),
-                      paddingVertical: RFValue(4),
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: statusColors.fg,
-                        fontSize: RFValue(11),
-                        fontWeight: "800",
-                      }}
-                    >
-                      {humanizeAppointmentStatus(statusKey)}
-                    </Text>
-                  </View>
-                </View>
-                <Text
-                  style={{
-                    fontSize: RFValue(13),
-                    color: theme.textSecondary,
-                    marginTop: RFValue(6),
-                  }}
-                >
-                  {formatAppointmentSummaryDate(appointment.scheduledAt)} ·{" "}
-                  {formatTimeValue(appointment.scheduledAt)}
-                </Text>
-                <Text
-                  style={{
-                    fontSize: RFValue(12),
-                    color: theme.textTertiary,
-                    marginTop: RFValue(4),
-                  }}
-                >
-                  {appointment.consultationType === "chat"
-                    ? "Chat consult"
-                    : "Video consult"}
-                </Text>
-                {appointment.reason ? (
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      marginTop: RFValue(8),
-                      lineHeight: RFValue(17),
-                    }}
-                  >
-                    <Text style={{ fontWeight: "700" }}>Reason: </Text>
-                    {appointment.reason}
-                  </Text>
-                ) : null}
-                {appointment.reply && !appointment.rescheduleProposal ? (
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      marginTop: RFValue(6),
-                      lineHeight: RFValue(17),
-                    }}
-                  >
-                    <Text style={{ fontWeight: "700" }}>Doctor note: </Text>
-                    {appointment.reply}
-                  </Text>
-                ) : null}
-                {statusKey === "ask_reschedule" && appointment.rescheduleProposal ? (
-                  <View
-                    style={{
-                      marginTop: RFValue(12),
-                      padding: RFValue(14),
-                      borderRadius: RFValue(14),
-                      borderWidth: 1,
-                      borderColor: theme.warning,
-                      backgroundColor: theme.bg,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: RFValue(13),
-                        fontWeight: "800",
-                        color: theme.textPrimary,
-                        marginBottom: RFValue(8),
-                      }}
-                    >
-                      Doctor asked to reschedule
-                    </Text>
-                    {appointment.rescheduleProposal.reason ? (
-                      <Text
-                        style={{
-                          fontSize: RFValue(12),
-                          color: theme.textSecondary,
-                          lineHeight: RFValue(18),
-                          marginBottom: RFValue(12),
-                        }}
-                      >
-                        {appointment.rescheduleProposal.reason}
-                      </Text>
-                    ) : null}
-                    <Text
-                      style={{
-                        fontSize: RFValue(11),
-                        fontWeight: "700",
-                        color: theme.textTertiary,
-                        marginBottom: RFValue(8),
-                      }}
-                    >
-                      Pick one new time (same appointment)
-                    </Text>
-                    {(appointment.rescheduleProposal.slots || []).map((slotIso) => {
-                      const selected = pickedSlotIso[appointment.id] === slotIso;
-                      const label = new Date(slotIso).toLocaleString(undefined, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      });
-                      return (
-                        <TouchableOpacity
-                          key={slotIso}
-                          onPress={() =>
-                            setPickedSlotIso((p) => ({ ...p, [appointment.id]: slotIso }))
-                          }
-                          style={{
-                            padding: RFValue(12),
-                            borderRadius: RFValue(12),
-                            marginBottom: RFValue(8),
-                            borderWidth: 2,
-                            borderColor: selected ? theme.accent : theme.cardBorder,
-                            backgroundColor: selected ? theme.accentLight : theme.card,
-                          }}
-                        >
-                          <Text style={{ fontSize: RFValue(13), fontWeight: "700", color: theme.textPrimary }}>
-                            {label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    <TouchableOpacity
-                      onPress={async () => {
-                        const iso = pickedSlotIso[appointment.id];
-                        if (!iso) {
-                          Alert.alert("Pick a time", "Choose one of the suggested slots above.");
-                          return;
-                        }
-                        try {
-                          setRescheduleBusyId(appointment.id);
-                          await applyPatientRescheduleChoice({
-                            appointmentId: appointment.id,
-                            selectedSlotIso: iso,
-                          });
-                          setPickedSlotIso((p) => {
-                            const next = { ...p };
-                            delete next[appointment.id];
-                            return next;
-                          });
-                          Alert.alert(
-                            "Updated",
-                            "Your new time was sent. The doctor will confirm this booking again.",
-                          );
-                        } catch (e) {
-                          Alert.alert("Could not update", e?.message || "Try again.");
-                        } finally {
-                          setRescheduleBusyId(null);
-                        }
-                      }}
-                      disabled={rescheduleBusyId === appointment.id || cancelBusyId === appointment.id}
-                      style={{
-                        marginTop: RFValue(6),
-                        backgroundColor: theme.accent,
-                        paddingVertical: RFValue(12),
-                        borderRadius: RFValue(12),
-                        alignItems: "center",
-                        opacity: rescheduleBusyId === appointment.id ? 0.75 : 1,
-                      }}
-                    >
-                      {rescheduleBusyId === appointment.id ? (
-                        <ActivityIndicator color="#FFF" size="small" />
-                      ) : (
-                        <Text style={{ color: "#FFF", fontWeight: "800", fontSize: RFValue(13) }}>
-                          Confirm new time
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => {
-                        Alert.alert(
-                          "Cancel appointment?",
-                          "This booking will be cancelled. You can book again later if you like.",
-                          [
-                            { text: "Keep", style: "cancel" },
-                            {
-                              text: "Cancel booking",
-                              style: "destructive",
-                              onPress: async () => {
-                                try {
-                                  setCancelBusyId(appointment.id);
-                                  await cancelAppointmentByPatient({ appointmentId: appointment.id });
-                                  setPickedSlotIso((p) => {
-                                    const next = { ...p };
-                                    delete next[appointment.id];
-                                    return next;
-                                  });
-                                } catch (e) {
-                                  Alert.alert("Could not cancel", e?.message || "Try again.");
-                                } finally {
-                                  setCancelBusyId(null);
-                                }
-                              },
-                            },
-                          ],
-                        );
-                      }}
-                      disabled={rescheduleBusyId === appointment.id || cancelBusyId === appointment.id}
-                      style={{
-                        marginTop: RFValue(10),
-                        paddingVertical: RFValue(10),
-                        alignItems: "center",
-                      }}
-                    >
-                      {cancelBusyId === appointment.id ? (
-                        <ActivityIndicator color={theme.danger} />
-                      ) : (
-                        <Text style={{ color: theme.danger, fontWeight: "800", fontSize: RFValue(13) }}>
-                          Cancel this appointment
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-                {statusKey === "pending" || statusKey === "requested" ? (
-                  <Text
-                    style={{
-                      marginTop: RFValue(10),
-                      fontSize: RFValue(12),
-                      color: "#B45309",
-                      fontWeight: "600",
-                    }}
-                  >
-                    {statusKey === "pending"
-                      ? "Pending — waiting for the doctor to review your request."
-                      : "Waiting for the doctor to approve your request."}
-                  </Text>
-                ) : null}
-                {statusKey === "rejected" ? (
-                  <Text
-                    style={{
-                      marginTop: RFValue(10),
-                      fontSize: RFValue(12),
-                      color: theme.danger,
-                      fontWeight: "600",
-                    }}
-                  >
-                    The doctor declined this request. You can book another time.
-                  </Text>
-                ) : null}
-                {statusKey === "cancelled" ? (
-                  <Text
-                    style={{
-                      marginTop: RFValue(10),
-                      fontSize: RFValue(12),
-                      color: theme.textTertiary,
-                      fontWeight: "600",
-                    }}
-                  >
-                    This appointment was cancelled.
-                  </Text>
-                ) : null}
-                {statusKey === "approved" ? (
-                  <View
-                    style={{
-                      marginTop: RFValue(10),
-                      padding: RFValue(12),
-                      borderRadius: RFValue(12),
-                      borderWidth: 1,
-                      borderColor: theme.accent,
-                      backgroundColor: theme.accentLight,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: RFValue(12),
-                        color: theme.accent,
-                        fontWeight: "700",
-                        marginBottom: RFValue(6),
-                      }}
-                    >
-                      Approved — pay the consultation fee to unlock the chat.
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: RFValue(11),
-                        color: theme.textSecondary,
-                        marginBottom: RFValue(10),
-                      }}
-                    >
-                      Fee: INR {appointment.consultationFee || 500}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => handlePayFee(appointment)}
-                      disabled={payingId === appointment.id}
-                      style={{
-                        backgroundColor: theme.accent,
-                        paddingVertical: RFValue(10),
-                        borderRadius: RFValue(10),
-                        alignItems: "center",
-                        opacity: payingId === appointment.id ? 0.7 : 1,
-                      }}
-                    >
-                      {payingId === appointment.id ? (
-                        <ActivityIndicator color="#FFF" size="small" />
-                      ) : (
-                        <Text
-                          style={{
-                            color: "#FFF",
-                            fontWeight: "800",
-                            fontSize: RFValue(12),
-                          }}
-                        >
-                          Pay fee
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-                {statusKey === "paid" ? (
-                  <Text
-                    style={{
-                      marginTop: RFValue(10),
-                      fontSize: RFValue(12),
-                      color: theme.success,
-                      fontWeight: "600",
-                    }}
-                  >
-                    Paid. Open the Messages tab to chat with your doctor.
-                  </Text>
-                ) : null}
-                {statusKey === "completed" ? (
-                  <Text
-                    style={{
-                      marginTop: RFValue(10),
-                      fontSize: RFValue(12),
-                      color: theme.success,
-                      fontWeight: "600",
-                    }}
-                  >
-                    Consultation completed — chat with your doctor stays open in
-                    the Messages tab.
-                  </Text>
-                ) : null}
-                {payError && payingId === null ? (
-                  <Text
-                    style={{
-                      marginTop: RFValue(8),
-                      fontSize: RFValue(11),
-                      color: theme.danger,
-                    }}
-                  >
-                    {payError}
-                  </Text>
-                ) : null}
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
+      <View style={{ flex: 1 }}>
+        <PatientPackageMeetingsPanel
+          theme={theme}
+          patientUserId={currentUser?.id}
+          patientProfileId={patientProfile?.id}
+          doctors={packageDoctors}
+          onOpenChatWithDoctor={handleOpenChatWithDoctor}
+          onAfterPackagePayment={handleAfterPackagePayment}
+          scrollContentBottomInset={tabScrollBottomPadding()}
+          emptyHint="None yet. Use Book Appt on Home or Package journey to schedule — everything appears here."
+          onMeetingsChanged={() => refreshAllData()}
+        />
+      </View>
     </SafeAreaView>
   );
 };
@@ -25768,10 +25457,7 @@ export default function App() {
     if (!currentUser?.id) {
       throw new Error("Please login again");
     }
-    const doctorRecordId = PB_APPOINTMENT_DOCTOR_IS_PROFILE
-      ? doctorProfileId
-      : doctorUserId;
-    if (!doctorRecordId) {
+    if (!doctorUserId) {
       throw new Error(
         PB_APPOINTMENT_DOCTOR_IS_PROFILE
           ? "Doctor profile is not available for booking."
@@ -25779,10 +25465,19 @@ export default function App() {
       );
     }
     const trimmedReason = String(reason || "").trim();
+    if (!trimmedReason) {
+      throw new Error("Please describe the reason for your visit.");
+    }
 
-    // Create / reuse a persistent patient↔doctor conversation. This is the
-    // chat thread that stays open *after* the consultation is completed,
-    // satisfying the "chat remains after consultation" launch requirement.
+    const created = await createPackageMeetingRequest({
+      patientUserId: currentUser.id,
+      doctorUserId,
+      doctorProfileId,
+      proposedAtIso: scheduledAtIso,
+      description: trimmedReason,
+      callKind: consultationType === "chat" ? "chat" : "video",
+    });
+
     let conversationId = null;
     if (doctorUserId) {
       try {
@@ -25796,116 +25491,17 @@ export default function App() {
       }
     }
 
-    const createWithPayload = async (payload) =>
-      pb.collection(PB_APPOINTMENTS_COLLECTION).create(payload);
-
-    const pocketDetail = (err) =>
-      formatPocketBaseClientError(err) ||
-      err?.data?.message ||
-      err?.response?.data?.message ||
-      err?.message ||
-      "";
-
-    // Some PocketBase setups relate `doctor` to **users**, others to
-    // **doctor_profile**. Try the configured id first, then the alternate.
-    const doctorIdCandidates = [
-      ...(PB_APPOINTMENT_DOCTOR_IS_PROFILE
-        ? [doctorProfileId, doctorUserId]
-        : [doctorUserId, doctorProfileId]),
-    ].filter((id, idx, arr) => id && arr.indexOf(id) === idx);
-
-    const buildPayloadVariants = (docId) => {
-      const consult = consultationType || "video";
-      const base = {
-        patient: currentUser.id,
-        doctor: docId,
-        scheduled_at: scheduledAtIso,
-      };
-      const withConsult = { ...base, consultation_type: consult };
-      return [
-        // Step 2 "request" flow — needs matching PocketBase select values.
-        {
-          ...withConsult,
-          status: "requested",
-          ...(trimmedReason ? { reason: trimmedReason } : {}),
-          ...(conversationId ? { conversation: conversationId } : {}),
-        },
-        // Same without optional conversation (field / rules issues).
-        {
-          ...withConsult,
-          status: "requested",
-          ...(trimmedReason ? { reason: trimmedReason } : {}),
-        },
-        // Legacy "scheduled" shape (older demos).
-        { ...withConsult, status: "scheduled" },
-        // Common alternate first state.
-        { ...withConsult, status: "pending" },
-        // No consultation_type column or wrong select values.
-        { ...base, status: "scheduled" },
-        { ...base, status: "pending" },
-        // Bare minimum (custom default status in PocketBase).
-        { ...base },
-      ];
-    };
-
-    let appointmentRecord = null;
-    let lastError = null;
-
-    outer: for (const docId of doctorIdCandidates) {
-      const variants = buildPayloadVariants(docId);
-      for (const payload of variants) {
-        try {
-          appointmentRecord = await createWithPayload(payload);
-          break outer;
-        } catch (error) {
-          lastError = error;
-          const httpStatus = error?.status ?? error?.response?.status;
-          if (httpStatus === 404) {
-            throw new Error(
-              `PocketBase 404: collection "${PB_APPOINTMENTS_COLLECTION}" was not found. Create it in Admin, or set EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION / app.json extra.pbAppointmentsCollection to your collection id/name.`,
-            );
-          }
-          if (httpStatus === 403) {
-            throw new Error(
-              pocketDetail(error) ||
-                "Permission denied: check PocketBase API rules for creating appointments (patient must be allowed to create their own record).",
-            );
-          }
-          // Only retry payload variants on validation / schema mismatch.
-          if (httpStatus !== 400) {
-            throw new Error(
-              pocketDetail(error) || "Unable to create appointment.",
-            );
-          }
-        }
-      }
-    }
-
-    if (!appointmentRecord) {
-      const hint =
-        doctorIdCandidates.length > 1
-          ? " Also try app.json → extra.pbAppointmentDoctorIsProfile: true if your `doctor` field relates to doctor_profile instead of users."
-          : "";
-      throw new Error(
-        (lastError && pocketDetail(lastError)) ||
-          `Could not save appointment (PocketBase rejected every field combination). Check: patient + doctor relations, scheduled_at (date field), status options (requested / pending / scheduled / approved), consultation_type, optional reason & conversation.${hint}`,
-      );
-    }
-
-    // Best-effort: announce the request into the shared conversation so the
-    // doctor can see it even before they look at the requests section.
-    if (conversationId && appointmentRecord) {
+    if (conversationId && created?.id && !created.localOnly) {
       try {
         const whenLabel = `${formatAppointmentSummaryDate(scheduledAtIso)} · ${formatTimeValue(
           scheduledAtIso,
         )}`;
-        const reasonSuffix = trimmedReason ? `\nReason: ${trimmedReason}` : "";
         await createEncryptedMessage(
           {
             conversation: conversationId,
             kind: "system",
           },
-          `Appointment request: ${whenLabel}.${reasonSuffix}`,
+          `Appointment request: ${whenLabel}.\nReason: ${trimmedReason}`,
         );
         await pb.collection("conversations").update(conversationId, {
           lastMessageAt: new Date().toISOString(),
@@ -25919,7 +25515,7 @@ export default function App() {
     }
 
     await refreshAllData();
-    return appointmentRecord;
+    return created;
   };
 
   const applyPatientRescheduleChoice = async ({ appointmentId, selectedSlotIso }) => {
