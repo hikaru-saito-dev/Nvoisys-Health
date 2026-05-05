@@ -81,11 +81,10 @@
       "razorpayReturnUrl": "myapp://payment/razorpay",
       "aiBaseUrl": "https://api.groq.com/openai/v1/chat/completions",
       "aiModel": "llama-3.3-70b-versatile",
-      "aiApiKey": "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",
       "eas": {
-        "projectId": "c6fe11da-a96d-4bf6-9227-1eda3aba2cc2"
+        "projectId": "201fbfb0-1888-4103-ac9d-b6eb75e741de"
       }
     },
-    "owner": "kokoshiro_dev_1"
+    "owner": "kokoshiro_dev_2"
   }
 }

@@ -16174,7 +16174,7 @@ const AppointmentBookingScreen = ({
     return (
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.bg }}
-        edges={["top", "left", "right"]}
+        edges={["left", "right"]}
       >
         <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
         <View
@@ -16433,14 +16433,13 @@ const AppointmentBookingScreen = ({
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -17002,7 +17001,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
     return (
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.bg }}
-        edges={["top", "left", "right"]}
+        edges={["left", "right"]}
       >
         <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
         <View style={{ flex: 1, minHeight: 0 }}>
@@ -17010,7 +17009,6 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             style={{
               backgroundColor: theme.card,
               padding: RFValue(20),
-              paddingTop: safeHeaderPaddingTop(),
               borderBottomWidth: 1,
               borderBottomColor: theme.cardBorder,
               flexDirection: "row",
@@ -17331,14 +17329,13 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -18543,14 +18540,16 @@ const HospitalDirectoryScreen = ({ onBack }) => {
   ];
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
       <View
         style={{
           backgroundColor: theme.card,
           paddingHorizontal: RFValue(16),
           paddingVertical: RFValue(14),
-          paddingTop: safeHeaderPaddingTop(),
           flexDirection: "row",
           alignItems: "center",
           borderBottomWidth: 1,
@@ -19391,14 +19390,16 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
       <View
         style={{
           backgroundColor: theme.card,
           paddingHorizontal: RFValue(16),
           paddingVertical: RFValue(14),
-          paddingTop: safeHeaderPaddingTop(),
           flexDirection: "row",
           alignItems: "center",
           borderBottomWidth: 1,
@@ -19787,14 +19788,16 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
   ];
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
       <View
         style={{
           backgroundColor: theme.card,
           paddingHorizontal: RFValue(16),
           paddingVertical: RFValue(14),
-          paddingTop: safeHeaderPaddingTop(),
           flexDirection: "row",
           alignItems: "center",
           borderBottomWidth: 1,
