@@ -2885,6 +2885,8 @@ const safeHeaderPaddingTop = (base = 16) => {
  * `SafeAreaView` uses `edges` without `'top'`. That way the status-bar /
  * notch region is filled by the *same* background as the header (purple,
  * white, etc.) — no separate strip of `theme.bg` above it.
+ * Do not add this on top of a parent `SafeAreaView` that already includes
+ * `'top'` in `edges` — that double-counts the inset and leaves a large gap.
  */
 const safeTopContentPadding = (insets, extraRf = 14) => {
   const insetTop = Number(insets?.top) || 0;
@@ -3717,7 +3719,6 @@ const PatientPlaceholderScreen = () => (
 
 const PatientHomeScreen = () => {
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
   const {
     appointments,
     refreshAllData,
@@ -4126,7 +4127,6 @@ const PatientHomeScreen = () => {
             style={{
               backgroundColor: theme.accent,
               padding: RFValue(24),
-              paddingTop: safeTopContentPadding(insets, 20),
               paddingBottom: RFValue(28),
               borderBottomLeftRadius: RFValue(28),
               borderBottomRightRadius: RFValue(28),
@@ -6861,7 +6861,7 @@ const PatientChatScreen = () => {
     return (
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.bg }}
-        edges={["top", "left", "right"]}
+        edges={["left", "right"]}
       >
         <StatusBar
           barStyle={theme.statusBarStyle}
@@ -6871,7 +6871,6 @@ const PatientChatScreen = () => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(16),
-            paddingTop: safeHeaderPaddingTop(),
             flexDirection: "row",
             alignItems: "center",
             borderBottomWidth: 1,
@@ -7388,7 +7387,7 @@ const PatientChatScreen = () => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
 
@@ -7397,7 +7396,6 @@ const PatientChatScreen = () => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(20),
-            paddingTop: safeHeaderPaddingTop(),
             borderBottomWidth: 1,
             borderBottomColor: theme.cardBorder,
           }}
@@ -7851,14 +7849,13 @@ const ThemeScreen = ({ onBack }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -8300,7 +8297,7 @@ const PatientEditProfileScreen = ({
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <KeyboardAvoidingView
@@ -8311,7 +8308,6 @@ const PatientEditProfileScreen = ({
           style={{
             backgroundColor: theme.card,
             padding: RFValue(20),
-            paddingTop: safeHeaderPaddingTop(),
             borderBottomWidth: 1,
             borderBottomColor: theme.cardBorder,
             flexDirection: "row",
@@ -8581,7 +8577,6 @@ const PatientEditProfileScreen = ({
 
 const PatientAppointmentsScreen = ({ onBack }) => {
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
   const tabNav = useMainTabNav();
   const {
     currentUser,
@@ -8723,14 +8718,13 @@ const PatientAppointmentsScreen = ({ onBack }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <View
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: safeTopContentPadding(insets, 14),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
           flexDirection: "row",
@@ -8801,7 +8795,6 @@ const PatientProfileScreen = ({
     patientCareMode,
     CARE_MODE,
   } = useAppData();
-  const insets = useSafeAreaInsets();
 
   const avatarUrl = patientProfileAvatarUrl(patientProfile);
   const phoneDisplay = formatPhoneForDisplay(
@@ -8844,7 +8837,6 @@ const PatientProfileScreen = ({
           style={{
             backgroundColor: theme.card,
             padding: RFValue(24),
-            paddingTop: safeTopContentPadding(insets, 14),
             alignItems: "center",
             borderBottomLeftRadius: RFValue(32),
             borderBottomRightRadius: RFValue(32),
@@ -14022,7 +14014,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle="light-content" backgroundColor={theme.accent} />
       <ScrollView
@@ -14039,7 +14031,6 @@ const DoctorDashboard = ({ wounds, patients }) => {
             borderBottomLeftRadius: RFValue(28),
             borderBottomRightRadius: RFValue(28),
             padding: RFValue(24),
-            paddingTop: safeHeaderPaddingTop(20),
             paddingBottom: RFValue(28),
           }}
         >
@@ -20201,14 +20192,13 @@ const MedicationTrackerScreen = ({ onBack }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -22184,13 +22174,11 @@ const StaffManagementScreen = () => {
 // ========================================
 
 const ModernHeader = ({ title, subtitle }) => {
-  const insets = useSafeAreaInsets();
   return (
     <View
       style={{
         backgroundColor: "#FFFFFF",
         padding: RFValue(20),
-        paddingTop: safeTopContentPadding(insets, 14),
         borderBottomWidth: 1,
         borderBottomColor: "#F3F4F6",
       }}
@@ -22257,7 +22245,7 @@ const PatientWoundScreen = () => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <ModernHeader title="Wound Tracker" subtitle="Manage your recovery" />
@@ -22514,7 +22502,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: "#FFF" }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <Modal visible={submitting} transparent animationType="fade">
         <GlassOverlay>
@@ -22967,7 +22955,7 @@ const WoundDetailScreen = ({
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <View
         style={{
@@ -23057,8 +23045,12 @@ const WoundDetailScreen = ({
         }
       >
         <ScrollView
-          style={{ flex: 1, minHeight: 0 }}
-          contentContainerStyle={{ paddingBottom: RFValue(8) }}
+          style={{ flex: 1, minHeight: 0, backgroundColor: "#F8FAFC" }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingBottom: RFValue(8),
+            backgroundColor: "#F8FAFC",
+          }}
           keyboardShouldPersistTaps="handled"
         >
           <View style={{ padding: RFValue(16) }}>
@@ -24007,14 +23999,13 @@ const DoctorWoundsScreen = () => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -24317,7 +24308,6 @@ const PHARMACY_STATUS_STEPS = [
 
 const PharmacyOrdersScreen = ({ orders }) => {
   const { updateOrderStatus, userRole } = useAppData();
-  const insets = useSafeAreaInsets();
   const [busyId, setBusyId] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -24357,14 +24347,13 @@ const PharmacyOrdersScreen = ({ orders }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: safeTopContentPadding(insets, 14),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -24380,9 +24369,12 @@ const PharmacyOrdersScreen = ({ orders }) => {
         </Text>
       </View>
       <ScrollView
+        style={{ flex: 1, backgroundColor: "#F8FAFC" }}
         contentContainerStyle={{
+          flexGrow: 1,
           padding: RFValue(16),
-          paddingBottom: RFValue(40),
+          paddingBottom: tabScrollBottomPadding() + RFValue(12),
+          backgroundColor: "#F8FAFC",
         }}
       >
         {errorMessage ? (
