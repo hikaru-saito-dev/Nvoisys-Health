@@ -1,4 +1,4 @@
-# Nvoisys Health — Remaining work (full project update)
+# Nvoisys Health - Remaining work (full project update)
 
 Use this checklist with [`IMPLEMENTATION-ROADMAP.md`](./IMPLEMENTATION-ROADMAP.md) and [`LAUNCH-FEATURES-AUDIT.md`](./LAUNCH-FEATURES-AUDIT.md).
 
@@ -6,21 +6,21 @@ Use this checklist with [`IMPLEMENTATION-ROADMAP.md`](./IMPLEMENTATION-ROADMAP.m
 
 ---
 
-## 1. Code (highest priority — roadmap exit criteria)
+## 1. Code (highest priority - roadmap exit criteria)
 
-### 1.1 Patient prescription detail — AI side-effect warnings (Step 9) — **DONE**
+### 1.1 Patient prescription detail - AI side-effect warnings (Step 9) - **DONE**
 
 Implemented in **`App.js`** → **`PrescriptionScreen`**: debounced `runSideEffectCheck` per prescription using `patientProfile`; amber banner mirrors **`PrescriptionModal`**.
 
-### 1.2 Doctor profile — edit `concerns` tags (Step 3a) — **DONE**
+### 1.2 Doctor profile - edit `concerns` tags (Step 3a) - **DONE**
 
 Implemented in **`App.js`** → **`DoctorProfileScreen`**: loads `doctor_profile`, toggles **`CONCERN_CHIP_OPTIONS`**, custom tag + **Save concerns** → `pb.collection("doctor_profile").update({ concerns })`.
 
-### 1.3 Stricter patient registration (Step 1 vs client wording) — **DONE**
+### 1.3 Stricter patient registration (Step 1 vs client wording) - **DONE**
 
 **`validatePatientHealthProfileComplete`** in **`App.js`** requires: age, weight, height, marital status, district, state, smoking, alcohol, medical conditions (allergies remain optional). Used on **patient signup** and **`PatientEditProfileScreen`** save.
 
-### 1.4 Order status naming vs roadmap (Step 6) — **DONE**
+### 1.4 Order status naming vs roadmap (Step 6) - **DONE**
 
 Canonical chain: **`pending` → `confirmed` → `out_for_delivery` → `fulfilled`**, plus **`cancelled`**. **`normalizeOrderStatus`** maps legacy **`packed` / `dispatched` / `delivered`** to the new values. **Pharmacy dashboard** “Accept & Ship” now sets **`confirmed`**. **`PharmacyOrdersScreen`** UI treats **`fulfilled`** (and legacy **`delivered`**) as completed.
 
@@ -28,7 +28,7 @@ Canonical chain: **`pending` → `confirmed` → `out_for_delivery` → `fulfill
 
 ---
 
-## 2. Configuration — `app.json` / EAS / env
+## 2. Configuration - `app.json` / EAS / env
 
 ### 2.1 AI assistant + side-effect API (Step 9)
 
@@ -37,18 +37,18 @@ Canonical chain: **`pending` → `confirmed` → `out_for_delivery` → `fulfill
 | `extra.aiBaseUrl` | **`app.json`** | Set when your backend is ready |
 | `extra.aiApiKey` | **`app.json`** | Do not commit production secrets |
 
-### 2.2 Appointment payment — beyond stub (Step 8)
+### 2.2 Appointment payment - beyond stub (Step 8)
 
 | Key | Location | Notes |
 |-----|----------|--------|
-| `extra.paymentMode` | **`app.json`** | `"stub"` works for QA; wire Stripe/Razorpay when ready |
-| `extra.stripePublishableKey` / `extra.razorpayKeyId` | **`app.json`** | Used when payment mode is enabled in code |
+| `extra.paymentMode` | **`app.json`** | `"stub"` works for QA; use `"cashfree"` for live Cashfree checkout |
+| `extra.stripePublishableKey` / `extra.cashfreeReturnUrl` | **`app.json`** | Used when payment mode is enabled in code |
 
 ### 2.3 Chat encryption key (existing feature)
 
 | Key | Typical setup |
 |-----|----------------|
-| `EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64` | See **`chatCrypto.js`** — inject at build time for production. |
+| `EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64` | See **`chatCrypto.js`** - inject at build time for production. |
 
 ---
 

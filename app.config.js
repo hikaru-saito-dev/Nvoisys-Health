@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 /**
- * Dynamic Expo config — composes the static `app.json` and injects runtime
+ * Dynamic Expo config - composes the static `app.json` and injects runtime
  * env values (AI api key) and any required native plugins.
  *
  * Expo's config loader calls this module with `({ config })`, where `config`
  * is the already-parsed `app.json`. Returning an object that spreads `config`
  * is what tells Expo (and `expo-doctor`) that the dynamic config is properly
- * extending the static one — without that hint the doctor warns that the
+ * extending the static one - without that hint the doctor warns that the
  * two files might be out of sync.
  *
  * Local dev / `eas build --local`:
@@ -22,7 +22,7 @@ const path = require("path");
 try {
   require("dotenv").config({ path: path.join(__dirname, ".env") });
 } catch {
-  // dotenv is optional — ignore resolution failures (e.g. EAS cloud build).
+  // dotenv is optional - ignore resolution failures (e.g. EAS cloud build).
 }
 
 const aiApiKeyFromEnv = String(

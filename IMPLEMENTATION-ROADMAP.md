@@ -1,4 +1,4 @@
-# Nvoisys Health — Implementation Roadmap
+# Nvoisys Health - Implementation Roadmap
 
 Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUNCH-FEATURES-AUDIT.md`](./LAUNCH-FEATURES-AUDIT.md).
 
@@ -24,11 +24,11 @@ Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUN
 | 8 | **Appointment payment** (after doctor approval) | Can ship as manual-mark first, then integrate a gateway. |
 | 9 | **AI assistant in chat + side-effect check on prescriptions** | Depends on profile fields (Step 1) and a key/endpoint you provide. |
 
-> **Already implemented (audited, nothing to do):** email verification before first access, doctor list with consultation fees, chat with doctors and pharmacies (encrypted), video + chat consultation UI, preferred date/time picker on booking, doctor prescription capture (medication name, dosage, frequency — see Step 7 for “timing” upgrade).
+> **Already implemented (audited, nothing to do):** email verification before first access, doctor list with consultation fees, chat with doctors and pharmacies (encrypted), video + chat consultation UI, preferred date/time picker on booking, doctor prescription capture (medication name, dosage, frequency - see Step 7 for “timing” upgrade).
 
 ---
 
-## Step 1 — Patient profile completeness
+## Step 1 - Patient profile completeness
 
 **Goal:** capture all fields the spec requires and make them available to downstream features.
 
@@ -42,7 +42,7 @@ Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUN
 - `smoking` (select: never, former, current, occasionally)
 - `alcohol` (select: never, occasional, regular)
 - `medical_conditions` (text, comma-separated)
-- `allergies` (text, comma-separated) — used later by AI side-effect check
+- `allergies` (text, comma-separated) - used later by AI side-effect check
 
 **App changes:**
 - Add fields to the **patient signup form** (grouped into: Basics / Lifestyle / Location / Medical).
@@ -53,14 +53,14 @@ Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUN
 
 ---
 
-## Step 2 — Appointment: reason + doctor approval + post-consultation chat
+## Step 2 - Appointment: reason + doctor approval + post-consultation chat
 
-**Goal:** match the spec — patient sends a **request** with a **reason**; doctor **approves / rejects**; only then can the patient pay / start; and the patient↔doctor chat **stays open after the consultation** is completed.
+**Goal:** match the spec - patient sends a **request** with a **reason**; doctor **approves / rejects**; only then can the patient pay / start; and the patient↔doctor chat **stays open after the consultation** is completed.
 
 **PocketBase on `appointments`:**
-- `reason` (text) — patient’s description of their issue.
+- `reason` (text) - patient’s description of their issue.
 - Update `status` select to include: `requested`, `approved`, `rejected`, `paid`, `completed`.
-- `conversation` (rel → conversations, optional) — the shared patient↔doctor conversation, persisted across the appointment lifecycle.
+- `conversation` (rel → conversations, optional) - the shared patient↔doctor conversation, persisted across the appointment lifecycle.
 
 **App changes:**
 - **Patient booking** screen: add a mandatory **Reason for visit** text input. Create with `status = "requested"`.
@@ -72,7 +72,7 @@ Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUN
 
 ---
 
-## Step 3 — Doctor search by health concern + patient prescription viewer
+## Step 3 - Doctor search by health concern + patient prescription viewer
 
 **Goal:** two small, high-visibility gaps from the audit, grouped because they’re cheap and independent of any new collection.
 
@@ -96,7 +96,7 @@ Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUN
 
 ---
 
-## Step 4 — Nearby hospitals
+## Step 4 - Nearby hospitals
 
 **Goal:** turn the empty “Nearby Hospitals” widget and the “Hospital” quick tile into a real directory.
 
@@ -112,7 +112,7 @@ Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUN
 
 ---
 
-## Step 5 — Pharmacy profile + directory
+## Step 5 - Pharmacy profile + directory
 
 **Goal:** richer pharmacy profile required by the spec (products, hours, closing days, location), and a way for patients to browse pharmacies.
 
@@ -132,9 +132,9 @@ Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUN
 
 ---
 
-## Step 6 — Order medicines
+## Step 6 - Order medicines
 
-**Goal:** let patients place medicine orders with a specific pharmacy. Per spec, **the app does not handle money or delivery** — the chat is the channel for both.
+**Goal:** let patients place medicine orders with a specific pharmacy. Per spec, **the app does not handle money or delivery** - the chat is the channel for both.
 
 **PocketBase on `orders` (extend existing):**
 - Ensure `pharmacy` (relation → UsersAuth or pharmacy_profile) is present.
@@ -153,7 +153,7 @@ Based on the **Version 1.0 launch spec** and the current gaps captured in [`LAUN
 
 ---
 
-## Step 7 — Smart prescription: structured timing + schedule + reminders + adherence
+## Step 7 - Smart prescription: structured timing + schedule + reminders + adherence
 
 **Goal:** make the doctor’s prescription capture structured enough to drive real dose timing, then turn each prescription into scheduled doses, reminders, and adherence tracking.
 
@@ -185,17 +185,17 @@ The spec explicitly requires **“Timing (before/after meals, specific times of 
 
 **App changes:**
 - On `prescribeForWound` success, expand each line into schedule rows for `duration_days` days using `times_of_day`.
-- Add **`expo-notifications`**: request permission once; schedule one local notification per dose with body like *“Take Amoxicillin 500mg — after meal”*.
+- Add **`expo-notifications`**: request permission once; schedule one local notification per dose with body like *“Take Amoxicillin 500mg - after meal”*.
 - Rewire **`MedicationTrackerScreen`**:
   - Today’s doses list, mark `taken`, auto-mark `missed` once overdue.
   - Real adherence % (7-day and 30-day).
-  - Monthly adherence report (last 30 days) — taken / missed / pending counts + per-medicine breakdown.
+  - Monthly adherence report (last 30 days) - taken / missed / pending counts + per-medicine breakdown.
 
 **Exit criteria:** Doctor can capture structured timing; prescribing creates schedule entries; device fires reminders at the right local time with the right meal hint; patient’s tracker shows real numbers; missed doses appear correctly; monthly report is accurate.
 
 ---
 
-## Step 8 — Appointment payment
+## Step 8 - Appointment payment
 
 **Goal:** the paid step between doctor approval and consultation.
 
@@ -204,7 +204,7 @@ The spec explicitly requires **“Timing (before/after meals, specific times of 
 
 **Then enable a real provider** (one of):
 - **Stripe Checkout link per doctor fee** (deep-link + return URL).
-- **Razorpay** SDK (India).
+- **Cashfree** checkout (India).
 
 Keys / URLs live in `app.json` → `extra`, already the convention in the project. Webhooks / success callbacks update `status` to `paid`.
 
@@ -212,7 +212,7 @@ Keys / URLs live in `app.json` → `extra`, already the convention in the projec
 
 ---
 
-## Step 9 — AI assistant + side-effect check
+## Step 9 - AI assistant + side-effect check
 
 **Goal:** match the AI sections of the spec, carefully, without breaking encryption.
 
@@ -237,7 +237,7 @@ Keys / URLs live in `app.json` → `extra`, already the convention in the projec
 
 - **One step per PR/change**, each independently verifiable.
 - Additive **PocketBase schema notes** in every step (field name, type, required/optional), so you can update Admin without guessing.
-- Existing screens and data stay valid — nothing removed.
+- Existing screens and data stay valid - nothing removed.
 - Where a Step needs a key/URL (payments, AI), the feature falls back to a safe stub if the config is missing.
 
 ---

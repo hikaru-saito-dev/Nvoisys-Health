@@ -1,4 +1,4 @@
-# Nvoisys Health App (Version 1.0) — Launch Features vs Codebase Audit
+# Nvoisys Health App (Version 1.0) - Launch Features vs Codebase Audit
 
 This document compares the **Version 1.0 launch feature list** against the **Nvoisys-Health** implementation (primarily `App.js` and `pocketbase.js`).  
 
@@ -13,7 +13,7 @@ This document compares the **Version 1.0 launch feature list** against the **Nvo
 
 ---
 
-## Patient — registration & profile
+## Patient - registration & profile
 
 | Launch spec | Status | Notes |
 |-------------|--------|--------|
@@ -28,7 +28,7 @@ This document compares the **Version 1.0 launch feature list** against the **Nvo
 
 ---
 
-## Patient — dashboard & core features
+## Patient - dashboard & core features
 
 | Launch spec | Status | Notes |
 |-------------|--------|--------|
@@ -73,7 +73,7 @@ This document compares the **Version 1.0 launch feature list** against the **Nvo
 | **Doctor: medication name, dosage, frequency, timing** | **Partial / implemented (doctor UI)** | `PrescriptionModal`: condition + structured lines (name, dosage, when to take, duration); persisted via PocketBase / orders / wound updates. |
 | **Auto medication schedule from prescription** | **Not implemented** | No engine building timed doses from prescription lines. |
 | **Reminders for each dose** | **Not implemented** | No push/local notification schedule from prescription data. |
-| **Track taken / missed doses** | **Not implemented** (real data) | `MedicationTrackerScreen`: `todayMeds = []`, `adherenceRate` hard-coded `0`, `weekData` **static** — UI shell/demo, not wired to prescriptions or persistence. |
+| **Track taken / missed doses** | **Not implemented** (real data) | `MedicationTrackerScreen`: `todayMeds = []`, `adherenceRate` hard-coded `0`, `weekData` **static** - UI shell/demo, not wired to prescriptions or persistence. |
 | **Monthly adherence report** | **Not implemented** | |
 
 ---
@@ -86,7 +86,7 @@ This document compares the **Version 1.0 launch feature list** against the **Nvo
 | **Pharmacy profile: location, products, hours, closing days** | **Not implemented** | `PharmacyRegisterScreen` is basic business fields; no rich storefront profile in reviewed code. |
 | **Chat with pharmacies** | **Partial** | Same directory/chat model as doctors. |
 | **Order medicines** | **Partial** | Orders tied to **wounds / prescriptions / pharmacy** in the clinical path; **not** full e-commerce storefront + checkout. |
-| **Pricing & delivery patient↔pharmacy; app non-intervention** | **Partial by omission** | No in-app payment/delivery contracts; policy is **not** codified—simply **out of scope** of current implementation. |
+| **Pricing & delivery patient↔pharmacy; app non-intervention** | **Partial by omission** | No in-app payment/delivery contracts; policy is **not** codified-simply **out of scope** of current implementation. |
 
 ---
 
@@ -94,9 +94,9 @@ This document compares the **Version 1.0 launch feature list** against the **Nvo
 
 | Area | Status | Notes |
 |------|--------|--------|
-| **Doctor signup / admin approval** | **Partial** | `doctor_profile` created with `status: pending`; app **gates** doctor data until **approved** — aligns with **moderation**, not patient **appointment approval**. |
-| **Doctor prescribing** | **Implemented** (subset of vision) | Modal, lines, PB, orders, wound status — **not** the full schedule/reminder/adherence stack. |
-| **Pharmacy operations** | **Partial** | Orders, status, chat — **not** full public discovery + catalog from spec. |
+| **Doctor signup / admin approval** | **Partial** | `doctor_profile` created with `status: pending`; app **gates** doctor data until **approved** - aligns with **moderation**, not patient **appointment approval**. |
+| **Doctor prescribing** | **Implemented** (subset of vision) | Modal, lines, PB, orders, wound status - **not** the full schedule/reminder/adherence stack. |
+| **Pharmacy operations** | **Partial** | Orders, status, chat - **not** full public discovery + catalog from spec. |
 
 ---
 
@@ -108,8 +108,8 @@ This document compares the **Version 1.0 launch feature list** against the **Nvo
 | **Dashboard** | Book flow; telemedicine entry; prescriptions (data-dependent) | Chat; “hospitals” section | Real nearby hospitals; hospital directory |
 | **Appointments** | Slot pick + create record | Doctor list / fees / search | Issue text; doctor approval; payment |
 | **Consultation** | Video/audio UI | Ongoing chat | Formal consult + payment lifecycle |
-| **AI** | — | Marketing copy only | All AI items in spec |
-| **Smart medications** | Doctor structured prescription capture | — | Schedule, reminders, real adherence, monthly report |
+| **AI** | - | Marketing copy only | All AI items in spec |
+| **Smart medications** | Doctor structured prescription capture | - | Schedule, reminders, real adherence, monthly report |
 | **Pharmacy** | Chat + order-related integrated flows | Directory “pharmacy” role | Nearby search, rich profiles, catalog, hours |
 
 ---
