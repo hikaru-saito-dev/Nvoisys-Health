@@ -17410,15 +17410,17 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [selectedConcern, setSelectedConcern] = useState(null);
-  const [selectedComfortLanguage, setSelectedComfortLanguage] = useState(
-    COMFORT_LANGUAGE_ANY,
-  );
-  const comfortLangFromProfileAppliedRef = React.useRef(false);
+  const [languageFilterText, setLanguageFilterText] = useState("");
 
   React.useEffect(() => {
-    comfortLangFromProfileAppliedRef.current = false;
-    setSelectedComfortLanguage(COMFORT_LANGUAGE_ANY);
-  }, [patientProfile?.id]);
+    const from = String(
+      patientProfile?.language ||
+        patientProfile?.preferred_language ||
+        patientProfile?.comfortable_language ||
+        "",
+    ).trim();
+    setLanguageFilterText(from);
+  }, [patientProfile?.id, patientProfile?.language]);
 
   const hasHealthFocus = !!(
     patientProfile?.primary_condition ||
@@ -17480,48 +17482,8 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
     return [...CONCERN_CHIP_OPTIONS, ...extras];
   }, [doctors]);
 
-  const comfortLanguageChips = React.useMemo(() => {
-    const byNorm = new Map();
-    const addLanguageChip = (lang) => {
-      const label = String(lang || "").trim();
-      if (!label) return;
-      const key = normalizeComfortLanguage(label);
-      if (!byNorm.has(key)) byNorm.set(key, { id: label, label });
-    };
-    doctors.forEach((doctorItem) => {
-      (doctorItem.languages || []).forEach((lang) => addLanguageChip(lang));
-    });
-    addLanguageChip(patientProfile?.language);
-    const sorted = [...byNorm.values()].sort((a, b) =>
-      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
-    );
-    return [{ id: COMFORT_LANGUAGE_ANY, label: "Any language" }, ...sorted];
-  }, [doctors, patientProfile?.language]);
-
-  React.useEffect(() => {
-    if (comfortLangFromProfileAppliedRef.current) return;
-    const raw = String(
-      patientProfile?.language ||
-        patientProfile?.preferred_language ||
-        patientProfile?.comfortable_language ||
-        "",
-    ).trim();
-    if (!raw || comfortLanguageChips.length < 2) return;
-    const match = comfortLanguageChips.find(
-      (chip) =>
-        chip.id !== COMFORT_LANGUAGE_ANY &&
-        normalizeComfortLanguage(chip.id) === normalizeComfortLanguage(raw),
-    );
-    if (match) {
-      setSelectedComfortLanguage(match.id);
-      comfortLangFromProfileAppliedRef.current = true;
-    }
-  }, [
-    comfortLanguageChips,
-    patientProfile?.preferred_language,
-    patientProfile?.comfortable_language,
-    patientProfile?.language,
-  ]);
+  const comfortLanguageFilterToken =
+    languageFilterText.trim() || COMFORT_LANGUAGE_ANY;
 
   const filteredDoctors = doctors.filter((doctorItem) => {
     const query = search.trim().toLowerCase();
@@ -17538,7 +17500,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
       !selectedConcern || doctorMatchesConcern(doctorItem, selectedConcern);
     const matchesComfortLanguage = doctorMatchesComfortLanguage(
       doctorItem,
-      selectedComfortLanguage,
+      comfortLanguageFilterToken,
     );
     return (
       matchesSearch &&
@@ -18123,63 +18085,85 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             );
           })}
         </ScrollView>
-        {comfortLanguageChips.length > 1 ? (
-          <View style={{ marginTop: RFValue(12) }}>
-            <Text
+        <View style={{ marginTop: RFValue(12) }}>
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Comfortable language
+          </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => setLanguageFilterText("")}
               style={{
-                fontSize: RFValue(12),
-                fontWeight: "700",
-                color: theme.textSecondary,
-                marginBottom: RFValue(6),
+                paddingHorizontal: RFValue(12),
+                paddingVertical: RFValue(9),
+                borderRadius: RFValue(16),
+                backgroundColor:
+                  !languageFilterText.trim() ? theme.accent : theme.accentLight,
+                marginRight: RFValue(8),
+                borderWidth: 1,
+                borderColor:
+                  !languageFilterText.trim() ? theme.accent : theme.cardBorder,
               }}
             >
-              Comfortable language
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingRight: RFValue(8) }}
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  fontWeight: "700",
+                  color: !languageFilterText.trim() ? "#FFF" : theme.accent,
+                }}
+              >
+                Any language
+              </Text>
+            </TouchableOpacity>
+            <View
+              style={{
+                flex: 1,
+                flexDirection: "row",
+                alignItems: "center",
+                backgroundColor: theme.bg,
+                borderRadius: RFValue(12),
+                paddingHorizontal: RFValue(12),
+                borderWidth: 1,
+                borderColor: theme.cardBorder,
+                minWidth: 0,
+              }}
             >
-              {comfortLanguageChips.map((chip) => {
-                const active = selectedComfortLanguage === chip.id;
-                return (
-                  <TouchableOpacity
-                    key={chip.id}
-                    onPress={() => {
-                      if (chip.id === COMFORT_LANGUAGE_ANY) {
-                        setSelectedComfortLanguage(COMFORT_LANGUAGE_ANY);
-                        return;
-                      }
-                      setSelectedComfortLanguage(
-                        active ? COMFORT_LANGUAGE_ANY : chip.id,
-                      );
-                    }}
-                    style={{
-                      paddingHorizontal: RFValue(12),
-                      paddingVertical: RFValue(7),
-                      borderRadius: RFValue(16),
-                      backgroundColor: active ? theme.accent : theme.accentLight,
-                      marginRight: RFValue(8),
-                      borderWidth: 1,
-                      borderColor: active ? theme.accent : theme.cardBorder,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: RFValue(12),
-                        fontWeight: "700",
-                        color: active ? "#FFF" : theme.accent,
-                      }}
-                      numberOfLines={1}
-                    >
-                      {chip.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+              <Ionicons
+                name="chatbubble-ellipses-outline"
+                size={RFValue(16)}
+                color={theme.textTertiary}
+                style={{ marginRight: RFValue(6) }}
+              />
+              <TextInput
+                placeholder="Type language, e.g. Hindi, Tamil"
+                placeholderTextColor={theme.textTertiary}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  paddingVertical: RFValue(9),
+                  fontSize: RFValue(13),
+                  color: theme.textPrimary,
+                }}
+                value={languageFilterText}
+                onChangeText={setLanguageFilterText}
+                autoCorrect={false}
+                autoCapitalize="none"
+                returnKeyType="search"
+              />
+            </View>
           </View>
-        ) : null}
+        </View>
       </View>
 
       <ScrollView
@@ -18229,17 +18213,17 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 textAlign: "center",
               }}
             >
-              {selectedComfortLanguage !== COMFORT_LANGUAGE_ANY
-                ? "No doctors list that language yet. Try “Any language”, another language, or clear other filters."
+              {languageFilterText.trim()
+                ? "No doctors list that language yet. Clear the language field, try different spelling, or relax other filters."
                 : selectedConcern
                   ? "No doctors match this health concern yet. Try another chip or clear the filter."
                   : hasHealthFocus && !showAllDoctors
                     ? "No doctors matched your health profile yet. Try showing all doctors or adjust search."
                     : "No doctors match your filters. Try another specialty or clear search."}
             </Text>
-            {selectedComfortLanguage !== COMFORT_LANGUAGE_ANY ? (
+            {languageFilterText.trim() ? (
               <TouchableOpacity
-                onPress={() => setSelectedComfortLanguage(COMFORT_LANGUAGE_ANY)}
+                onPress={() => setLanguageFilterText("")}
                 style={{ marginTop: RFValue(12) }}
               >
                 <Text
