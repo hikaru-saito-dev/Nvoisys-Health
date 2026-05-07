@@ -2263,6 +2263,20 @@ const mapDoctorListingRecord = (record) => {
     packageTemplatesRawFromRecord(record),
   );
   const packagesSetupComplete = doctorProfilePackageFeesReady(record);
+  const languageBuckets = [
+    ...parseStringArray(record.languages || record.spoken_languages),
+    ...parseStringArray(record.language),
+  ];
+  const languagesMerged = [];
+  const languageKeysSeen = new Set();
+  for (const rawLang of languageBuckets) {
+    const piece = String(rawLang || "").trim();
+    if (!piece) continue;
+    const dedupeKey = piece.toLowerCase();
+    if (languageKeysSeen.has(dedupeKey)) continue;
+    languageKeysSeen.add(dedupeKey);
+    languagesMerged.push(piece);
+  }
   return {
     profileId: record.id,
     userId,
@@ -2281,7 +2295,7 @@ const mapDoctorListingRecord = (record) => {
     bio: record.bio || record.about || "",
     clinicOrHospital:
       record.clinic_or_hospital || record.workplace || record.hospital || "",
-    languages: safeArray(record.languages),
+    languages: languagesMerged,
     concerns,
     avatarUrl,
     raw: record,
@@ -2323,6 +2337,32 @@ const doctorMatchesPatientHealthFocus = (doctor, patientProfile) => {
     .split(/\s+/)
     .filter((word) => word.length > 2)
     .some((word) => haystack.includes(word));
+};
+
+const COMFORT_LANGUAGE_ANY = "__any__";
+
+const normalizeComfortLanguage = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+
+// Patient-selected comfortable language: keep only doctors who listed that
+// language on their profile. Doctors with no languages are hidden when a
+// specific language is selected.
+const doctorMatchesComfortLanguage = (doctor, filterToken) => {
+  if (!filterToken || filterToken === COMFORT_LANGUAGE_ANY) return true;
+  const want = normalizeComfortLanguage(filterToken);
+  if (!want) return true;
+  const spoken = (doctor.languages || [])
+    .map((lang) => normalizeComfortLanguage(lang))
+    .filter(Boolean);
+  if (!spoken.length) return false;
+  return spoken.some((lang) => {
+    if (lang === want) return true;
+    if (lang.length < 3 || want.length < 3) return false;
+    return lang.includes(want) || want.includes(lang);
+  });
 };
 
 // Generic helper that tries to read a JSON-ish value (array/object) off a
@@ -8167,6 +8207,7 @@ const PatientEditProfileScreen = ({
   const [gender, setGender] = useState("");
   const [avatarAsset, setAvatarAsset] = useState(null);
   const [healthValues, setHealthValues] = useState(emptyPatientHealthValues);
+  const [comfortLanguage, setComfortLanguage] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -8186,6 +8227,7 @@ const PatientEditProfileScreen = ({
     );
     setGender(String(patientProfile?.gender || "").trim());
     setHealthValues(patientHealthValuesFromProfile(patientProfile));
+    setComfortLanguage(String(patientProfile?.language || "").trim());
     setAvatarAsset(null);
     setError("");
   }, [patientProfile?.id, currentUser?.id]);
@@ -8252,6 +8294,7 @@ const PatientEditProfileScreen = ({
         phone: phone.trim(),
         primary_condition: condition.trim(),
         gender: gender.trim(),
+        language: comfortLanguage.trim(),
         ...buildPatientHealthPayload(healthValues),
       });
       if (currentUser?.id) {
@@ -8284,7 +8327,7 @@ const PatientEditProfileScreen = ({
       setError(
         saveError?.data?.message ||
           saveError?.message ||
-          "Could not save. Required patient_profile fields in PocketBase: full_name, phone, primary_condition, gender, avatar, plus optional: age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies.",
+          "Could not save. Required patient_profile fields in PocketBase: full_name, phone, primary_condition, gender, avatar, plus optional: language, age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies.",
       );
     } finally {
       setSaving(false);
@@ -8419,6 +8462,12 @@ const PatientEditProfileScreen = ({
               value: condition,
               onChange: setCondition,
               placeholder: "Helps match you with the right doctors",
+            },
+            {
+              label: "Comfortable consultation language",
+              value: comfortLanguage,
+              onChange: setComfortLanguage,
+              placeholder: "e.g. English, Hindi, Tamil",
             },
           ].map((field) => (
             <View key={field.label} style={{ marginBottom: RFValue(16) }}>
@@ -9664,7 +9713,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
                   <View style={{ width: RFValue(36) }} />
                 )}
                 <TouchableOpacity
-                  onPress={onNext}
+                  onPress={() => onNext("")}
                   style={{
                     paddingHorizontal: RFValue(16),
                     paddingVertical: RFValue(6),
@@ -9757,7 +9806,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
                 shadowRadius: 12,
                 elevation: 4,
               }}
-              onPress={onNext}
+              onPress={() => onNext(selectedLanguage)}
             >
               <Text
                 style={{
@@ -11794,6 +11843,7 @@ const AuthScreen = ({ onLogin }) => {
   }, []);
   const [doctorSpecialtyField, setDoctorSpecialtyField] = useState("");
   const [doctorClinic, setDoctorClinic] = useState("");
+  const [registrationLanguage, setRegistrationLanguage] = useState("");
 
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
@@ -11955,11 +12005,17 @@ const AuthScreen = ({ onLogin }) => {
                   gender: patientGender,
                   avatarAsset: patientRegAvatar,
                   ...buildPatientHealthPayload(patientHealthValues),
+                  ...(registrationLanguage.trim()
+                    ? { language: registrationLanguage.trim() }
+                    : {}),
                 }
               : role === "doctor"
                 ? {
                     specialty: doctorSpecialtyField.trim(),
                     clinic_or_hospital: doctorClinic.trim(),
+                    ...(registrationLanguage.trim()
+                      ? { language: registrationLanguage.trim() }
+                      : {}),
                   }
                 : {},
         });
@@ -12066,7 +12122,13 @@ const AuthScreen = ({ onLogin }) => {
 
   if (step === "LANG") {
     return (
-      <LanguageScreen onNext={() => setStep("CAROUSEL")} onBack={() => {}} />
+      <LanguageScreen
+        onNext={(pickedLanguage) => {
+          setRegistrationLanguage(String(pickedLanguage || "").trim());
+          setStep("CAROUSEL");
+        }}
+        onBack={() => {}}
+      />
     );
   }
 
@@ -14886,6 +14948,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
   const [savingConcerns, setSavingConcerns] = useState(false);
   const [concernsError, setConcernsError] = useState("");
   const [concernsSavedFlash, setConcernsSavedFlash] = useState(false);
+  const [doctorConsultLanguage, setDoctorConsultLanguage] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -14901,6 +14964,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
         if (!active || !record) return;
         setDoctorProfileId(record.id);
         setDoctorRow(record);
+        setDoctorConsultLanguage(String(record.language || "").trim());
         setConcerns(
           parseDoctorConcerns(record.concerns || record.health_concerns),
         );
@@ -14949,7 +15013,13 @@ const DoctorProfileScreen = ({ onLogout }) => {
     try {
       await pb.collection("doctor_profile").update(doctorProfileId, {
         concerns,
+        language: doctorConsultLanguage.trim(),
       });
+      setDoctorRow((prev) =>
+        prev
+          ? { ...prev, language: doctorConsultLanguage.trim() }
+          : prev,
+      );
       setConcernsSavedFlash(true);
       setTimeout(() => setConcernsSavedFlash(false), 2200);
       if (typeof refreshAllData === "function") {
@@ -14959,7 +15029,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
       setConcernsError(
         saveError?.data?.message ||
           saveError?.message ||
-          "Could not save. Ensure PocketBase has a JSON field `concerns` on doctor_profile.",
+          "Could not save. Ensure PocketBase has a JSON field `concerns` and optional text `language` on doctor_profile.",
       );
     } finally {
       setSavingConcerns(false);
@@ -15214,6 +15284,44 @@ const DoctorProfileScreen = ({ onLogout }) => {
                     Selected: {concerns.join(", ")}
                   </Text>
                 ) : null}
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    fontWeight: "700",
+                    color: "#6B7280",
+                    marginTop: RFValue(14),
+                    marginBottom: RFValue(6),
+                  }}
+                >
+                  Languages you consult in
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    color: "#6B7280",
+                    marginBottom: RFValue(8),
+                  }}
+                >
+                  Patients can filter Find Doctor by this. Use the same wording
+                  you chose at signup (e.g. English) or list several separated
+                  by commas.
+                </Text>
+                <TextInput
+                  value={doctorConsultLanguage}
+                  onChangeText={setDoctorConsultLanguage}
+                  placeholder="e.g. English or English, Hindi"
+                  placeholderTextColor="#9CA3AF"
+                  style={{
+                    borderWidth: 1,
+                    borderColor: "#E5E7EB",
+                    borderRadius: RFValue(12),
+                    paddingHorizontal: RFValue(12),
+                    paddingVertical: RFValue(10),
+                    fontSize: RFValue(14),
+                    color: "#1E1B4B",
+                    marginBottom: RFValue(4),
+                  }}
+                />
                 {concernsError ? (
                   <Text
                     style={{
@@ -15255,7 +15363,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
                       fontSize: RFValue(14),
                     }}
                   >
-                    {savingConcerns ? "Saving…" : "Save concerns"}
+                    {savingConcerns ? "Saving…" : "Save for patient search"}
                   </Text>
                 </TouchableOpacity>
               </>
@@ -16907,6 +17015,16 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [selectedConcern, setSelectedConcern] = useState(null);
+  const [selectedComfortLanguage, setSelectedComfortLanguage] = useState(
+    COMFORT_LANGUAGE_ANY,
+  );
+  const comfortLangFromProfileAppliedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    comfortLangFromProfileAppliedRef.current = false;
+    setSelectedComfortLanguage(COMFORT_LANGUAGE_ANY);
+  }, [patientProfile?.id]);
+
   const hasHealthFocus = !!(
     patientProfile?.primary_condition ||
     patientProfile?.condition ||
@@ -16967,6 +17085,49 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
     return [...CONCERN_CHIP_OPTIONS, ...extras];
   }, [doctors]);
 
+  const comfortLanguageChips = React.useMemo(() => {
+    const byNorm = new Map();
+    const addLanguageChip = (lang) => {
+      const label = String(lang || "").trim();
+      if (!label) return;
+      const key = normalizeComfortLanguage(label);
+      if (!byNorm.has(key)) byNorm.set(key, { id: label, label });
+    };
+    doctors.forEach((doctorItem) => {
+      (doctorItem.languages || []).forEach((lang) => addLanguageChip(lang));
+    });
+    addLanguageChip(patientProfile?.language);
+    const sorted = [...byNorm.values()].sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
+    return [{ id: COMFORT_LANGUAGE_ANY, label: "Any language" }, ...sorted];
+  }, [doctors, patientProfile?.language]);
+
+  React.useEffect(() => {
+    if (comfortLangFromProfileAppliedRef.current) return;
+    const raw = String(
+      patientProfile?.language ||
+        patientProfile?.preferred_language ||
+        patientProfile?.comfortable_language ||
+        "",
+    ).trim();
+    if (!raw || comfortLanguageChips.length < 2) return;
+    const match = comfortLanguageChips.find(
+      (chip) =>
+        chip.id !== COMFORT_LANGUAGE_ANY &&
+        normalizeComfortLanguage(chip.id) === normalizeComfortLanguage(raw),
+    );
+    if (match) {
+      setSelectedComfortLanguage(match.id);
+      comfortLangFromProfileAppliedRef.current = true;
+    }
+  }, [
+    comfortLanguageChips,
+    patientProfile?.preferred_language,
+    patientProfile?.comfortable_language,
+    patientProfile?.language,
+  ]);
+
   const filteredDoctors = doctors.filter((doctorItem) => {
     const query = search.trim().toLowerCase();
     const matchesSearch =
@@ -16980,8 +17141,16 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
       doctorMatchesPatientHealthFocus(doctorItem, patientProfile);
     const matchesConcern =
       !selectedConcern || doctorMatchesConcern(doctorItem, selectedConcern);
+    const matchesComfortLanguage = doctorMatchesComfortLanguage(
+      doctorItem,
+      selectedComfortLanguage,
+    );
     return (
-      matchesSearch && matchesCategory && matchesHealthFocus && matchesConcern
+      matchesSearch &&
+      matchesCategory &&
+      matchesHealthFocus &&
+      matchesConcern &&
+      matchesComfortLanguage
     );
   });
 
@@ -17112,6 +17281,34 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
               >
                 {doctorItem.specialty}
               </Text>
+              {(doctorItem.languages || []).length > 0 ? (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginTop: RFValue(8),
+                    paddingHorizontal: RFValue(8),
+                  }}
+                >
+                  <Ionicons
+                    name="chatbubbles-outline"
+                    size={RFValue(14)}
+                    color={theme.textTertiary}
+                  />
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textTertiary,
+                      marginLeft: RFValue(6),
+                      flexShrink: 1,
+                      textAlign: "center",
+                    }}
+                  >
+                    {(doctorItem.languages || []).join(" · ")}
+                  </Text>
+                </View>
+              ) : null}
               {doctorItem.clinicOrHospital ? (
                 <View
                   style={{
@@ -17531,6 +17728,63 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             );
           })}
         </ScrollView>
+        {comfortLanguageChips.length > 1 ? (
+          <View style={{ marginTop: RFValue(12) }}>
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                fontWeight: "700",
+                color: theme.textSecondary,
+                marginBottom: RFValue(6),
+              }}
+            >
+              Comfortable language
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingRight: RFValue(8) }}
+            >
+              {comfortLanguageChips.map((chip) => {
+                const active = selectedComfortLanguage === chip.id;
+                return (
+                  <TouchableOpacity
+                    key={chip.id}
+                    onPress={() => {
+                      if (chip.id === COMFORT_LANGUAGE_ANY) {
+                        setSelectedComfortLanguage(COMFORT_LANGUAGE_ANY);
+                        return;
+                      }
+                      setSelectedComfortLanguage(
+                        active ? COMFORT_LANGUAGE_ANY : chip.id,
+                      );
+                    }}
+                    style={{
+                      paddingHorizontal: RFValue(12),
+                      paddingVertical: RFValue(7),
+                      borderRadius: RFValue(16),
+                      backgroundColor: active ? theme.accent : theme.accentLight,
+                      marginRight: RFValue(8),
+                      borderWidth: 1,
+                      borderColor: active ? theme.accent : theme.cardBorder,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: RFValue(12),
+                        fontWeight: "700",
+                        color: active ? "#FFF" : theme.accent,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {chip.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
       </View>
 
       <ScrollView
@@ -17580,12 +17834,30 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 textAlign: "center",
               }}
             >
-              {selectedConcern
-                ? "No doctors match this health concern yet. Try another chip or clear the filter."
-                : hasHealthFocus && !showAllDoctors
-                  ? "No doctors matched your health profile yet. Try showing all doctors or adjust search."
-                  : "No doctors match your filters. Try another specialty or clear search."}
+              {selectedComfortLanguage !== COMFORT_LANGUAGE_ANY
+                ? "No doctors list that language yet. Try “Any language”, another language, or clear other filters."
+                : selectedConcern
+                  ? "No doctors match this health concern yet. Try another chip or clear the filter."
+                  : hasHealthFocus && !showAllDoctors
+                    ? "No doctors matched your health profile yet. Try showing all doctors or adjust search."
+                    : "No doctors match your filters. Try another specialty or clear search."}
             </Text>
+            {selectedComfortLanguage !== COMFORT_LANGUAGE_ANY ? (
+              <TouchableOpacity
+                onPress={() => setSelectedComfortLanguage(COMFORT_LANGUAGE_ANY)}
+                style={{ marginTop: RFValue(12) }}
+              >
+                <Text
+                  style={{
+                    fontSize: RFValue(14),
+                    fontWeight: "700",
+                    color: theme.accent,
+                  }}
+                >
+                  Clear language filter
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             {selectedConcern ? (
               <TouchableOpacity
                 onPress={() => setSelectedConcern(null)}
@@ -17715,6 +17987,21 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 >
                   INR {doctorItem.fee} consult
                 </Text>
+                {(doctorItem.languages || []).length > 0 ? (
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: theme.textTertiary,
+                      marginTop: RFValue(4),
+                    }}
+                    numberOfLines={1}
+                  >
+                    Speaks: {(doctorItem.languages || []).slice(0, 3).join(", ")}
+                    {(doctorItem.languages || []).length > 3
+                      ? ` +${(doctorItem.languages || []).length - 3}`
+                      : ""}
+                  </Text>
+                ) : null}
                 {(doctorItem.concerns || []).length > 0 ? (
                   <View
                     style={{

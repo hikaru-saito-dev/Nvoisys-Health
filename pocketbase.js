@@ -275,7 +275,8 @@ function compactProfileFields(fields) {
  *   Optional (Launch v1.0):  age (number), weight_kg (number), height_cm (number),
  *                            marital_status (text/select), district (text), state (text),
  *                            smoking (text/select), alcohol (text/select),
- *                            medical_conditions (text), allergies (text)
+ *                            medical_conditions (text), allergies (text),
+ *                            language (text — comfortable consultation language)
  *   Product spec: care_mode (text/select: package_doctor | casual | not_planning),
  *                  preferred_quick_doctor / preferred_quick_provider (relation → UsersAuth, optional)
  * Avatar is uploaded after create in signUpWithEmail (file field).
@@ -317,6 +318,7 @@ async function createPatientProfileRecord(userId, merged) {
     "alcohol",
     "medical_conditions",
     "allergies",
+    "language",
   ];
   for (const key of textFields) {
     const value = String(merged[key] || "").trim();
@@ -354,13 +356,17 @@ async function createPatientProfileRecord(userId, merged) {
 async function createDoctorProfileRecord(userId, merged) {
   const specialty = String(merged.specialty || "").trim();
   const clinic_or_hospital = String(merged.clinic_or_hospital || "").trim();
+  const language = String(merged.language || "").trim();
 
-  return await pb.collection("doctor_profile").create({
+  const payload = {
     user: userId,
     status: "pending",
     specialty,
     clinic_or_hospital,
-  });
+  };
+  if (language) payload.language = language;
+
+  return await pb.collection("doctor_profile").create(payload);
 }
 
 /**
