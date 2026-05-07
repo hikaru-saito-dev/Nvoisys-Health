@@ -136,6 +136,109 @@ function isEmailVerified(user) {
   return Boolean(user?.verified);
 }
 
+const LOGIN_HOLD_STORAGE_PREFIX = "login_hold:";
+const LOGIN_FAILURE_WINDOW_MS = 5 * 60 * 1000;
+const LOGIN_HOLD_MS = 20 * 60 * 1000;
+const LOGIN_FAILURE_LIMIT = 5;
+
+function getLoginHoldStorageKey(email) {
+  return `${LOGIN_HOLD_STORAGE_PREFIX}${String(email || "").trim().toLowerCase()}`;
+}
+
+function formatHoldRemaining(untilMs) {
+  const remainingMinutes = Math.max(1, Math.ceil((untilMs - Date.now()) / 60000));
+  return `${remainingMinutes} minute${remainingMinutes === 1 ? "" : "s"}`;
+}
+
+function buildLoginHoldError(untilMs) {
+  const error = new Error(
+    `Too many login attempts. This account is on hold for about ${formatHoldRemaining(untilMs)}. Please try again later.`,
+  );
+  error.code = "LOGIN_ACCOUNT_HOLD";
+  error.holdUntil = untilMs;
+  return error;
+}
+
+async function readLoginHoldState(email) {
+  if (!email) return { attempts: [], lockedUntil: 0 };
+
+  try {
+    const raw = await AsyncStorage.getItem(getLoginHoldStorageKey(email));
+    if (!raw) return { attempts: [], lockedUntil: 0 };
+    const parsed = JSON.parse(raw);
+    return {
+      attempts: Array.isArray(parsed?.attempts) ? parsed.attempts : [],
+      lockedUntil: Number(parsed?.lockedUntil || 0),
+    };
+  } catch (_) {
+    return { attempts: [], lockedUntil: 0 };
+  }
+}
+
+async function writeLoginHoldState(email, state) {
+  if (!email) return;
+  await AsyncStorage.setItem(getLoginHoldStorageKey(email), JSON.stringify(state));
+}
+
+async function clearLoginHoldState(email) {
+  if (!email) return;
+  try {
+    await AsyncStorage.removeItem(getLoginHoldStorageKey(email));
+  } catch (_) {
+    // ignore
+  }
+}
+
+async function assertLoginNotOnHold(email) {
+  const state = await readLoginHoldState(email);
+  const now = Date.now();
+
+  if (state.lockedUntil > now) {
+    throw buildLoginHoldError(state.lockedUntil);
+  }
+
+  if (state.lockedUntil || state.attempts.length) {
+    const attempts = state.attempts.filter(
+      (attemptMs) => now - Number(attemptMs) <= LOGIN_FAILURE_WINDOW_MS,
+    );
+    if (attempts.length) {
+      await writeLoginHoldState(email, { attempts, lockedUntil: 0 });
+    } else {
+      await clearLoginHoldState(email);
+    }
+  }
+}
+
+function isCredentialFailure(error) {
+  const status =
+    typeof error?.status === "number"
+      ? error.status
+      : typeof error?.response?.status === "number"
+        ? error.response.status
+        : null;
+  return status === 400 || status === 401;
+}
+
+async function recordLoginFailure(email) {
+  const now = Date.now();
+  const state = await readLoginHoldState(email);
+  const attempts = state.attempts
+    .map((attemptMs) => Number(attemptMs))
+    .filter((attemptMs) => Number.isFinite(attemptMs))
+    .filter((attemptMs) => now - attemptMs <= LOGIN_FAILURE_WINDOW_MS);
+
+  attempts.push(now);
+
+  if (attempts.length >= LOGIN_FAILURE_LIMIT) {
+    const lockedUntil = now + LOGIN_HOLD_MS;
+    await writeLoginHoldState(email, { attempts: [], lockedUntil });
+    return buildLoginHoldError(lockedUntil);
+  }
+
+  await writeLoginHoldState(email, { attempts, lockedUntil: 0 });
+  return null;
+}
+
 function buildEmailVerificationRequiredError(email = "") {
   const normalizedEmail = String(email || "").trim();
   const targetSuffix = normalizedEmail ? ` for ${normalizedEmail}` : "";
@@ -594,9 +697,22 @@ export async function signUpWithEmail({
 export async function loginWithEmail({ email, password, selectedRole }) {
   const normalizedEmail = (email || "").trim().toLowerCase();
 
-  const authData = await pb
-    .collection("UsersAuth")
-    .authWithPassword(normalizedEmail, password);
+  await assertLoginNotOnHold(normalizedEmail);
+
+  let authData;
+  try {
+    authData = await pb
+      .collection("UsersAuth")
+      .authWithPassword(normalizedEmail, password);
+  } catch (error) {
+    if (isCredentialFailure(error)) {
+      const holdError = await recordLoginFailure(normalizedEmail);
+      if (holdError) throw holdError;
+    }
+    throw error;
+  }
+
+  await clearLoginHoldState(normalizedEmail);
 
   if (!getAuthUser() && authData?.token && authData?.record) {
     pb.authStore.save(authData.token, authData.record);
