@@ -32,7 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 // ──────────────────────────────────────────────────────────────────────────
 // Module-level event bus.
 //
-// We deliberately avoid React context here — the public `notify(...)` helper
+// We deliberately avoid React context here - the public `notify(...)` helper
 // must be callable from non-component scopes (api files, Alert.alert override,
 // catch blocks, etc.) without dragging providers through.
 // ──────────────────────────────────────────────────────────────────────────

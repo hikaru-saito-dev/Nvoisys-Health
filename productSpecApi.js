@@ -24,17 +24,17 @@ export function doctorTierEligibleForPackageMode(tier) {
   return t === "professional" || t === "specialist";
 }
 
-/** Three fixed catalogue slots — only `total_amount_inr` is doctor-editable; rest is app-defined. */
+/** Three fixed catalogue slots - only `total_amount_inr` is doctor-editable; rest is app-defined. */
 export const DOCTOR_PACKAGE_SLOT_IDS = [1, 2, 3];
 
 /**
- * App-controlled package copy & features (doctors cannot change these — only their fee).
+ * App-controlled package copy & features (doctors cannot change these - only their fee).
  * Update this list when product adds/removes features per tier.
  */
 export const FIXED_PACKAGE_DEFINITIONS = [
   {
     slot: 1,
-    name: "Package 1 — Essential Care",
+    name: "Package 1 - Essential Care",
     total_period: "90 days",
     treatment_type: "Structured follow-up & remote support",
     description:
@@ -48,7 +48,7 @@ export const FIXED_PACKAGE_DEFINITIONS = [
   },
   {
     slot: 2,
-    name: "Package 2 — Active Care",
+    name: "Package 2 - Active Care",
     total_period: "120 days",
     treatment_type: "Ongoing condition management",
     description:
@@ -63,7 +63,7 @@ export const FIXED_PACKAGE_DEFINITIONS = [
   },
   {
     slot: 3,
-    name: "Package 3 — Comprehensive Care",
+    name: "Package 3 - Comprehensive Care",
     total_period: "180 days",
     treatment_type: "High-touch / complex care paths",
     description:
@@ -357,7 +357,7 @@ export async function persistPatientCareMode({ profileId, userId, mode }) {
     });
   } catch (error) {
     console.log(
-      "persistPatientCareMode: server may lack care_mode field —",
+      "persistPatientCareMode: server may lack care_mode field -",
       error?.message || error,
     );
   }
@@ -461,7 +461,7 @@ export function packageMeetingStatusLabel(status) {
     case PACKAGE_MEETING_STATUS.CONFIRMED:
       return "Confirmed";
     default:
-      return status || "—";
+      return status || "-";
   }
 }
 
@@ -469,7 +469,7 @@ export function packageMeetingStatusLabel(status) {
  * Doctor home buckets (product spec PDF + meeting negotiation):
  * - pending: patient booked; doctor has not completed first accept/reschedule step.
  * - discussing: reschedule / alternate-slot negotiation in progress.
- * - confirmed_demo: demo time confirmed — doctor should use “Send package options” after the call.
+ * - confirmed_demo: demo time confirmed - doctor should use “Send package options” after the call.
  * - closed: declined / cancelled (terminal).
  */
 export function packageMeetingDoctorListBucket(meeting) {
@@ -738,7 +738,7 @@ function decodeWorkflowFromDescription(full, fallback = {}) {
 }
 
 /**
- * Full meeting workflow from an `appointments` row — prefers `workflow_json`
+ * Full meeting workflow from an `appointments` row - prefers `workflow_json`
  * over parsing `reason` only. Doctor update paths must use this (not
  * `decodeWorkflowFromDescription(reason)` alone) or patient/doctor auth ids
  * embedded in JSON can be lost when `reason` is truncated or out of sync.
@@ -793,8 +793,9 @@ export function decodePackageMeetingFromPbRow(row) {
     confirmed_at: workflow.confirmed_at || null,
     scheduled_at: row.scheduled_at || null,
     call_kind: row.consultation_type || row.call_kind || "video",
+    consultation_fee: Number(row.consultation_fee ?? row.fee ?? 500) || 500,
     updated_at: row.updated || row.created || new Date().toISOString(),
-    /** PocketBase `created` — ignore older package_offers from prior demos with the same doctor. */
+    /** PocketBase `created` - ignore older package_offers from prior demos with the same doctor. */
     appointment_created: row.created ? String(row.created) : "",
     package_offer_id: String(workflow.package_offer_id || "").trim() || null,
     package_request_label: String(workflow.package_request_label || "").trim() || null,
@@ -1126,8 +1127,8 @@ export async function createPackageMeetingRequest({
   if (!doctorCandidates.length) {
     throw new Error(
       isPbAppointmentDoctorProfileRelation()
-        ? "Doctor profile id missing — cannot book (doctor relation is doctor_profile)."
-        : "Doctor id missing — cannot book.",
+        ? "Doctor profile id missing - cannot book (doctor relation is doctor_profile)."
+        : "Doctor id missing - cannot book.",
     );
   }
   const coll = appointmentsColl();
@@ -1195,7 +1196,7 @@ export async function createPackageMeetingRequest({
         if (httpStatus === 403) {
           throw new Error(
             formatPocketBaseClientError(e) ||
-              "Permission denied creating appointment — check PocketBase API rules.",
+              "Permission denied creating appointment - check PocketBase API rules.",
           );
         }
         if (httpStatus === 404) break outer;
@@ -1226,7 +1227,7 @@ export async function createPackageMeetingRequest({
     await upsertLocalMeeting(meeting);
     await notifyLocal(
       "Meeting saved on device",
-      "Could not reach PocketBase appointments — stored on this device only.",
+      "Could not reach PocketBase appointments - stored on this device only.",
     );
     return meeting;
   }
@@ -1385,7 +1386,7 @@ export async function patientChooseRescheduleSlot(meetingId, chosenIso) {
         {
           at: new Date().toISOString(),
           role: "patient",
-          text: `Selected ${pick.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} — please confirm.`,
+          text: `Selected ${pick.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} - please confirm.`,
         },
       ];
       return {
@@ -1418,7 +1419,7 @@ export async function patientChooseRescheduleSlot(meetingId, chosenIso) {
   next = pushMessage(
     next,
     "patient",
-    `Selected ${pick.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} — please confirm.`,
+    `Selected ${pick.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} - please confirm.`,
   );
   await cancelPackageMeetingReminder(meetingId);
   return persistMeetingRow(meetingId, next, pick.toISOString(), row.consultation_type || "video");
@@ -1497,7 +1498,7 @@ export async function doctorSendPackageOffer({
     const row = await pb.collection("package_offers").create(payload);
     await notifyLocal(
       "Package options sent",
-      `${title} — the patient can open Package Doctor → Package offers and tap Pay now.`,
+      `${title} - the patient can open Package Doctor → Package offers and tap Pay now.`,
     );
     return row;
   } catch (error) {
@@ -1581,7 +1582,7 @@ async function resolveAuthUserIdForRelationId(profileCollection, relationIdValue
   }
 }
 
-/** Plain object for UI — avoids RecordModel quirks in React state. */
+/** Plain object for UI - avoids RecordModel quirks in React state. */
 function normalizePackageOfferRecord(r) {
   if (!r) return null;
   const src = typeof r.toJSON === "function" ? r.toJSON() : { ...r };
@@ -1604,7 +1605,7 @@ function normalizePackageOfferRecord(r) {
 
 /**
  * Many PocketBase set-ups relate `package_offers.patient` to `patient_profile`
- * (and `doctor` to `doctor_profile`). UI matches against auth user ids — this
+ * (and `doctor` to `doctor_profile`). UI matches against auth user ids - this
  * helper enriches each offer with `patient_user_id` / `doctor_user_id` so
  * downstream code can ignore the schema variant.
  */
@@ -1634,7 +1635,7 @@ async function enrichOffersWithAuthUserIds(offers) {
 /**
  * List package offers for the signed-in patient. PocketBase often relates
  * `package_offers.patient` → `patient_profile` while the app passes auth user
- * ids — query both ids and merge (dedupe by offer id).
+ * ids - query both ids and merge (dedupe by offer id).
  */
 export async function listPackageOffersForPatient(
   patientAuthUserId,
@@ -1689,7 +1690,7 @@ export async function listPackageOffersForPatient(
   );
 }
 
-/** Offers this doctor created — `doctor` may point at `users` or `doctor_profile`. */
+/** Offers this doctor created - `doctor` may point at `users` or `doctor_profile`. */
 export async function listPackageOffersForDoctor(doctorUserId) {
   if (!doctorUserId) return [];
   const profileId = await resolveDoctorProfileIdForUser(doctorUserId);
@@ -1985,9 +1986,9 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
 // --- Quick Solution / Counselling tracking & doctor help offers ---
 //
 // Status lifecycle (`quick_solution_requests` & `quick_counselling_requests`):
-//   "queued"    — initial state set on submit; visible in doctor queues and the patient tracking list.
-//   "closed"    — patient picked a doctor and closed the request from their tracking list (still in DB).
-//   "cancelled" — patient withdrew the request from their tracking list (still in DB).
+//   "queued"    - initial state set on submit; visible in doctor queues and the patient tracking list.
+//   "closed"    - patient picked a doctor and closed the request from their tracking list (still in DB).
+//   "cancelled" - patient withdrew the request from their tracking list (still in DB).
 //
 // Doctor "help" offers are stored in an optional collection `quick_help_offers`. Add it in
 // PocketBase Admin to enable the "(Doctor) wants to help you" alert + arrow button on the
@@ -1996,13 +1997,13 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
 // patient just won't see the highlighted alert pointer for it.
 //
 // Suggested `quick_help_offers` schema (all optional except marked):
-//   request_id     text   (required)  — id of the quick_solution_requests / quick_counselling_requests row
-//   request_kind   select (required)  — values: solution, counselling
+//   request_id     text   (required)  - id of the quick_solution_requests / quick_counselling_requests row
+//   request_kind   select (required)  - values: solution, counselling
 //   doctor         relation UsersAuth (required)
 //   patient        relation UsersAuth (required)
 //   conversation   relation conversations (required)
-//   first_message  text                — plain text preview of the doctor's offer message
-//   status         select              — active, closed, cancelled (default: active)
+//   first_message  text                - plain text preview of the doctor's offer message
+//   status         select              - active, closed, cancelled (default: active)
 //
 // Suggested API rules:
 //   list:   doctor = @request.auth.id || patient = @request.auth.id
@@ -2312,7 +2313,7 @@ export async function listActiveQuickRequestsForPatient(patientUserId) {
   // 1) Real offers (when the optional `quick_help_offers` collection exists
   //    and its rules allow this patient to read).
   const realOffers = await listQuickHelpOffersForPatient(patientUserId);
-  // 2) Inferred offers — works without `quick_help_offers` at all by reading
+  // 2) Inferred offers - works without `quick_help_offers` at all by reading
   //    `conversations` + `messages` the patient can already see.
   const inferredOffers = await listInferredQuickHelpOffersForPatient(
     patientUserId,
@@ -2381,7 +2382,7 @@ export async function requestPackageDoctorChange({
     const msg = formatPocketBaseClientError(error) || error?.message;
     throw new Error(
       msg ||
-        "Request failed. Add `package_doctor_change_requests` (patient, notes, current_doctor, status). No refund policy applies — see app copy.",
+        "Request failed. Add `package_doctor_change_requests` (patient, notes, current_doctor, status). No refund policy applies - see app copy.",
     );
   }
 }

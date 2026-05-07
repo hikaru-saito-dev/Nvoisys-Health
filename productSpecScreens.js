@@ -116,7 +116,7 @@ export function CareModeOnboardingScreen({ theme, patientProfile, currentUser, o
         </Text>
         <Text style={{ color: theme.textSecondary, fontSize: S.body, marginTop: 8, marginBottom: 20 }}>
           Pick one path now (Package Doctor, Casual / Normal, or skip). You can switch later from
-          Home, Profile, or the upgrade entry points — Casual users always see a way to move into
+          Home, Profile, or the upgrade entry points - Casual users always see a way to move into
           Package Doctor Mode.
         </Text>
 
@@ -134,7 +134,7 @@ export function CareModeOnboardingScreen({ theme, patientProfile, currentUser, o
           </View>
           <Text style={{ color: theme.textSecondary, fontSize: S.small, lineHeight: 20 }}>
             Book a short demo with a verified professional doctor, join the voice/video call, then
-            your doctor sends package options from the app — you pay to start structured care. Best
+            your doctor sends package options from the app - you pay to start structured care. Best
             for ongoing treatment plans.
           </Text>
         </TouchableOpacity>
@@ -638,7 +638,7 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
       </View>
       <ScrollView contentContainerStyle={{ padding: S.pad }}>
         <Text style={{ color: theme.textSecondary, marginBottom: 12, fontSize: S.small }}>
-          ₹10 (10 coins) per snap or query — platform 5 coins, clinic 5 coins. Verified clinics and
+          ₹10 (10 coins) per snap or query - platform 5 coins, clinic 5 coins. Verified clinics and
           RMP doctors only.
         </Text>
         <TouchableOpacity
@@ -743,7 +743,7 @@ export function QuickCounsellingScreen({ theme, onBack, patientUserId }) {
       </View>
       <ScrollView contentContainerStyle={{ padding: S.pad }}>
         <Text style={{ color: theme.textSecondary, marginBottom: 12, fontSize: S.small }}>
-          ₹25 (25 coins) — platform 10 coins, doctor/clinic 15 coins.
+          ₹25 (25 coins) - platform 10 coins, doctor/clinic 15 coins.
         </Text>
         <TextInput
           placeholder="What would you like to talk about?"
@@ -792,12 +792,13 @@ export function PatientPackageMeetingsPanel({
   doctors = [],
   onOpenChatWithDoctor,
   onAfterPackagePayment,
+  onPayAppointment,
   /** Extra ScrollView bottom inset when this sits above a floating tab bar (see App.js). */
   scrollContentBottomInset = 120,
   /** When null, no in-list title (e.g. Appts screen already has a header). */
   sectionTitle = null,
   emptyHint = "None yet. Use Book Appt on Home or Package journey to schedule.",
-  /** Called after pay / cancel / reschedule reload — e.g. sync `appointments` in App state. */
+  /** Called after pay / cancel / reschedule reload - e.g. sync `appointments` in App state. */
   onMeetingsChanged,
 }) {
   const insets = useSafeAreaInsets();
@@ -891,9 +892,34 @@ export function PatientPackageMeetingsPanel({
         // ignore
       }
       Alert.alert(
-        "Paid — deal started",
+        "Paid - deal started",
         "Payment recorded and a chat with this doctor is now open in the Chat tab. Tap Go to chat from your appointment card to continue the conversation.",
       );
+    } catch (e) {
+      Alert.alert("Payment", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const payAppointment = async (meeting) => {
+    try {
+      setBusy(true);
+      const paid = await onPayAppointment?.({
+        id: meeting.id,
+        statusKey: "approved",
+        doctorName: doctorName(meeting.doctor_user_id),
+        doctorUserId: meeting.doctor_user_id,
+        consultationType: meeting.call_kind || "video",
+        consultationFee: meeting.consultation_fee || meeting.fee || 500,
+      });
+      if (paid === false) return;
+      await reload();
+      try {
+        await onMeetingsChanged?.();
+      } catch {
+        // ignore
+      }
     } catch (e) {
       Alert.alert("Payment", e?.message || "Failed");
     } finally {
@@ -963,7 +989,8 @@ export function PatientPackageMeetingsPanel({
           const st = String(x.status || "");
           const linkedOffer = linkedOfferForMeeting(x);
           const offerStatus = String(linkedOffer?.status || "").toLowerCase();
-          const isPaid = offerStatus === "paid";
+          const appointmentStatus = String(x.appointment_status || "").toLowerCase();
+          const isPaid = offerStatus === "paid" || appointmentStatus === "paid" || appointmentStatus === "completed";
           const isConfirmed = st === PACKAGE_MEETING_STATUS.CONFIRMED;
           const isDiscussing =
             st === PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS ||
@@ -1009,12 +1036,13 @@ export function PatientPackageMeetingsPanel({
           const showGoToChat = isConfirmed;
           const showCancel = !isConfirmed;
           const hasPackageSuggestion = !!linkedOffer && !isPaid;
-          const payEnabled = isConfirmed && hasPackageSuggestion && !isPaid;
+          const canPayAppointment = isConfirmed && !linkedOffer && !isPaid && typeof onPayAppointment === "function";
+          const payEnabled = isConfirmed && !isPaid && (hasPackageSuggestion || canPayAppointment);
           const packageLine = isPaid
             ? ""
             : !linkedOffer
               ? "The doctor has not suggested a package option yet."
-              : `Doctor suggested ${String(x.package_request_label || linkedOffer.title || "a package").trim()}. Payment: ₹${linkedOffer.amount_inr ?? "—"}.`;
+              : `Doctor suggested ${String(x.package_request_label || linkedOffer.title || "a package").trim()}. Payment: ₹${linkedOffer.amount_inr ?? "-"}.`;
           return (
             <View
               key={x.id}
@@ -1039,7 +1067,7 @@ export function PatientPackageMeetingsPanel({
                   }}
                 >
                   <Text style={{ color: theme.warning, fontSize: 11, fontWeight: "700" }}>
-                    On this device only — could not save to PocketBase `appointments`.
+                    On this device only - could not save to PocketBase `appointments`.
                   </Text>
                 </View>
               ) : null}
@@ -1132,7 +1160,10 @@ export function PatientPackageMeetingsPanel({
               <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 12 }}>
                 {isConfirmed && !isPaid ? (
                   <TouchableOpacity
-                    onPress={() => linkedOffer && payOffer(linkedOffer)}
+                    onPress={() => {
+                      if (linkedOffer) payOffer(linkedOffer);
+                      else payAppointment(x);
+                    }}
                     disabled={busy || !payEnabled}
                     style={{
                       backgroundColor: theme.success,
@@ -1144,7 +1175,7 @@ export function PatientPackageMeetingsPanel({
                     }}
                   >
                     <Text style={{ color: "#fff", fontWeight: "800" }}>
-                      Pay ₹{linkedOffer?.amount_inr ?? "—"}
+                      Pay ₹{linkedOffer?.amount_inr ?? x.consultation_fee ?? x.fee ?? 500}
                     </Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1248,7 +1279,7 @@ export function PatientPackageMeetingsPanel({
                     {o.title || "Package"}
                   </Text>
                   <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
-                    Service fee ₹{o.amount_inr ?? "—"} · {isPaid ? "Paid" : "Awaiting payment"}
+                    Service fee ₹{o.amount_inr ?? "-"} · {isPaid ? "Paid" : "Awaiting payment"}
                   </Text>
                   {!isPaid ? (
                     <TouchableOpacity
@@ -1263,7 +1294,7 @@ export function PatientPackageMeetingsPanel({
                       }}
                     >
                       <Text style={{ color: "#fff", fontWeight: "800" }}>
-                        Pay ₹{o.amount_inr ?? "—"}
+                        Pay ₹{o.amount_inr ?? "-"}
                       </Text>
                     </TouchableOpacity>
                   ) : (
@@ -1504,7 +1535,7 @@ export function PackageDoctorJourneyScreen({
         <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 12 }}>
           Search by doctor name, book your demo date and time, and describe your visit. Your doctor
           accepts or proposes other times; once confirmed you get a reminder 30 minutes before the
-          voice/video call. After the call they tap Send package options — you see the breakdown
+          voice/video call. After the call they tap Send package options - you see the breakdown
           under Appts (My appointments) with Pay now. Payment is to the company first; the doctor’s share becomes withdrawable
           coins after they complete package duties (1 coin = ₹1). Changing assigned doctor later has
           no refund; the new doctor continues remaining care.
@@ -1676,7 +1707,7 @@ export function PackageDoctorJourneyScreen({
           </Text>
           <Text style={{ color: theme.textSecondary, fontSize: S.small, lineHeight: 20 }}>
             Whether you book from here or from Book Appt on Home, every request, reschedule, package
-            offer, and payment lives under the Appts tab — same cards and actions everywhere.
+            offer, and payment lives under the Appts tab - same cards and actions everywhere.
           </Text>
           {typeof onGoToAppointmentsTab === "function" ? (
             <TouchableOpacity
@@ -2122,7 +2153,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
     >
       {x.localOnly ? (
         <Text style={{ color: theme.warning, fontSize: 10, fontWeight: "700", marginBottom: 8 }}>
-          Local test record (same device as patient) — sync requires saving to PocketBase
+          Local test record (same device as patient) - sync requires saving to PocketBase
           `appointments`.
         </Text>
       ) : null}
@@ -2256,7 +2287,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
       {!readOnly && x.status === PACKAGE_MEETING_STATUS.CONFIRMED ? (
         <View style={{ marginTop: 8 }}>
           <Text style={{ color: theme.success, fontSize: 11, fontWeight: "700" }}>
-            Confirmed — reminder 30 min before.
+            Confirmed - reminder 30 min before.
           </Text>
           <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 6, lineHeight: 16 }}>
             After your demo call, use Home → Upcoming Appointments on this patient’s card → Ask package
@@ -2321,7 +2352,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
               "Reschedule or alternate-slot negotiation. Package billing is only from Home → Upcoming Appointments after the demo time is confirmed.",
             )}
             {discussing.length === 0
-              ? emptyLine("None — nothing mid-negotiation.")
+              ? emptyLine("None - nothing mid-negotiation.")
               : discussing.map((x) => renderMeetingCard(x, { readOnly: false }))}
             {sectionHeader(
               "Confirmed demo",
@@ -2467,7 +2498,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
 }
 
 function quickRequestPatientLabel(record) {
-  if (record?.private_mode) return "Private — identity hidden";
+  if (record?.private_mode) return "Private - identity hidden";
   const u = record?.expand?.patient;
   if (!u) return "Patient";
   return u.name || u.email || u.username || "Patient";
@@ -2551,14 +2582,14 @@ export function DoctorQuickRequestsPanel({
       ...(cou || []).map((row) => ({ ...row, kind: "counselling" })),
     ];
 
-    // Existing offers — silently ignore if collection/rules are missing.
+    // Existing offers - silently ignore if collection/rules are missing.
     let realOffers = [];
     try {
       realOffers = (await listQuickHelpOffersByDoctor(effectiveDoctorId)) || [];
     } catch (e) {
       console.log("listQuickHelpOffersByDoctor ignored:", e?.message);
     }
-    // Inferred offers — works even when the optional `quick_help_offers`
+    // Inferred offers - works even when the optional `quick_help_offers`
     // collection is missing, by reading conversations + messages directly.
     let inferredOffers = [];
     try {
@@ -2618,8 +2649,8 @@ export function DoctorQuickRequestsPanel({
     });
     setHelpMessage(
       kind === "solution"
-        ? "Hi — I saw your Quick Solution request. I can help. Could you share more details?"
-        : "Hi — I saw your Quick Counselling request. Happy to help. What would you like to talk about first?",
+        ? "Hi - I saw your Quick Solution request. I can help. Could you share more details?"
+        : "Hi - I saw your Quick Counselling request. Happy to help. What would you like to talk about first?",
     );
   };
 
@@ -2757,7 +2788,7 @@ export function DoctorQuickRequestsPanel({
         {quickRequestPatientLabel(r)}
       </Text>
       <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
-        {truncateOneLine(r.notes, 160) || "—"}
+        {truncateOneLine(r.notes, 160) || "-"}
       </Text>
       <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
         {r.created ? new Date(r.created).toLocaleString() : ""}
@@ -2783,7 +2814,7 @@ export function DoctorQuickRequestsPanel({
         {quickRequestPatientLabel(r)}
       </Text>
       <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}>
-        Topic: {truncateOneLine(r.topic, 120) || "—"}
+        Topic: {truncateOneLine(r.topic, 120) || "-"}
       </Text>
       <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
         {r.created ? new Date(r.created).toLocaleString() : ""}
@@ -2815,7 +2846,7 @@ export function DoctorQuickRequestsPanel({
       </View>
       <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 10 }}>
         The app only loads rows with <Text style={{ fontWeight: "700" }}>status = queued</Text>. Tap{" "}
-        <Text style={{ fontWeight: "700" }}>Help</Text> on a card to open a chat with the patient —
+        <Text style={{ fontWeight: "700" }}>Help</Text> on a card to open a chat with the patient -
         your first message starts the thread and they will see “you want to help” on their tracking
         list. The patient can close or cancel the request anytime.
       </Text>
@@ -2828,7 +2859,7 @@ export function DoctorQuickRequestsPanel({
       </Text>
       {solutionRows.length === 0 ? (
         <Text style={{ color: theme.textTertiary, fontSize: S.small, marginBottom: 14 }}>
-          No queued requests (or list blocked — see red message above).
+          No queued requests (or list blocked - see red message above).
         </Text>
       ) : (
         solutionRows.map(renderSolutionCard)
@@ -2875,7 +2906,7 @@ export function DoctorQuickRequestsPanel({
               }}
             >
               Offer help to{" "}
-              {helpTarget?.patientLabel === "Private — identity hidden"
+              {helpTarget?.patientLabel === "Private - identity hidden"
                 ? "this patient"
                 : helpTarget?.patientLabel || "this patient"}
             </Text>
@@ -2886,7 +2917,7 @@ export function DoctorQuickRequestsPanel({
               {helpTarget?.preview ? ` · ${helpTarget.preview}` : ""}
             </Text>
             <Text style={{ color: theme.textSecondary, fontSize: 11, marginBottom: 6 }}>
-              Your message — this becomes the first chat message in the new conversation.
+              Your message - this becomes the first chat message in the new conversation.
             </Text>
             <TextInput
               value={helpMessage}
@@ -3127,7 +3158,7 @@ export function PatientQuickRequestsTrackerPanel({
     const summary =
       row.kind === "counselling"
         ? `Topic: ${truncateOneLine(row.topic, 140) || "General"}`
-        : truncateOneLine(row.notes, 200) || "—";
+        : truncateOneLine(row.notes, 200) || "-";
     const isBusy = busyRowId === `${row.kind}::${row.id}`;
     const offers = Array.isArray(row.offers) ? row.offers : [];
     const hasOffers = offers.length > 0;
@@ -3248,7 +3279,7 @@ export function PatientQuickRequestsTrackerPanel({
       </View>
       <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 10 }}>
         Track Quick Solution / Counselling requests you submitted. When a doctor offers help, an
-        alert appears with an arrow button — tap it to open the chat. Use{" "}
+        alert appears with an arrow button - tap it to open the chat. Use{" "}
         <Text style={{ fontWeight: "700" }}>Close</Text> after you’ve chosen a doctor or{" "}
         <Text style={{ fontWeight: "700" }}>Cancel</Text> if you no longer need help.
       </Text>

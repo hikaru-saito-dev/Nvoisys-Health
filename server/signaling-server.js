@@ -1,10 +1,21 @@
 const http = require("http");
-const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 
+try {
+  require("dotenv").config();
+} catch {
+  // dotenv is optional; production hosts usually inject env vars directly.
+}
+
 const PORT = process.env.SIGNALING_PORT || 8080;
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
+const CASHFREE_CLIENT_ID = process.env.CASHFREE_CLIENT_ID || "";
+const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || "";
+const CASHFREE_ENV = String(process.env.CASHFREE_ENV || "sandbox").toLowerCase();
+const CASHFREE_API_VERSION = process.env.CASHFREE_API_VERSION || "2023-08-01";
+const CASHFREE_API_BASE =
+  CASHFREE_ENV === "production"
+    ? "https://api.cashfree.com/pg"
+    : "https://sandbox.cashfree.com/pg";
 const PAYMENT_APP_NAME = process.env.PAYMENT_APP_NAME || "Nvoisys Health";
 
 const paymentOrders = new Map();
@@ -45,16 +56,16 @@ const readJsonBody = (req) =>
     req.on("error", reject);
   });
 
-const razorpayAuthHeader = () =>
-  `Basic ${Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString(
-    "base64",
-  )}`;
-
 const buildReceipt = (appointmentId) =>
   `appt_${String(appointmentId || "unknown").replace(/[^a-zA-Z0-9_-]/g, "")}`
     .slice(0, 40) || `appt_${Date.now()}`;
 
+const buildCashfreeOrderId = (appointmentId) =>
+  `${buildReceipt(appointmentId)}_${Date.now()}`.slice(0, 50);
+
 const toSafeString = (value) => String(value || "").trim();
+
+const toPhoneDigits = (value) => String(value || "").replace(/\D/g, "");
 
 const escapeHtml = (value) =>
   String(value || "")
@@ -64,13 +75,65 @@ const escapeHtml = (value) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
-const createRazorpayOrder = async (payload) => {
-  if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-    throw new Error("Razorpay server keys are not configured");
+const cashfreeHeaders = () => ({
+  "Content-Type": "application/json",
+  "x-api-version": CASHFREE_API_VERSION,
+  "x-client-id": CASHFREE_CLIENT_ID,
+  "x-client-secret": CASHFREE_CLIENT_SECRET,
+});
+
+const appendQueryParams = (url, params) => {
+  const query = Object.entries(params)
+    .filter(([, value]) => value != null && value !== "")
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&");
+  if (!query) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}${query}`;
+};
+
+const publicOriginForRequest = (req) => {
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "localhost")
+    .split(",")[0]
+    .trim();
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const proto = forwardedProto || (host === "api.nvoisyshealth.com" ? "https" : "http");
+  return `${proto}://${host}`;
+};
+
+const redirectHtml = (targetUrl, title, message) => `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }
+    main { width: min(420px, calc(100vw - 32px)); padding: 28px; border-radius: 24px; background: #fff; box-shadow: 0 20px 60px rgba(15, 23, 42, 0.12); text-align: center; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    p { margin: 0 0 18px; color: #64748b; line-height: 1.5; }
+    a { display: inline-block; border-radius: 14px; background: #4f46e5; color: #fff; font-size: 16px; font-weight: 700; padding: 14px 18px; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(message)}</p>
+    <a href="${escapeHtml(targetUrl)}">Return to app</a>
+  </main>
+  <script>window.location.href = ${JSON.stringify(targetUrl)};</script>
+</body>
+</html>`;
+
+const createCashfreeOrder = async (payload, origin) => {
+  if (!CASHFREE_CLIENT_ID || !CASHFREE_CLIENT_SECRET) {
+    throw new Error("Cashfree server credentials are not configured");
   }
 
-  const amount = Math.round(Number(payload.amountPaise || payload.amount || 0));
-  if (!Number.isFinite(amount) || amount < 100) {
+  const amountPaise = Math.round(Number(payload.amountPaise || payload.amount || 0));
+  if (!Number.isFinite(amountPaise) || amountPaise < 100) {
     throw new Error("Invalid payment amount");
   }
 
@@ -80,69 +143,67 @@ const createRazorpayOrder = async (payload) => {
   }
 
   const currency = toSafeString(payload.currency || "INR").toUpperCase();
+  const customer = payload.customer || {};
+  const customerPhone = toPhoneDigits(customer.phone || customer.contact || customer.mobile);
+  if (customerPhone.length < 10) {
+    throw new Error("Customer phone is required for Cashfree payments");
+  }
+
+  const orderId = buildCashfreeOrderId(appointmentId);
+  const returnUrl = toSafeString(payload.returnUrl) || "myapp://payment/cashfree";
   const orderPayload = {
-    amount,
-    currency,
-    receipt: buildReceipt(appointmentId),
-    notes: {
+    order_id: orderId,
+    order_amount: Number((amountPaise / 100).toFixed(2)),
+    order_currency: currency,
+    order_note: toSafeString(payload.description) || "Appointment consultation fee",
+    customer_details: {
+      customer_id: toSafeString(payload.metadata?.patientId) || appointmentId,
+      customer_name: toSafeString(customer.name) || "Patient",
+      customer_email: toSafeString(customer.email),
+      customer_phone: customerPhone,
+    },
+    order_meta: {
+      return_url: `${origin}/payments/cashfree/return?orderId={order_id}`,
+    },
+    order_tags: {
       appointmentId,
       patientId: toSafeString(payload.metadata?.patientId),
       doctorId: toSafeString(payload.metadata?.doctorId),
     },
   };
 
-  const response = await fetch("https://api.razorpay.com/v1/orders", {
+  const response = await fetch(`${CASHFREE_API_BASE}/orders`, {
     method: "POST",
-    headers: {
-      Authorization: razorpayAuthHeader(),
-      "Content-Type": "application/json",
-    },
+    headers: cashfreeHeaders(),
     body: JSON.stringify(orderPayload),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(
-      data?.error?.description || data?.error?.reason || "Razorpay order failed",
+      data?.message || data?.error?.message || data?.error || "Cashfree order failed",
     );
   }
 
   const storedOrder = {
-    razorpayOrderId: data.id,
+    cashfreeOrderId: data.order_id || orderId,
+    paymentSessionId: data.payment_session_id,
     appointmentId,
-    amount,
+    amount: amountPaise,
     currency,
     description:
       toSafeString(payload.description) || "Appointment consultation fee",
-    returnUrl: toSafeString(payload.returnUrl) || "myapp://payment/razorpay",
-    customer: payload.customer || {},
+    returnUrl,
+    customer,
     createdAt: Date.now(),
   };
-  paymentOrders.set(data.id, storedOrder);
+  if (!storedOrder.paymentSessionId) {
+    throw new Error("Cashfree did not return a payment session");
+  }
+  paymentOrders.set(storedOrder.cashfreeOrderId, storedOrder);
   return storedOrder;
 };
 
-const renderRazorpayCheckout = (order) => {
-  const customer = order.customer || {};
-  const checkoutOptions = {
-    key: RAZORPAY_KEY_ID,
-    amount: order.amount,
-    currency: order.currency,
-    name: PAYMENT_APP_NAME,
-    description: order.description,
-    order_id: order.razorpayOrderId,
-    prefill: {
-      name: toSafeString(customer.name),
-      email: toSafeString(customer.email),
-      contact: toSafeString(customer.contact),
-    },
-    notes: {
-      appointmentId: order.appointmentId,
-    },
-    theme: {
-      color: "#4F46E5",
-    },
-  };
-
+const renderCashfreeCheckout = (order) => {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -161,39 +222,28 @@ const renderRazorpayCheckout = (order) => {
 <body>
   <main>
     <h1>Complete Payment</h1>
-    <p>Razorpay will show UPI, cards, RuPay, netbanking, and other available INR payment options.</p>
+    <p>Cashfree will show UPI, cards, netbanking, wallets, and other available INR payment options.</p>
     <button id="payButton" type="button">Pay ₹${escapeHtml((order.amount / 100).toFixed(2))}</button>
     <small>If checkout does not open automatically, tap Pay.</small>
   </main>
-  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
   <script>
-    const returnUrl = ${JSON.stringify(order.returnUrl)};
-    const options = ${JSON.stringify(checkoutOptions)};
-
-    function redirectBack(status, values) {
-      const params = new URLSearchParams({
-        status,
-        appointmentId: ${JSON.stringify(order.appointmentId)},
-        razorpay_order_id: values.razorpay_order_id || options.order_id || "",
-        razorpay_payment_id: values.razorpay_payment_id || "",
-        razorpay_signature: values.razorpay_signature || "",
-        message: values.message || "",
-      });
-      window.location.href = returnUrl + (returnUrl.includes("?") ? "&" : "?") + params.toString();
-    }
-
-    options.handler = function (response) {
-      redirectBack("success", response || {});
-    };
-    options.modal = {
-      ondismiss: function () {
-        redirectBack("cancelled", { message: "Payment cancelled" });
-      },
-    };
+    const cashfree = Cashfree({ mode: ${JSON.stringify(CASHFREE_ENV === "production" ? "production" : "sandbox")} });
 
     function openCheckout() {
-      const checkout = new Razorpay(options);
-      checkout.open();
+      cashfree.checkout({
+        paymentSessionId: ${JSON.stringify(order.paymentSessionId)},
+        redirectTarget: "_self",
+      }).catch(function () {
+        window.location.href = ${JSON.stringify(
+          appendQueryParams(order.returnUrl, {
+            status: "failed",
+            appointmentId: order.appointmentId,
+            cashfreeOrderId: order.cashfreeOrderId,
+            message: "Unable to open Cashfree checkout",
+          }),
+        )};
+      });
     }
 
     document.getElementById("payButton").addEventListener("click", openCheckout);
@@ -203,27 +253,13 @@ const renderRazorpayCheckout = (order) => {
 </html>`;
 };
 
-const verifyRazorpayPayment = (payload) => {
-  if (!RAZORPAY_KEY_SECRET) {
-    throw new Error("Razorpay server keys are not configured");
+const verifyCashfreePayment = async (payload) => {
+  if (!CASHFREE_CLIENT_ID || !CASHFREE_CLIENT_SECRET) {
+    throw new Error("Cashfree server credentials are not configured");
   }
-  const orderId = toSafeString(payload.razorpayOrderId);
-  const paymentId = toSafeString(payload.razorpayPaymentId);
-  const signature = toSafeString(payload.razorpaySignature);
-  if (!orderId || !paymentId || !signature) {
-    throw new Error("Incomplete Razorpay verification payload");
-  }
-  const expected = crypto
-    .createHmac("sha256", RAZORPAY_KEY_SECRET)
-    .update(`${orderId}|${paymentId}`)
-    .digest("hex");
-  const expectedBuffer = Buffer.from(expected, "hex");
-  const actualBuffer = Buffer.from(signature, "hex");
-  if (
-    expectedBuffer.length !== actualBuffer.length ||
-    !crypto.timingSafeEqual(expectedBuffer, actualBuffer)
-  ) {
-    throw new Error("Razorpay signature verification failed");
+  const orderId = toSafeString(payload.cashfreeOrderId || payload.orderId);
+  if (!orderId) {
+    throw new Error("Incomplete Cashfree verification payload");
   }
   const storedOrder = paymentOrders.get(orderId);
   if (
@@ -233,7 +269,25 @@ const verifyRazorpayPayment = (payload) => {
   ) {
     throw new Error("Payment does not match this appointment");
   }
-  return storedOrder || { razorpayOrderId: orderId };
+
+  const response = await fetch(`${CASHFREE_API_BASE}/orders/${encodeURIComponent(orderId)}`, {
+    method: "GET",
+    headers: cashfreeHeaders(),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || "Cashfree verification failed");
+  }
+  if (data.order_status !== "PAID") {
+    throw new Error(`Cashfree payment status is ${data.order_status || "unknown"}`);
+  }
+
+  return {
+    ...(storedOrder || {}),
+    cashfreeOrderId: orderId,
+    cashfreePaymentStatus: data.order_status,
+    cfOrderId: data.cf_order_id,
+  };
 };
 
 const handleHttpRequest = async (req, res) => {
@@ -243,19 +297,20 @@ const handleHttpRequest = async (req, res) => {
     return;
   }
 
-  const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  const publicOrigin = publicOriginForRequest(req);
+  const requestUrl = new URL(req.url || "/", publicOrigin);
 
-  if (req.method === "POST" && requestUrl.pathname === "/payments/razorpay/orders") {
+  if (req.method === "POST" && requestUrl.pathname === "/payments/cashfree/orders") {
     try {
       const body = await readJsonBody(req);
-      const order = await createRazorpayOrder(body);
+      const order = await createCashfreeOrder(body, publicOrigin);
       sendHttpJson(res, 200, {
-        razorpayOrderId: order.razorpayOrderId,
-        orderId: order.razorpayOrderId,
+        cashfreeOrderId: order.cashfreeOrderId,
+        orderId: order.cashfreeOrderId,
         amount: order.amount,
         currency: order.currency,
-        checkoutUrl: `${requestUrl.origin}/payments/razorpay/checkout?orderId=${encodeURIComponent(
-          order.razorpayOrderId,
+        checkoutUrl: `${publicOrigin}/payments/cashfree/checkout?orderId=${encodeURIComponent(
+          order.cashfreeOrderId,
         )}`,
       });
     } catch (error) {
@@ -264,7 +319,7 @@ const handleHttpRequest = async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && requestUrl.pathname === "/payments/razorpay/checkout") {
+  if (req.method === "GET" && requestUrl.pathname === "/payments/cashfree/checkout") {
     const orderId = requestUrl.searchParams.get("orderId");
     const order = paymentOrders.get(orderId);
     if (!order) {
@@ -273,19 +328,47 @@ const handleHttpRequest = async (req, res) => {
       return;
     }
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(renderRazorpayCheckout(order));
+    res.end(renderCashfreeCheckout(order));
     return;
   }
 
-  if (req.method === "POST" && requestUrl.pathname === "/payments/razorpay/verify") {
+  if (req.method === "GET" && requestUrl.pathname === "/payments/cashfree/return") {
+    const orderId = requestUrl.searchParams.get("orderId") || requestUrl.searchParams.get("order_id");
+    const order = paymentOrders.get(orderId);
+    const appReturnUrl = order?.returnUrl || "myapp://payment/cashfree";
+    let targetUrl;
+    try {
+      const verified = await verifyCashfreePayment({
+        cashfreeOrderId: orderId,
+        appointmentId: order?.appointmentId,
+      });
+      targetUrl = appendQueryParams(appReturnUrl, {
+        status: "success",
+        appointmentId: verified.appointmentId,
+        cashfreeOrderId: verified.cashfreeOrderId,
+      });
+    } catch (error) {
+      targetUrl = appendQueryParams(appReturnUrl, {
+        status: "failed",
+        appointmentId: order?.appointmentId,
+        cashfreeOrderId: orderId,
+        message: error.message || "Payment verification failed",
+      });
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(redirectHtml(targetUrl, "Returning to app", "Payment status checked. You can return to the app."));
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/payments/cashfree/verify") {
     try {
       const body = await readJsonBody(req);
-      const order = verifyRazorpayPayment(body);
+      const order = await verifyCashfreePayment(body);
       sendHttpJson(res, 200, {
         verified: true,
         appointmentId: order.appointmentId || body.appointmentId || null,
-        razorpayOrderId: body.razorpayOrderId,
-        razorpayPaymentId: body.razorpayPaymentId,
+        cashfreeOrderId: order.cashfreeOrderId,
+        cashfreePaymentStatus: order.cashfreePaymentStatus,
       });
     } catch (error) {
       sendHttpJson(res, 400, { verified: false, error: error.message || "Payment verification failed" });

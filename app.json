@@ -74,11 +74,10 @@
       "router": {},
       "pbAppointmentsCollection": "appointments",
       "pbAppointmentDoctorIsProfile": false,
-      "paymentMode": "razorpay",
+      "paymentMode": "cashfree",
       "stripePublishableKey": "",
-      "razorpayKeyId": "",
       "paymentBackendUrl": "https://api.nvoisyshealth.com",
-      "razorpayReturnUrl": "myapp://payment/razorpay",
+      "cashfreeReturnUrl": "myapp://payment/cashfree",
       "aiBaseUrl": "https://api.groq.com/openai/v1/chat/completions",
       "aiModel": "llama-3.3-70b-versatile",
       "eas": {

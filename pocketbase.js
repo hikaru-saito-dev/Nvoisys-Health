@@ -30,29 +30,29 @@ export const pb = new PocketBase(PB_URL, authStore);
  * PocketBase **appointments** collection (patient booking + doctor approval + pay).
  *
  * Configure in **Expo** `app.json` → `expo.extra`:
- * - `pbAppointmentsCollection` — collection name or id (default `"appointments"`).
- * - `pbAppointmentDoctorIsProfile` — `"true"` if the `doctor` relation points at
+ * - `pbAppointmentsCollection` - collection name or id (default `"appointments"`).
+ * - `pbAppointmentDoctorIsProfile` - `"true"` if the `doctor` relation points at
  *   **doctor_profile**; omit or `"false"` if `doctor` points at **UsersAuth** / users.
  *
- * **Admin dashboard — you normally must add/update the schema once:**
+ * **Admin dashboard - you normally must add/update the schema once:**
  * - `patient` (relation → your auth users collection, e.g. UsersAuth)
- * - `doctor` (relation → **either** users **or** doctor_profile — must match the flag above)
+ * - `doctor` (relation → **either** users **or** doctor_profile - must match the flag above)
  * - `scheduled_at` (datetime)
  * - `consultation_type` (select): include at least `video`, `chat` (or relax / omit field)
  * - `status` (select): include `requested`, `pending`, `approved`, `rejected` or `declined`,
  *   **`ask_reschedule`** (doctor proposes new times; patient picks on same row), **`cancelled`**,
  *   `paid`, `completed`, and often `scheduled` for older rows (Package Doctor demos use
  *   `requested` → `approved` → patient cancel uses **`cancelled`**)
- * - `reason` (text, optional but recommended) — long text; package demos append
+ * - `reason` (text, optional but recommended) - long text; package demos append
  *   `---NVHS_MEETING_WORKFLOW---` + JSON
- * - **`workflow_json` (JSON, optional but strongly recommended)** — stores the meeting workflow
+ * - **`workflow_json` (JSON, optional but strongly recommended)** - stores the meeting workflow
  *   without truncation. Keys the app reads/writes include: `status` (e.g. `awaiting_doctor`,
  *   `doctor_proposed_slots`, `awaiting_doctor_after_patient_pick`, `confirmed`), `proposed_at`,
  *   `confirmed_at`, `patient_selected_slot`, `doctor_alternate_slots`, `messages`,
  *   `patient_auth_user_id`, `doctor_auth_user_id`, **`package_offer_id`**, **`package_request_label`**,
  *   **`demo_conversation_id`**. If this field is missing, the app falls back to parsing `reason` only
  *   (easier to hit length limits).
- * - `conversation` (relation → **conversations**, optional) — set to the **per-demo-meeting** chat
+ * - `conversation` (relation → **conversations**, optional) - set to the **per-demo-meeting** chat
  *   when the patient or doctor opens “Go to chat” for that package appointment (see `conversations`
  *   below).
  * - `consultationFee` or fee on doctor_profile (optional; app reads fee for “Pay fee”)
@@ -63,12 +63,12 @@ export const pb = new PocketBase(PB_URL, authStore);
  *
  * **`conversations` (for Package Doctor demo threads)**  
  * The app creates a **separate** conversation per package-demo appointment (not the generic DM).
- * Recommended fields (names must match your Admin schema — check **API rules** generated names):
- * - `members` — relation to auth users (multi), exactly **patient + doctor** user ids
- * - `title` — text (short label, e.g. “Package demo”)
- * - **`kind`** — text, optional — app tries value `package_demo`; if Create fails (unknown field),
+ * Recommended fields (names must match your Admin schema - check **API rules** generated names):
+ * - `members` - relation to auth users (multi), exactly **patient + doctor** user ids
+ * - `title` - text (short label, e.g. “Package demo”)
+ * - **`kind`** - text, optional - app tries value `package_demo`; if Create fails (unknown field),
  *   it retries **without** `kind`
- * - **`lastMessageAt`** or **`last_message_at`** — datetime — use the same casing as your existing
+ * - **`lastMessageAt`** or **`last_message_at`** - datetime - use the same casing as your existing
  *   `conversations` rows / `ensureDirectConversation` in `App.js`
  *
  * **`package_offers`**  
@@ -78,18 +78,18 @@ export const pb = new PocketBase(PB_URL, authStore);
  * (no extra relation required on `package_offers`).
  *
  * **API rules (minimum)**  
- * - **appointments — Create:** patient can create when `@request.auth.id` is set and
+ * - **appointments - Create:** patient can create when `@request.auth.id` is set and
  *   `patient = @request.auth.id` (and doctor points at allowed doctor ids / profile ids).
- * - **appointments — Update:** patient may update **own** rows (cancel package request, workflow);
+ * - **appointments - Update:** patient may update **own** rows (cancel package request, workflow);
  *   doctor may update rows where they are the assigned doctor (accept, reschedule, confirm,
  *   attach package link via workflow). Use `@request.auth.id` and your `doctor` / `patient` relation
  *   shape (user id vs profile id) in filters.
- * - **appointments — List:** patient lists own; doctor lists where doctor relation matches (often two
+ * - **appointments - List:** patient lists own; doctor lists where doctor relation matches (often two
  *   list rules if `doctor` can be profile or user id).
- * - **conversations — Create:** allow authenticated users who are members of `members` to create, or
+ * - **conversations - Create:** allow authenticated users who are members of `members` to create, or
  *   a broader rule if you trust member ids from the app.
- * - **conversations — List / View:** user must be in `members`.
- * - **messages — Create:** sender must be `@request.auth.id` and a member of the conversation.
+ * - **conversations - List / View:** user must be in `members`.
+ * - **messages - Create:** sender must be `@request.auth.id` and a member of the conversation.
  */
 export function getPbAppointmentsCollection() {
   return (
@@ -101,7 +101,7 @@ export function getPbAppointmentsCollection() {
 }
 
 /**
- * PocketBase **`orders`** collection (Step 6) — align `status` select with the app:
+ * PocketBase **`orders`** collection (Step 6) - align `status` select with the app:
  * `pending`, `confirmed`, `out_for_delivery`, `fulfilled`, `cancelled`.
  * Legacy values `packed`, `dispatched`, `delivered` are still accepted when reading
  * old rows; new updates use the canonical chain above.
@@ -170,7 +170,7 @@ function ensureVerifiedAuthUser(email = "") {
   return user;
 }
 
-/** True when authRefresh failed for invalid/expired credentials — safe to drop the local session. */
+/** True when authRefresh failed for invalid/expired credentials - safe to drop the local session. */
 function shouldClearAuthOnRefreshFailure(error) {
   if (!error) return false;
   if (error.isAbort) return false;
@@ -186,7 +186,7 @@ function shouldClearAuthOnRefreshFailure(error) {
 /**
  * Loads persisted PocketBase auth from AsyncStorage into memory, then optionally refreshes.
  * AsyncAuthStore hydrates `initial` asynchronously, so on cold start `isValid` can be false
- * until we explicitly load — without this, users always see the login flow after killing the app.
+ * until we explicitly load - without this, users always see the login flow after killing the app.
  */
 export async function restoreAuth() {
   try {
@@ -298,7 +298,7 @@ async function createPatientProfileRecord(userId, merged) {
   // Launch v1.0 additions. Each field is written only when a non-empty
   // value is supplied, so this remains backwards compatible with older
   // PocketBase schemas that have not added the fields yet (PB will reject
-  // unknown fields — omitting empties keeps quiet signups working).
+  // unknown fields - omitting empties keeps quiet signups working).
   const numericFields = ["age", "weight_kg", "height_cm"];
   for (const key of numericFields) {
     const raw = merged[key];
@@ -334,15 +334,15 @@ async function createPatientProfileRecord(userId, merged) {
  * Matches PocketBase `doctor_profile`: user, status, specialty, clinic_or_hospital.
  * Status select: pending | approved | rejection
  *
- * Launch v1.0 — Step 3a: add optional JSON field **`concerns`** (string array of
+ * Launch v1.0 - Step 3a: add optional JSON field **`concerns`** (string array of
  * tags, e.g. `["diabetes","hypertension"]`). Doctors edit this in-app on the
  * Doctor Profile screen so Find Doctor concern chips can filter accurately.
  *
  * Product spec: optional **`practitioner_tier`** (select: rmp | clinic | professional |
- * specialist) — Quick Solution / Quick Counselling prefer non-professional tiers;
+ * specialist) - Quick Solution / Quick Counselling prefer non-professional tiers;
  * package flows use professional doctors. Optional **`coin_balance`** (number) for wallet UI.
  * **`package_templates`** or alias **`packages_template`** (JSON): store an array of
- * **`{ slot, total_amount_inr }`** (length 3) — package titles, periods, descriptions & features are
+ * **`{ slot, total_amount_inr }`** (length 3) - package titles, periods, descriptions & features are
  * **app-defined**; doctors only set fees. When the doctor taps Skip onboarding, the app may store
  * **`{ "skipped": true }`** instead of the fee array. Bool **`package_setup`**: **`true`** when all
  * three fees are saved; **`false`** when incomplete or skipped. Legacy: **`packages_setup_complete`**,
