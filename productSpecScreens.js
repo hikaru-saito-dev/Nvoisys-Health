@@ -707,7 +707,13 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
   );
 }
 
-export function QuickCounsellingScreen({ theme, onBack, patientUserId }) {
+export function QuickCounsellingScreen({
+  theme,
+  onBack,
+  patientUserId,
+  /** When true, show copy tuned for Wound tab entry (same API, no image). */
+  fromWoundTracker = false,
+}) {
   const insets = useSafeAreaInsets();
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
@@ -715,7 +721,12 @@ export function QuickCounsellingScreen({ theme, onBack, patientUserId }) {
     try {
       setBusy(true);
       await createQuickCounsellingRequest({ patientUserId, topic });
-      Alert.alert("Queued", "Quick Counselling (25 coins). Platform 10, doctor/clinic 15.");
+      Alert.alert(
+        "Queued",
+        fromWoundTracker
+          ? "Quick Counselling (25 coins). An RMP/clinic doctor will reach out for a video call. Platform 10, doctor/clinic 15 coins."
+          : "Quick Counselling (25 coins). Platform 10, doctor/clinic 15.",
+      );
       onBack?.();
     } catch (e) {
       Alert.alert("Counselling", e?.message || "Failed");
@@ -743,14 +754,29 @@ export function QuickCounsellingScreen({ theme, onBack, patientUserId }) {
       </View>
       <ScrollView contentContainerStyle={{ padding: S.pad }}>
         <Text style={{ color: theme.textSecondary, marginBottom: 12, fontSize: S.small }}>
-          ₹25 (25 coins) - platform 10 coins, doctor/clinic 15 coins.
+          {fromWoundTracker
+            ? "₹25 (25 coins) — video call with a verified RMP/clinic doctor. Platform 10 coins, doctor/clinic 15 coins. No wound photo; describe your concerns below."
+            : "₹25 (25 coins) - platform 10 coins, doctor/clinic 15 coins."}
         </Text>
+        {fromWoundTracker ? (
+          <Text style={{ color: theme.textTertiary, marginBottom: 12, fontSize: S.small }}>
+            Separate from Quick Solution (₹10 wound snap). Use this for a full consultation by
+            video call instead of uploading a wound image.
+          </Text>
+        ) : null}
         <TextInput
-          placeholder="What would you like to talk about?"
+          placeholder={
+            fromWoundTracker
+              ? "Describe symptoms, pain, or questions for your video consultation…"
+              : "What would you like to talk about?"
+          }
           placeholderTextColor={theme.textTertiary}
           value={topic}
           onChangeText={setTopic}
+          multiline
+          textAlignVertical="top"
           style={{
+            minHeight: fromWoundTracker ? 140 : 88,
             backgroundColor: theme.card,
             borderRadius: 14,
             padding: 14,
