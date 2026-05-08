@@ -8,8 +8,10 @@ import * as Notifications from "expo-notifications";
 import {
   pb,
   formatPocketBaseClientError,
+  getAuthUser,
   getPbAppointmentsCollection,
   isPbAppointmentDoctorProfileRelation,
+  recordPaymentTransaction,
 } from "./pocketbase";
 
 export const CARE_MODE = {
@@ -87,7 +89,12 @@ function parsePackageTemplatesRaw(raw) {
   if (raw && typeof raw === "string") {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.skipped === true) {
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        parsed.skipped === true
+      ) {
         return [];
       }
       return Array.isArray(parsed) ? parsed : [];
@@ -103,7 +110,13 @@ export function doctorProfilePackageSetupSkipped(record) {
   if (!record) return false;
   if (record.package_setup_skipped === true) return true;
   const raw = packageTemplatesRawFromRecord(record);
-  if (raw && typeof raw === "object" && !Array.isArray(raw) && raw.skipped === true) return true;
+  if (
+    raw &&
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    raw.skipped === true
+  )
+    return true;
   return false;
 }
 
@@ -111,7 +124,9 @@ export function doctorProfilePackageSetupSkipped(record) {
 export function doctorProfilePackageFeesReady(record) {
   if (!record) return false;
   if (record.package_setup === true) return true;
-  const slots = normalizeDoctorPackageSlots(packageTemplatesRawFromRecord(record));
+  const slots = normalizeDoctorPackageSlots(
+    packageTemplatesRawFromRecord(record),
+  );
   return doctorPackagesSetupComplete(slots);
 }
 
@@ -144,7 +159,10 @@ export async function readLocalDoctorPackageFees(userId) {
 export async function writeLocalDoctorPackageFees(userId, entries) {
   if (!userId) return;
   try {
-    await AsyncStorage.setItem(doctorPkgFeesKey(userId), JSON.stringify(entries || []));
+    await AsyncStorage.setItem(
+      doctorPkgFeesKey(userId),
+      JSON.stringify(entries || []),
+    );
   } catch {
     // ignore
   }
@@ -181,12 +199,20 @@ export async function writeLocalPackageSetupSkip(userId, skipped) {
 
 /** Overlay locally stored `{ slot, total_amount_inr }[]` onto normalized slots (device fallback). */
 export function mergeLocalFeesOntoSlots(slots, localFees) {
-  if (!Array.isArray(slots) || !Array.isArray(localFees) || localFees.length === 0) {
+  if (
+    !Array.isArray(slots) ||
+    !Array.isArray(localFees) ||
+    localFees.length === 0
+  ) {
     return slots;
   }
   return slots.map((s) => {
     const L = localFees.find((e) => Number(e?.slot) === Number(s.slot));
-    if (L && L.total_amount_inr != null && String(L.total_amount_inr).trim() !== "") {
+    if (
+      L &&
+      L.total_amount_inr != null &&
+      String(L.total_amount_inr).trim() !== ""
+    ) {
       return { ...s, total_amount_inr: String(L.total_amount_inr).trim() };
     }
     return s;
@@ -219,7 +245,11 @@ export function normalizeDoctorPackageSlots(raw) {
 export function doctorPackagesSetupComplete(slots) {
   if (!Array.isArray(slots) || slots.length < 3) return false;
   return slots.every((s) => {
-    const amt = Number(String(s.total_amount_inr || "").replace(/,/g, "").trim() || 0);
+    const amt = Number(
+      String(s.total_amount_inr || "")
+        .replace(/,/g, "")
+        .trim() || 0,
+    );
     return Number.isFinite(amt) && amt > 0;
   });
 }
@@ -229,7 +259,11 @@ export function doctorPackagesSetupComplete(slots) {
  * `userId` is set, stores `{ slot, total_amount_inr }[]` on device so the app can unlock the dashboard.
  * @returns {{ record: object|null, localOnly: boolean }}
  */
-export async function saveDoctorPackageTemplates(profileId, slots, userId = null) {
+export async function saveDoctorPackageTemplates(
+  profileId,
+  slots,
+  userId = null,
+) {
   if (!profileId) throw new Error("Missing doctor profile.");
   const normalized = normalizeDoctorPackageSlots(slots);
   const complete = doctorPackagesSetupComplete(normalized);
@@ -238,9 +272,17 @@ export async function saveDoctorPackageTemplates(profileId, slots, userId = null
     total_amount_inr: String(s.total_amount_inr || "").trim(),
   }));
   const attempts = [
-    { package_templates, package_setup: complete, package_setup_skipped: false },
+    {
+      package_templates,
+      package_setup: complete,
+      package_setup_skipped: false,
+    },
     { package_templates, package_setup: complete },
-    { package_templates, packages_setup_complete: complete, package_setup_skipped: false },
+    {
+      package_templates,
+      packages_setup_complete: complete,
+      package_setup_skipped: false,
+    },
     { package_templates, packages_setup_complete: complete },
     { package_templates },
     {
@@ -260,7 +302,9 @@ export async function saveDoctorPackageTemplates(profileId, slots, userId = null
   let lastError = null;
   for (const body of attempts) {
     try {
-      const record = await pb.collection("doctor_profile").update(profileId, body);
+      const record = await pb
+        .collection("doctor_profile")
+        .update(profileId, body);
       if (userId) {
         await clearLocalDoctorPackageFees(userId);
         await writeLocalPackageSetupSkip(userId, false);
@@ -475,7 +519,8 @@ export function packageMeetingStatusLabel(status) {
 export function packageMeetingDoctorListBucket(meeting) {
   if (!meeting) return "closed";
   const pb = String(meeting.appointment_status || "").toLowerCase();
-  if (pb === "declined" || pb === "cancelled" || pb === "canceled") return "closed";
+  if (pb === "declined" || pb === "cancelled" || pb === "canceled")
+    return "closed";
   const st = String(meeting.status || "");
   if (st === PACKAGE_MEETING_STATUS.CONFIRMED) return "confirmed_demo";
   if (st === PACKAGE_MEETING_STATUS.AWAITING_DOCTOR) return "pending";
@@ -500,8 +545,10 @@ export function packageMeetingClosedLabel(meeting) {
 const PKG_MEETINGS_LOCAL_KEY = "nvhs_package_meetings_local_v1";
 
 function isPocketBaseMissingResourceError(error) {
-  const status = error?.status ?? error?.response?.status ?? error?.data?.status;
-  const msg = `${formatPocketBaseClientError(error) || ""} ${error?.message || ""} ${error?.url || ""}`.toLowerCase();
+  const status =
+    error?.status ?? error?.response?.status ?? error?.data?.status;
+  const msg =
+    `${formatPocketBaseClientError(error) || ""} ${error?.message || ""} ${error?.url || ""}`.toLowerCase();
   return (
     status === 404 ||
     /the requested resource wasn't found|requested resource wasn't found|not found\.|unknown collection|missing collection/i.test(
@@ -522,7 +569,10 @@ async function readLocalPackageMeetings() {
 }
 
 async function writeLocalPackageMeetings(rows) {
-  await AsyncStorage.setItem(PKG_MEETINGS_LOCAL_KEY, JSON.stringify(rows || []));
+  await AsyncStorage.setItem(
+    PKG_MEETINGS_LOCAL_KEY,
+    JSON.stringify(rows || []),
+  );
 }
 
 async function upsertLocalMeeting(meeting) {
@@ -544,14 +594,21 @@ async function withLocalMeeting(meetingId, updater) {
   const idx = all.findIndex((m) => m.id === meetingId);
   if (idx === -1) throw new Error("Meeting not found.");
   const updated = updater({ ...all[idx] });
-  const merged = { ...updated, updated_at: new Date().toISOString(), localOnly: true };
+  const merged = {
+    ...updated,
+    updated_at: new Date().toISOString(),
+    localOnly: true,
+  };
   all[idx] = merged;
   await writeLocalPackageMeetings(all);
   await schedulePackageMeetingThirtyMinReminder(merged);
   return merged;
 }
 
-async function mergeMeetingsForUser(pbMeetings, { patientUserId, doctorUserId }) {
+async function mergeMeetingsForUser(
+  pbMeetings,
+  { patientUserId, doctorUserId },
+) {
   const stored = await readLocalPackageMeetings();
   const filtered = stored.filter((m) => {
     if (patientUserId && m.patient_user_id !== patientUserId) return false;
@@ -590,7 +647,9 @@ function buildWorkflowPayload({
     status: status || PACKAGE_MEETING_STATUS.AWAITING_DOCTOR,
     proposed_at: proposed_at || "",
     messages: Array.isArray(messages) ? messages : [],
-    doctor_alternate_slots: Array.isArray(doctor_alternate_slots) ? doctor_alternate_slots : [],
+    doctor_alternate_slots: Array.isArray(doctor_alternate_slots)
+      ? doctor_alternate_slots
+      : [],
     patient_selected_slot: patient_selected_slot || null,
     confirmed_at: confirmed_at || null,
     patient_auth_user_id: String(patientAuthUserId || "").trim(),
@@ -614,9 +673,11 @@ function appointmentsColl() {
 async function resolveDoctorProfileIdForUser(doctorUserId) {
   if (!doctorUserId) return null;
   try {
-    const p = await pb.collection("doctor_profile").getFirstListItem(`user="${doctorUserId}"`, {
-      requestKey: null,
-    });
+    const p = await pb
+      .collection("doctor_profile")
+      .getFirstListItem(`user="${doctorUserId}"`, {
+        requestKey: null,
+      });
     return p?.id || null;
   } catch {
     return null;
@@ -627,10 +688,9 @@ async function resolveDoctorProfileIdForUser(doctorUserId) {
 async function resolvePatientProfileIdForAuthUser(patientAuthUserId) {
   if (!patientAuthUserId) return null;
   try {
-    const p = await pb.collection("patient_profile").getFirstListItem(
-      `user="${patientAuthUserId}"`,
-      { requestKey: null },
-    );
+    const p = await pb
+      .collection("patient_profile")
+      .getFirstListItem(`user="${patientAuthUserId}"`, { requestKey: null });
     return p?.id || null;
   } catch {
     return null;
@@ -639,7 +699,9 @@ async function resolvePatientProfileIdForAuthUser(patientAuthUserId) {
 
 async function doctorIdsForAppointmentCreate(doctorUserId, doctorProfileId) {
   const profileId =
-    doctorProfileId || (await resolveDoctorProfileIdForUser(doctorUserId)) || null;
+    doctorProfileId ||
+    (await resolveDoctorProfileIdForUser(doctorUserId)) ||
+    null;
   const ordered = isPbAppointmentDoctorProfileRelation()
     ? [profileId, doctorUserId]
     : [doctorUserId, profileId];
@@ -653,7 +715,9 @@ async function pbListPackageAppointmentRowsForPatient(patientUserId) {
       sort: "-created",
       filter: `patient="${patientUserId}"`,
     });
-    return rows.filter((r) => String(appointmentReasonField(r)).includes("NVHS_MEETING_WORKFLOW"));
+    return rows.filter((r) =>
+      String(appointmentReasonField(r)).includes("NVHS_MEETING_WORKFLOW"),
+    );
   } catch {
     return [];
   }
@@ -667,7 +731,9 @@ async function pbListPackageAppointmentRowsForDoctor(doctorFilterId) {
       sort: "-created",
       filter: `doctor="${doctorFilterId}"`,
     });
-    return rows.filter((r) => String(appointmentReasonField(r)).includes("NVHS_MEETING_WORKFLOW"));
+    return rows.filter((r) =>
+      String(appointmentReasonField(r)).includes("NVHS_MEETING_WORKFLOW"),
+    );
   } catch {
     return [];
   }
@@ -757,7 +823,8 @@ export function decodeMeetingWorkflowFromAppointmentRow(row) {
         patientDescription: fromJson.patient_description ?? headDesc,
       }),
       ...fromJson,
-      patient_description: String(fromJson.patient_description ?? "").trim() || headDesc,
+      patient_description:
+        String(fromJson.patient_description ?? "").trim() || headDesc,
     };
   } else {
     const dec = decodeWorkflowFromDescription(reasonText, {
@@ -777,16 +844,21 @@ export function decodePackageMeetingFromPbRow(row) {
   if (!row) return null;
   const workflow = decodeMeetingWorkflowFromAppointmentRow(row);
   const patient_user_id =
-    String(workflow.patient_auth_user_id || "").trim() || expandRelId(row.patient);
+    String(workflow.patient_auth_user_id || "").trim() ||
+    expandRelId(row.patient);
   const doctor_user_id =
-    String(workflow.doctor_auth_user_id || "").trim() || expandRelId(row.doctor);
+    String(workflow.doctor_auth_user_id || "").trim() ||
+    expandRelId(row.doctor);
   return {
     id: row.id,
     patient_user_id,
     doctor_user_id,
     description: workflow.patient_description || "",
     proposed_at: workflow.proposed_at || row.scheduled_at || "",
-    status: workflow.status || String(row.status || "").trim() || PACKAGE_MEETING_STATUS.AWAITING_DOCTOR,
+    status:
+      workflow.status ||
+      String(row.status || "").trim() ||
+      PACKAGE_MEETING_STATUS.AWAITING_DOCTOR,
     messages: workflow.messages || [],
     doctor_alternate_slots: workflow.doctor_alternate_slots || [],
     patient_selected_slot: workflow.patient_selected_slot || null,
@@ -798,9 +870,14 @@ export function decodePackageMeetingFromPbRow(row) {
     /** PocketBase `created` - ignore older package_offers from prior demos with the same doctor. */
     appointment_created: row.created ? String(row.created) : "",
     package_offer_id: String(workflow.package_offer_id || "").trim() || null,
-    package_request_label: String(workflow.package_request_label || "").trim() || null,
-    demo_conversation_id: String(workflow.demo_conversation_id || "").trim() || null,
-    appointment_status: String(row.status || "").trim().toLowerCase() || null,
+    package_request_label:
+      String(workflow.package_request_label || "").trim() || null,
+    demo_conversation_id:
+      String(workflow.demo_conversation_id || "").trim() || null,
+    appointment_status:
+      String(row.status || "")
+        .trim()
+        .toLowerCase() || null,
     conversation_id:
       String(workflow.demo_conversation_id || "").trim() ||
       (typeof row.conversation === "string" ? row.conversation : "") ||
@@ -830,7 +907,8 @@ export async function cancelPackageMeetingReminder(meetingId) {
 }
 
 export async function schedulePackageMeetingThirtyMinReminder(meeting) {
-  if (!meeting?.id || meeting.status !== PACKAGE_MEETING_STATUS.CONFIRMED) return;
+  if (!meeting?.id || meeting.status !== PACKAGE_MEETING_STATUS.CONFIRMED)
+    return;
   const when = meeting.confirmed_at || meeting.scheduled_at;
   if (!when) return;
   const start = new Date(when);
@@ -856,7 +934,9 @@ export async function schedulePackageMeetingThirtyMinReminder(meeting) {
 }
 
 function isTerminalPackageAppointmentMeeting(m) {
-  const pb = String(m?.appointment_status || "").trim().toLowerCase();
+  const pb = String(m?.appointment_status || "")
+    .trim()
+    .toLowerCase();
   return pb === "cancelled" || pb === "canceled" || pb === "declined";
 }
 
@@ -864,9 +944,14 @@ export async function listPackageMeetingsForPatient(patientUserId) {
   if (!patientUserId) return [];
   const rows = await pbListPackageAppointmentRowsForPatient(patientUserId);
   const out = rows.map(decodePackageMeetingFromPbRow).filter(Boolean);
-  const merged = await mergeMeetingsForUser(out, { patientUserId, doctorUserId: null });
+  const merged = await mergeMeetingsForUser(out, {
+    patientUserId,
+    doctorUserId: null,
+  });
   const visible = merged.filter((m) => !isTerminalPackageAppointmentMeeting(m));
-  await Promise.all(visible.map((m) => schedulePackageMeetingThirtyMinReminder(m)));
+  await Promise.all(
+    visible.map((m) => schedulePackageMeetingThirtyMinReminder(m)),
+  );
   return visible;
 }
 
@@ -874,10 +959,17 @@ export async function listPackageMeetingsForDoctor(doctorUserId) {
   if (!doctorUserId) return [];
   const rows = await pbListPackageAppointmentRowsForDoctorMerged(doctorUserId);
   const out = rows.map(decodePackageMeetingFromPbRow).filter(Boolean);
-  const merged = await mergeMeetingsForUser(out, { patientUserId: null, doctorUserId });
+  const merged = await mergeMeetingsForUser(out, {
+    patientUserId: null,
+    doctorUserId,
+  });
   const profileByPatientUser = new Map();
   const uniquePatientUids = [
-    ...new Set((merged || []).map((m) => String(m?.patient_user_id || "").trim()).filter(Boolean)),
+    ...new Set(
+      (merged || [])
+        .map((m) => String(m?.patient_user_id || "").trim())
+        .filter(Boolean),
+    ),
   ];
   await Promise.all(
     uniquePatientUids.map(async (uid) => {
@@ -891,7 +983,9 @@ export async function listPackageMeetingsForDoctor(doctorUserId) {
       patient_profile_id: profileByPatientUser.get(m.patient_user_id) || null,
     }))
     .filter((m) => !isTerminalPackageAppointmentMeeting(m));
-  await Promise.all(enriched.map((m) => schedulePackageMeetingThirtyMinReminder(m)));
+  await Promise.all(
+    enriched.map((m) => schedulePackageMeetingThirtyMinReminder(m)),
+  );
   return enriched;
 }
 
@@ -920,7 +1014,12 @@ async function pbUpdateMeetingRow(rowId, bodyAttempts) {
   throw last || new Error("Update failed");
 }
 
-async function persistMeetingRow(rowId, workflow, displayScheduledAt, consultType = "video") {
+async function persistMeetingRow(
+  rowId,
+  workflow,
+  displayScheduledAt,
+  consultType = "video",
+) {
   const encoded = encodeMeetingDescription(workflow);
   const pbSt = pbAppointmentStatusForWorkflow(workflow);
   const attempts = [
@@ -963,10 +1062,16 @@ async function persistMeetingRow(rowId, workflow, displayScheduledAt, consultTyp
   return meeting;
 }
 
-async function attachPackageOfferToDemoAppointmentRow(appointmentId, offerRecord, packageRequestLabel) {
-  const row = await pb.collection(appointmentsColl()).getOne(String(appointmentId), {
-    requestKey: null,
-  });
+async function attachPackageOfferToDemoAppointmentRow(
+  appointmentId,
+  offerRecord,
+  packageRequestLabel,
+) {
+  const row = await pb
+    .collection(appointmentsColl())
+    .getOne(String(appointmentId), {
+      requestKey: null,
+    });
   const workflow = decodeMeetingWorkflowFromAppointmentRow(row);
   const offerId =
     typeof offerRecord?.id === "string"
@@ -1001,14 +1106,17 @@ export async function doctorSendAskPackageForDemoAppointment({
     throw new Error("Missing appointment, doctor, or patient.");
   }
   const idx = Math.max(0, Math.min(2, Number(packageSlotIndex) || 0));
-  const row = await pb.collection("doctor_profile").getFirstListItem(`user="${doctorUserId}"`, {
-    requestKey: null,
-  });
+  const row = await pb
+    .collection("doctor_profile")
+    .getFirstListItem(`user="${doctorUserId}"`, {
+      requestKey: null,
+    });
   const base = normalizeDoctorPackageSlots(packageTemplatesRawFromRecord(row));
   const localFees = await readLocalDoctorPackageFees(doctorUserId);
   const slots = mergeLocalFeesOntoSlots(base, localFees || []);
   const slot = slots[idx];
-  if (!slot) throw new Error("That package slot is not configured on your profile.");
+  if (!slot)
+    throw new Error("That package slot is not configured on your profile.");
   const offerRecord = await doctorSendPackageOfferFromSlot({
     patientUserId,
     doctorUserId,
@@ -1016,7 +1124,11 @@ export async function doctorSendAskPackageForDemoAppointment({
     packageSlotIndex: idx,
   });
   const label = String(slot?.name || `Package ${idx + 1}`).trim();
-  await attachPackageOfferToDemoAppointmentRow(appointmentId, offerRecord, label);
+  await attachPackageOfferToDemoAppointmentRow(
+    appointmentId,
+    offerRecord,
+    label,
+  );
   return normalizePackageOfferRecord(offerRecord);
 }
 
@@ -1030,7 +1142,9 @@ export async function patientCancelPackageDemoMeeting(meetingId) {
     return true;
   }
   const coll = appointmentsColl();
-  const row = await pb.collection(coll).getOne(String(meetingId), { requestKey: null });
+  const row = await pb
+    .collection(coll)
+    .getOne(String(meetingId), { requestKey: null });
   const workflow = decodeMeetingWorkflowFromAppointmentRow(row);
   const encoded = encodeMeetingDescription(workflow);
   await cancelPackageMeetingReminder(meetingId);
@@ -1053,15 +1167,20 @@ export async function ensurePackageDemoMeetingConversation(meetingId) {
   if (!meetingId) throw new Error("Missing meeting.");
   if (String(meetingId).startsWith("local_")) return null;
   const coll = appointmentsColl();
-  const row = await pb.collection(coll).getOne(String(meetingId), { requestKey: null });
+  const row = await pb
+    .collection(coll)
+    .getOne(String(meetingId), { requestKey: null });
   const workflow = decodeMeetingWorkflowFromAppointmentRow(row);
   const existing = String(workflow.demo_conversation_id || "").trim();
   if (existing) return existing;
   const patientId =
-    String(workflow.patient_auth_user_id || "").trim() || expandRelId(row.patient);
+    String(workflow.patient_auth_user_id || "").trim() ||
+    expandRelId(row.patient);
   const doctorId =
-    String(workflow.doctor_auth_user_id || "").trim() || expandRelId(row.doctor);
-  if (!patientId || !doctorId) throw new Error("Missing participants on this meeting.");
+    String(workflow.doctor_auth_user_id || "").trim() ||
+    expandRelId(row.doctor);
+  if (!patientId || !doctorId)
+    throw new Error("Missing participants on this meeting.");
   const title = "Package demo";
   let conv;
   try {
@@ -1081,9 +1200,16 @@ export async function ensurePackageDemoMeetingConversation(meetingId) {
   const convId = conv?.id;
   if (!convId) throw new Error("Could not create chat.");
   const next = { ...workflow, demo_conversation_id: convId };
-  await persistMeetingRow(String(meetingId), next, row.scheduled_at, row.consultation_type || "video");
+  await persistMeetingRow(
+    String(meetingId),
+    next,
+    row.scheduled_at,
+    row.consultation_type || "video",
+  );
   try {
-    await pb.collection(coll).update(String(meetingId), { conversation: convId });
+    await pb
+      .collection(coll)
+      .update(String(meetingId), { conversation: convId });
   } catch {
     // optional relation / rules
   }
@@ -1102,12 +1228,17 @@ export async function createPackageMeetingRequest({
   description,
   callKind = "video",
 }) {
-  if (!patientUserId || !doctorUserId) throw new Error("Missing patient or doctor.");
+  if (!patientUserId || !doctorUserId)
+    throw new Error("Missing patient or doctor.");
   if (!proposedAtIso) throw new Error("Pick a meeting date and time.");
   const desc = String(description || "").trim();
-  if (!desc) throw new Error("Enter a short description (reason, billing context, etc.).");
+  if (!desc)
+    throw new Error(
+      "Enter a short description (reason, billing context, etc.).",
+    );
   const proposed = new Date(proposedAtIso);
-  if (!Number.isFinite(proposed.getTime())) throw new Error("Invalid date/time.");
+  if (!Number.isFinite(proposed.getTime()))
+    throw new Error("Invalid date/time.");
   let workflow = buildWorkflowPayload({
     patientDescription: desc,
     status: PACKAGE_MEETING_STATUS.AWAITING_DOCTOR,
@@ -1123,7 +1254,10 @@ export async function createPackageMeetingRequest({
   );
   const encoded = encodeMeetingDescription(workflow);
   const consult = String(callKind || "video").trim() || "video";
-  const doctorCandidates = await doctorIdsForAppointmentCreate(doctorUserId, doctorProfileId);
+  const doctorCandidates = await doctorIdsForAppointmentCreate(
+    doctorUserId,
+    doctorProfileId,
+  );
   if (!doctorCandidates.length) {
     throw new Error(
       isPbAppointmentDoctorProfileRelation()
@@ -1281,7 +1415,9 @@ export async function doctorAcceptPackageMeetingInitial(meetingId) {
       };
     });
   }
-  const row = await pb.collection(appointmentsColl()).getOne(meetingId, { requestKey: null });
+  const row = await pb
+    .collection(appointmentsColl())
+    .getOne(meetingId, { requestKey: null });
   const m = decodePackageMeetingFromPbRow(row);
   if (m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR) {
     throw new Error("This meeting is not waiting for your first response.");
@@ -1294,12 +1430,24 @@ export async function doctorAcceptPackageMeetingInitial(meetingId) {
     confirmed_at: proposed,
     proposed_at: proposed,
   };
-  next = pushMessage(next, "doctor", "Accepted your proposed time. See you at the meeting.");
+  next = pushMessage(
+    next,
+    "doctor",
+    "Accepted your proposed time. See you at the meeting.",
+  );
   await cancelPackageMeetingReminder(meetingId);
-  return persistMeetingRow(meetingId, next, proposed, row.consultation_type || "video");
+  return persistMeetingRow(
+    meetingId,
+    next,
+    proposed,
+    row.consultation_type || "video",
+  );
 }
 
-export async function doctorProposePackageMeetingReschedule(meetingId, alternateIsoSlots) {
+export async function doctorProposePackageMeetingReschedule(
+  meetingId,
+  alternateIsoSlots,
+) {
   if (!meetingId) throw new Error("Missing meeting.");
   const slots = (alternateIsoSlots || [])
     .map((s) => String(s || "").trim())
@@ -1311,13 +1459,16 @@ export async function doctorProposePackageMeetingReschedule(meetingId, alternate
     })
     .filter(Boolean);
   if (normalized.length < 3) {
-    throw new Error("Choose at least three valid alternate date/times for the patient.");
+    throw new Error(
+      "Choose at least three valid alternate date/times for the patient.",
+    );
   }
   if (String(meetingId).startsWith("local_")) {
     return withLocalMeeting(meetingId, (m) => {
       if (
         m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR &&
-        m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK &&
+        m.status !==
+          PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK &&
         m.status !== PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS
       ) {
         throw new Error("Reschedule is not available for this meeting state.");
@@ -1340,7 +1491,9 @@ export async function doctorProposePackageMeetingReschedule(meetingId, alternate
       };
     });
   }
-  const row = await pb.collection(appointmentsColl()).getOne(meetingId, { requestKey: null });
+  const row = await pb
+    .collection(appointmentsColl())
+    .getOne(meetingId, { requestKey: null });
   const m = decodePackageMeetingFromPbRow(row);
   if (
     m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR &&
@@ -1363,11 +1516,17 @@ export async function doctorProposePackageMeetingReschedule(meetingId, alternate
     `Suggested times: ${normalized.map((x) => new Date(x).toLocaleString()).join(" · ")}`,
   );
   await cancelPackageMeetingReminder(meetingId);
-  return persistMeetingRow(meetingId, next, normalized[0], row.consultation_type || "video");
+  return persistMeetingRow(
+    meetingId,
+    next,
+    normalized[0],
+    row.consultation_type || "video",
+  );
 }
 
 export async function patientChooseRescheduleSlot(meetingId, chosenIso) {
-  if (!meetingId || !chosenIso) throw new Error("Pick one of the doctor’s times.");
+  if (!meetingId || !chosenIso)
+    throw new Error("Pick one of the doctor’s times.");
   const pick = new Date(chosenIso);
   if (!Number.isFinite(pick.getTime())) throw new Error("Invalid time.");
   if (String(meetingId).startsWith("local_")) {
@@ -1398,7 +1557,9 @@ export async function patientChooseRescheduleSlot(meetingId, chosenIso) {
       };
     });
   }
-  const row = await pb.collection(appointmentsColl()).getOne(meetingId, { requestKey: null });
+  const row = await pb
+    .collection(appointmentsColl())
+    .getOne(meetingId, { requestKey: null });
   const m = decodePackageMeetingFromPbRow(row);
   if (m.status !== PACKAGE_MEETING_STATUS.DOCTOR_PROPOSED_SLOTS) {
     throw new Error("The doctor has not proposed alternate slots yet.");
@@ -1422,20 +1583,33 @@ export async function patientChooseRescheduleSlot(meetingId, chosenIso) {
     `Selected ${pick.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} - please confirm.`,
   );
   await cancelPackageMeetingReminder(meetingId);
-  return persistMeetingRow(meetingId, next, pick.toISOString(), row.consultation_type || "video");
+  return persistMeetingRow(
+    meetingId,
+    next,
+    pick.toISOString(),
+    row.consultation_type || "video",
+  );
 }
 
 export async function doctorConfirmPatientRescheduleChoice(meetingId) {
   if (!meetingId) throw new Error("Missing meeting.");
   if (String(meetingId).startsWith("local_")) {
     return withLocalMeeting(meetingId, (m) => {
-      if (m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK || !m.patient_selected_slot) {
+      if (
+        m.status !==
+          PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK ||
+        !m.patient_selected_slot
+      ) {
         throw new Error("Nothing to confirm yet.");
       }
       const when = m.patient_selected_slot;
       const msgs = [
         ...(m.messages || []),
-        { at: new Date().toISOString(), role: "doctor", text: "Confirmed. Meeting is booked." },
+        {
+          at: new Date().toISOString(),
+          role: "doctor",
+          text: "Confirmed. Meeting is booked.",
+        },
       ];
       return {
         ...m,
@@ -1445,9 +1619,14 @@ export async function doctorConfirmPatientRescheduleChoice(meetingId) {
       };
     });
   }
-  const row = await pb.collection(appointmentsColl()).getOne(meetingId, { requestKey: null });
+  const row = await pb
+    .collection(appointmentsColl())
+    .getOne(meetingId, { requestKey: null });
   const m = decodePackageMeetingFromPbRow(row);
-  if (m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK || !m.patient_selected_slot) {
+  if (
+    m.status !== PACKAGE_MEETING_STATUS.AWAITING_DOCTOR_AFTER_PATIENT_PICK ||
+    !m.patient_selected_slot
+  ) {
     throw new Error("Nothing to confirm yet.");
   }
   const wf = decodeMeetingWorkflowFromAppointmentRow(row);
@@ -1459,7 +1638,12 @@ export async function doctorConfirmPatientRescheduleChoice(meetingId) {
   };
   next = pushMessage(next, "doctor", "Confirmed. Meeting is booked.");
   await cancelPackageMeetingReminder(meetingId);
-  return persistMeetingRow(meetingId, next, when, row.consultation_type || "video");
+  return persistMeetingRow(
+    meetingId,
+    next,
+    when,
+    row.consultation_type || "video",
+  );
 }
 
 // --- Package offers (collection: package_offers) ---
@@ -1518,7 +1702,9 @@ export async function doctorSendPackageOfferFromSlot({
   packageSlotIndex,
 }) {
   const amountInr = Number(
-    String(slot?.total_amount_inr ?? "").replace(/,/g, "").trim() || 0,
+    String(slot?.total_amount_inr ?? "")
+      .replace(/,/g, "")
+      .trim() || 0,
   );
   if (!amountInr) throw new Error("Package amount must be greater than zero.");
   const { platformFeeInr, doctorCoins } = splitPackagePayment(amountInr);
@@ -1570,7 +1756,10 @@ export function cleanAppointmentReasonForDisplay(reason) {
 }
 
 /** Resolve the auth user id behind a `patient_profile`/`doctor_profile` relation id. */
-async function resolveAuthUserIdForRelationId(profileCollection, relationIdValue) {
+async function resolveAuthUserIdForRelationId(
+  profileCollection,
+  relationIdValue,
+) {
   if (!relationIdValue) return null;
   try {
     const rec = await pb.collection(profileCollection).getOne(relationIdValue, {
@@ -1611,17 +1800,25 @@ function normalizePackageOfferRecord(r) {
  */
 async function enrichOffersWithAuthUserIds(offers) {
   const list = Array.isArray(offers) ? offers : [];
-  const uniquePatients = [...new Set(list.map((o) => o.patient).filter(Boolean))];
+  const uniquePatients = [
+    ...new Set(list.map((o) => o.patient).filter(Boolean)),
+  ];
   const uniqueDoctors = [...new Set(list.map((o) => o.doctor).filter(Boolean))];
   const patientCache = new Map();
   const doctorCache = new Map();
   await Promise.all([
     ...uniquePatients.map(async (id) => {
-      const fromProfile = await resolveAuthUserIdForRelationId("patient_profile", id);
+      const fromProfile = await resolveAuthUserIdForRelationId(
+        "patient_profile",
+        id,
+      );
       patientCache.set(id, fromProfile || id);
     }),
     ...uniqueDoctors.map(async (id) => {
-      const fromProfile = await resolveAuthUserIdForRelationId("doctor_profile", id);
+      const fromProfile = await resolveAuthUserIdForRelationId(
+        "doctor_profile",
+        id,
+      );
       doctorCache.set(id, fromProfile || id);
     }),
   ]);
@@ -1694,7 +1891,9 @@ export async function listPackageOffersForPatient(
 export async function listPackageOffersForDoctor(doctorUserId) {
   if (!doctorUserId) return [];
   const profileId = await resolveDoctorProfileIdForUser(doctorUserId);
-  const tryIds = [...new Set([doctorUserId, profileId].filter(Boolean).map(String))];
+  const tryIds = [
+    ...new Set([doctorUserId, profileId].filter(Boolean).map(String)),
+  ];
   const partialMaps = await Promise.all(
     tryIds.map(async (id) => {
       const local = new Map();
@@ -1739,6 +1938,14 @@ export async function listPackageOffersForDoctor(doctorUserId) {
  */
 export async function patientPayPackageOfferStub(offerId, doctorUserId) {
   if (!offerId) throw new Error("Missing offer.");
+  let offer = null;
+  try {
+    offer = await pb.collection("package_offers").getOne(offerId, {
+      requestKey: null,
+    });
+  } catch {
+    offer = null;
+  }
   const paidPayload = {
     status: "paid",
     deal_started_at: new Date().toISOString(),
@@ -1749,10 +1956,28 @@ export async function patientPayPackageOfferStub(offerId, doctorUserId) {
     try {
       await pb.collection("package_offers").update(offerId, { status: "paid" });
     } catch (e2) {
-      const msg = formatPocketBaseClientError(error) || formatPocketBaseClientError(e2);
+      const msg =
+        formatPocketBaseClientError(error) || formatPocketBaseClientError(e2);
       throw new Error(msg || "Payment update failed.");
     }
   }
+  await recordPaymentTransaction({
+    patientUserId: getAuthUser()?.id,
+    doctorUserId,
+    sourceCollection: "package_offers",
+    sourceId: offerId,
+    kind: "package_offer",
+    provider: "stub",
+    amountInr: offer?.amount_inr ?? offer?.amountInr,
+    currency: "INR",
+    status: "success",
+    description: offer?.title || "Package offer payment",
+    metadata: {
+      package_offer_id: offerId,
+      platform_fee_inr: offer?.platform_fee_inr ?? offer?.platformFeeInr ?? null,
+      doctor_coins: offer?.doctor_coins ?? offer?.doctorCoins ?? null,
+    },
+  });
   const ts = new Date().toISOString();
   const lines = [
     {
@@ -2146,8 +2371,7 @@ export async function listInferredOffersByDoctor(doctorUserId, requests) {
       const page = await pb.collection("messages").getList(1, 1, {
         requestKey: null,
         sort: "created",
-        filter:
-          `conversation="${conv.id}" && sender="${doctorUserId}" && created > "${requestCreated}"`,
+        filter: `conversation="${conv.id}" && sender="${doctorUserId}" && created > "${requestCreated}"`,
       });
       firstMsg = page?.items?.[0] || null;
     } catch {
@@ -2249,8 +2473,7 @@ export async function listInferredQuickHelpOffersForPatient(
         const page = await pb.collection("messages").getList(1, 1, {
           requestKey: null,
           sort: "created",
-          filter:
-            `conversation="${dc.conversation.id}" && sender="${dc.peerId}" && created > "${requestCreated}"`,
+          filter: `conversation="${dc.conversation.id}" && sender="${dc.peerId}" && created > "${requestCreated}"`,
         });
         firstMsg = page?.items?.[0] || null;
       } catch {
@@ -2287,22 +2510,18 @@ export async function listActiveQuickRequestsForPatient(patientUserId) {
       filter: filterActive,
     });
   } catch (e) {
-    console.log(
-      "listActiveQuickRequestsForPatient solutions:",
-      e?.message,
-    );
+    console.log("listActiveQuickRequestsForPatient solutions:", e?.message);
   }
   try {
-    counselling = await pb.collection("quick_counselling_requests").getFullList({
-      requestKey: null,
-      sort: "-created",
-      filter: filterActive,
-    });
+    counselling = await pb
+      .collection("quick_counselling_requests")
+      .getFullList({
+        requestKey: null,
+        sort: "-created",
+        filter: filterActive,
+      });
   } catch (e) {
-    console.log(
-      "listActiveQuickRequestsForPatient counselling:",
-      e?.message,
-    );
+    console.log("listActiveQuickRequestsForPatient counselling:", e?.message);
   }
 
   const tagged = [
@@ -2343,7 +2562,9 @@ export async function listActiveQuickRequestsForPatient(patientUserId) {
       const convMap = offersPerRequest.get(reqKey);
       return { ...row, offers: convMap ? Array.from(convMap.values()) : [] };
     })
-    .sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")));
+    .sort((a, b) =>
+      String(b.created || "").localeCompare(String(a.created || "")),
+    );
 
   return { items };
 }
@@ -2387,7 +2608,10 @@ export async function requestPackageDoctorChange({
   }
 }
 
-export async function persistPreferredQuickProvider(patientProfileId, doctorUserId) {
+export async function persistPreferredQuickProvider(
+  patientProfileId,
+  doctorUserId,
+) {
   if (!patientProfileId) return;
   try {
     await pb.collection("patient_profile").update(patientProfileId, {
