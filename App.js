@@ -23239,6 +23239,7 @@ const ModernHeader = ({ title, subtitle }) => {
 
 const PatientWoundScreen = () => {
   const { theme } = useTheme();
+  const tabNav = useMainTabNav();
   const {
     wounds,
     setWounds,
@@ -23248,7 +23249,18 @@ const PatientWoundScreen = () => {
     setPatientShowNewWound,
     currentUser,
     refreshAllData,
+    requestOpenConversation,
   } = useAppData();
+  const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
+  const handleOpenOfferConversation = useCallback(
+    (conversationId, peerUserId) => {
+      requestOpenConversation?.(conversationId, {
+        patientUserId: peerUserId,
+      });
+      tabNav?.navigateTab?.("Chat");
+    },
+    [requestOpenConversation, tabNav],
+  );
   const [showWoundTabQuickCounselling, setShowWoundTabQuickCounselling] =
     useState(false);
   const selectedWound = (wounds || []).find(
@@ -23265,6 +23277,7 @@ const PatientWoundScreen = () => {
         fromWoundTracker
         onBack={() => {
           setShowWoundTabQuickCounselling(false);
+          setQuickRequestsRefreshKey((k) => k + 1);
           void refreshAllData?.().catch(() => {});
         }}
         patientUserId={currentUser?.id}
@@ -23374,6 +23387,24 @@ const PatientWoundScreen = () => {
               ₹25 · text only, no photo
             </Text>
           </TouchableOpacity>
+        </View>
+
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(16),
+            padding: RFValue(16),
+            marginBottom: RFValue(20),
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+          }}
+        >
+          <PatientQuickRequestsTrackerPanel
+            theme={theme}
+            patientUserId={currentUser?.id}
+            onOpenConversation={handleOpenOfferConversation}
+            refreshTrigger={quickRequestsRefreshKey}
+          />
         </View>
 
         <Text
