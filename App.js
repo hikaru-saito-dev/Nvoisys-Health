@@ -5734,6 +5734,7 @@ const CallScreen = ({
   const [status, setStatus] = useState("Connecting...");
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(callType === "video");
+  const [isFrontCamera, setIsFrontCamera] = useState(true);
   const localStreamRef = useRef(null);
   const pendingIceCandidatesRef = useRef([]);
   const pcRef = useRef(null);
@@ -5804,7 +5805,7 @@ const CallScreen = ({
         } = getLivekitWebRTC();
         const stream = await mediaDevices.getUserMedia({
           audio: true,
-          video: callType === "video",
+          video: callType === "video" ? { facingMode: "user" } : false,
         });
         if (!mounted) return;
         localStreamRef.current = stream;
@@ -5971,6 +5972,29 @@ const CallScreen = ({
     setIsVideoEnabled(videoTracks.length > 0 ? videoTracks[0].enabled : false);
   };
 
+  const switchCamera = () => {
+    if (callType !== "video" || !localStream) return;
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    try {
+      if (videoTrack.switchCamera) {
+        videoTrack.switchCamera();
+      } else if (videoTrack._switchCamera) {
+        videoTrack._switchCamera();
+      } else if (videoTrack.applyConstraints) {
+        void videoTrack.applyConstraints({
+          facingMode: isFrontCamera ? "environment" : "user",
+        });
+      } else {
+        return;
+      }
+      setIsFrontCamera((prev) => !prev);
+    } catch (error) {
+      console.log("switchCamera error:", error?.message || error);
+    }
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#0B1120" }}>
       <StatusBar barStyle="light-content" backgroundColor="#0B1120" />
@@ -6059,7 +6083,7 @@ const CallScreen = ({
                 streamURL={localStream.toURL()}
                 style={{ width: "100%", height: "100%" }}
                 objectFit="cover"
-                mirror
+                mirror={isFrontCamera}
                 zOrder={1}
               />
             ) : (
@@ -6119,6 +6143,25 @@ const CallScreen = ({
           }}
         >
           <Ionicons name="call" size={RFValue(26)} color="#FFF" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={switchCamera}
+          disabled={callType !== "video" || !isVideoEnabled}
+          style={{
+            width: RFValue(52),
+            height: RFValue(52),
+            borderRadius: RFValue(26),
+            backgroundColor:
+              callType !== "video" || !isVideoEnabled
+                ? "rgba(255,255,255,0.08)"
+                : "rgba(255,255,255,0.15)",
+            justifyContent: "center",
+            alignItems: "center",
+            opacity: callType !== "video" || !isVideoEnabled ? 0.4 : 1,
+            marginHorizontal: RFValue(7),
+          }}
+        >
+          <Ionicons name="camera-reverse" size={RFValue(22)} color="#FFF" />
         </TouchableOpacity>
         <TouchableOpacity
           onPress={toggleVideo}
