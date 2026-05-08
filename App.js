@@ -4,6 +4,7 @@ import Constants from "expo-constants";
 import { Image as ExpoImage } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
+import * as SystemUI from "expo-system-ui";
 import * as WebBrowser from "expo-web-browser";
 import React, {
   createContext,
@@ -18,6 +19,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Appearance,
   BackHandler,
   Dimensions,
   Easing,
@@ -33,6 +35,7 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -425,6 +428,8 @@ const THEMES = {
 };
 
 const THEME_STORAGE_KEY = "app_theme_key";
+/** When true, effective theme follows OS light/dark (maps to `light` / `dark` palettes). */
+const THEME_FOLLOW_SYSTEM_KEY = "app_theme_follow_system";
 
 // Theme Context
 const ThemeContext = createContext();
@@ -7939,8 +7944,18 @@ const PatientChatScreen = () => {
 };
 
 const ThemeScreen = ({ onBack }) => {
-  const { theme, changeTheme, themeKey } = useTheme();
-  const [selectedTheme, setSelectedTheme] = useState(themeKey);
+  const {
+    theme,
+    changeTheme,
+    paletteKey,
+    followSystem,
+    setFollowSystem,
+  } = useTheme();
+  const [selectedTheme, setSelectedTheme] = useState(paletteKey);
+
+  useEffect(() => {
+    setSelectedTheme(paletteKey);
+  }, [paletteKey]);
 
   const themes = [
     {
@@ -8069,6 +8084,57 @@ const ThemeScreen = ({ onBack }) => {
           paddingBottom: tabScrollBottomPadding(),
         }}
       >
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(16),
+            padding: RFValue(16),
+            marginBottom: RFValue(16),
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <View style={{ flex: 1, paddingRight: RFValue(12) }}>
+              <Text
+                style={{
+                  fontSize: RFValue(15),
+                  fontWeight: "700",
+                  color: theme.textPrimary,
+                }}
+              >
+                Use device appearance
+              </Text>
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  color: theme.textSecondary,
+                  marginTop: RFValue(4),
+                  lineHeight: RFValue(18),
+                }}
+              >
+                When on, the app follows this device&apos;s light or dark mode
+                (Light or Obsidian Care). Choosing a theme below turns this off.
+              </Text>
+            </View>
+            <Switch
+              value={followSystem}
+              onValueChange={setFollowSystem}
+              trackColor={{
+                false: theme.inputBorder,
+                true: theme.accentLight,
+              }}
+              thumbColor={followSystem ? theme.accent : theme.textTertiary}
+            />
+          </View>
+        </View>
+
         {/* Live Preview */}
         <View
           style={{
@@ -9276,7 +9342,7 @@ const PatientProfileScreen = ({
   const [showAppointments, setShowAppointments] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showMedicalRecords, setShowMedicalRecords] = useState(false);
-  const { theme } = useTheme();
+  const { theme, followSystem, setFollowSystem } = useTheme();
   const {
     upgradeToPackageMode,
     resetCareOnboarding,
@@ -9668,6 +9734,45 @@ const PatientProfileScreen = ({
             >
               Appearance
             </Text>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: RFValue(16),
+                paddingBottom: RFValue(12),
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: RFValue(12) }}>
+                <Text
+                  style={{
+                    fontSize: RFValue(15),
+                    fontWeight: "600",
+                    color: theme.textPrimary,
+                  }}
+                >
+                  Use device appearance
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    color: theme.textSecondary,
+                    marginTop: RFValue(4),
+                    lineHeight: RFValue(16),
+                  }}
+                >
+                  Matches this phone&apos;s light or dark mode when enabled.
+                </Text>
+              </View>
+              <Switch
+                value={followSystem}
+                onValueChange={setFollowSystem}
+                trackColor={{
+                  false: theme.inputBorder,
+                  true: theme.accentLight,
+                }}
+                thumbColor={followSystem ? theme.accent : theme.textTertiary}
+              />
+            </View>
             <TouchableOpacity
               onPress={() => setShowTheme(true)}
               style={{
@@ -9708,7 +9813,9 @@ const PatientProfileScreen = ({
                 <Text
                   style={{ fontSize: RFValue(12), color: theme.textSecondary }}
                 >
-                  {theme.name}
+                  {followSystem
+                    ? `${theme.name} (from device)`
+                    : theme.name}
                 </Text>
               </View>
               <Ionicons
@@ -10317,6 +10424,7 @@ const LanguageScreen = ({ onNext, onBack }) => {
 };
 
 const OnboardingCarousel = ({ onNext, onBack }) => {
+  const { theme } = useTheme();
   const [slide, setSlide] = useState(0);
   const insets = useSafeAreaInsets();
 
@@ -10374,8 +10482,8 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
   const current = slides[slide];
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
 
       {/* Top buttons - fixed height row */}
       <View
@@ -10394,12 +10502,16 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
               width: RFValue(36),
               height: RFValue(36),
               borderRadius: RFValue(10),
-              backgroundColor: "#F3F4F6",
+              backgroundColor: theme.divider,
               justifyContent: "center",
               alignItems: "center",
             }}
           >
-            <Ionicons name="arrow-back" size={RFValue(20)} color="#374151" />
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textSecondary}
+            />
           </TouchableOpacity>
         ) : (
           <View style={{ width: RFValue(36) }} />
@@ -10410,13 +10522,13 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
             paddingHorizontal: RFValue(16),
             paddingVertical: RFValue(6),
             borderRadius: RFValue(20),
-            backgroundColor: "#F3F4F6",
+            backgroundColor: theme.divider,
             justifyContent: "center",
           }}
         >
           <Text
             style={{
-              color: "#6B7280",
+              color: theme.textSecondary,
               fontWeight: "600",
               fontSize: RFValue(12),
             }}
@@ -10476,7 +10588,7 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
           style={{
             fontSize: RFValue(24),
             fontWeight: "800",
-            color: "#1E1B4B",
+            color: theme.textPrimary,
             textAlign: "center",
             marginBottom: RFValue(10),
             lineHeight: RFValue(30),
@@ -10488,7 +10600,7 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
         <Text
           style={{
             fontSize: RFValue(14),
-            color: "#6B7280",
+            color: theme.textSecondary,
             textAlign: "center",
             marginBottom: RFValue(20),
             lineHeight: RFValue(22),
@@ -10506,10 +10618,12 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
                 flexDirection: "row",
                 alignItems: "flex-start",
                 marginBottom: RFValue(10),
-                backgroundColor: "#FAFBFF",
+                backgroundColor: theme.accentLight,
                 paddingVertical: RFValue(12),
                 paddingHorizontal: RFValue(12),
                 borderRadius: RFValue(14),
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.cardBorder,
               }}
             >
               <View
@@ -10531,7 +10645,7 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
                   flex: 1,
                   flexShrink: 1,
                   fontSize: RFValue(14),
-                  color: "#374151",
+                  color: theme.textPrimary,
                   fontWeight: "500",
                   lineHeight: RFValue(20),
                 }}
@@ -10549,9 +10663,9 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
           paddingHorizontal: RFValue(24),
           paddingTop: RFValue(12),
           paddingBottom: Math.max(insets.bottom + RFValue(6), RFValue(16)),
-          backgroundColor: "#FFFFFF",
+          backgroundColor: theme.bgSolid,
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: "#E5E7EB",
+          borderTopColor: theme.cardBorder,
         }}
       >
         <View
@@ -10569,7 +10683,8 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
                 width: idx === slide ? 28 : 8,
                 height: 8,
                 borderRadius: 4,
-                backgroundColor: idx === slide ? current.iconColor : "#E5E7EB",
+                backgroundColor:
+                  idx === slide ? current.iconColor : theme.cardBorder,
                 marginHorizontal: 4,
               }}
             />
@@ -12830,7 +12945,8 @@ const AuthScreen = ({ onLogin }) => {
 
   if (step === "REG") {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+        <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -12855,7 +12971,7 @@ const AuthScreen = ({ onLogin }) => {
                 <Ionicons
                   name="arrow-back"
                   size={RFValue(24)}
-                  color="#1E1B4B"
+                  color={theme.textPrimary}
                 />
               </TouchableOpacity>
 
@@ -12863,14 +12979,16 @@ const AuthScreen = ({ onLogin }) => {
                 style={{
                   fontSize: RFValue(28),
                   fontWeight: "800",
-                  color: "#1E1B4B",
+                  color: theme.textPrimary,
                   marginBottom: RFValue(8),
                 }}
               >
                 {authMode === "signup" ? "Create account" : "Login"}
               </Text>
 
-              <Text style={{ fontSize: RFValue(14), color: "#6B7280" }}>
+              <Text
+                style={{ fontSize: RFValue(14), color: theme.textSecondary }}
+              >
                 Role selected: {role}
               </Text>
             </View>
@@ -12880,10 +12998,10 @@ const AuthScreen = ({ onLogin }) => {
                 style={{
                   marginBottom: RFValue(16),
                   padding: RFValue(14),
-                  backgroundColor: "#EEF2FF",
+                  backgroundColor: theme.accentLight,
                   borderRadius: RFValue(14),
                   borderWidth: 1,
-                  borderColor: "#C7D2FE",
+                  borderColor: theme.cardBorder,
                 }}
               >
                 <View
@@ -12896,14 +13014,14 @@ const AuthScreen = ({ onLogin }) => {
                   <Ionicons
                     name="document-text-outline"
                     size={RFValue(22)}
-                    color="#4338CA"
+                    color={theme.accent}
                     style={{ marginRight: RFValue(8) }}
                   />
                   <Text
                     style={{
                       fontSize: RFValue(16),
                       fontWeight: "800",
-                      color: "#1E1B4B",
+                      color: theme.textPrimary,
                       flex: 1,
                     }}
                   >
@@ -12913,7 +13031,7 @@ const AuthScreen = ({ onLogin }) => {
                 <Text
                   style={{
                     fontSize: RFValue(13),
-                    color: "#4338CA",
+                    color: theme.textSecondary,
                     lineHeight: 20,
                   }}
                 >
@@ -12934,17 +13052,17 @@ const AuthScreen = ({ onLogin }) => {
                   if (authSuccess) setAuthSuccess("");
                 }}
                 style={{
-                  backgroundColor: "#FFFFFF",
+                  backgroundColor: theme.card,
                   borderRadius: RFValue(14),
                   paddingHorizontal: RFValue(16),
                   paddingVertical: RFValue(16),
                   marginBottom: RFValue(14),
                   borderWidth: 1,
-                  borderColor: "#E5E7EB",
+                  borderColor: theme.inputBorder,
                   fontSize: RFValue(15),
-                  color: "#1E1B4B",
+                  color: theme.textPrimary,
                 }}
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={theme.textTertiary}
               />
             )}
 
@@ -12959,17 +13077,17 @@ const AuthScreen = ({ onLogin }) => {
               keyboardType="email-address"
               autoCapitalize="none"
               style={{
-                backgroundColor: "#FFFFFF",
+                backgroundColor: theme.card,
                 borderRadius: RFValue(14),
                 paddingHorizontal: RFValue(16),
                 paddingVertical: RFValue(16),
                 marginBottom: RFValue(14),
                 borderWidth: 1,
-                borderColor: "#E5E7EB",
+                borderColor: theme.inputBorder,
                 fontSize: RFValue(15),
-                color: "#1E1B4B",
+                color: theme.textPrimary,
               }}
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.textTertiary}
             />
 
             <View
@@ -13023,13 +13141,13 @@ const AuthScreen = ({ onLogin }) => {
             {authMode === "signup" && (
               <View
                 style={{
-                  backgroundColor: "#FFFFFF",
+                  backgroundColor: theme.card,
                   borderRadius: RFValue(14),
                   paddingLeft: RFValue(16),
                   paddingRight: RFValue(12),
                   marginBottom: RFValue(14),
                   borderWidth: 1,
-                  borderColor: "#E5E7EB",
+                  borderColor: theme.inputBorder,
                   flexDirection: "row",
                   alignItems: "center",
                 }}
@@ -13047,9 +13165,9 @@ const AuthScreen = ({ onLogin }) => {
                     flex: 1,
                     paddingVertical: RFValue(16),
                     fontSize: RFValue(15),
-                    color: "#1E1B4B",
+                    color: theme.textPrimary,
                   }}
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={theme.textTertiary}
                 />
 
                 <TouchableOpacity
@@ -13058,7 +13176,7 @@ const AuthScreen = ({ onLogin }) => {
                 >
                   <Text
                     style={{
-                      color: "#4338CA",
+                      color: theme.accent,
                       fontWeight: "700",
                       fontSize: RFValue(12),
                       opacity: authLoading ? 0.6 : 1,
@@ -13084,7 +13202,7 @@ const AuthScreen = ({ onLogin }) => {
               >
                 <Text
                   style={{
-                    color: "#4338CA",
+                    color: theme.accent,
                     fontWeight: "700",
                     fontSize: RFValue(13),
                     opacity: authLoading ? 0.6 : 1,
@@ -13101,7 +13219,7 @@ const AuthScreen = ({ onLogin }) => {
                   style={{
                     fontSize: RFValue(13),
                     fontWeight: "700",
-                    color: "#374151",
+                    color: theme.textSecondary,
                     marginBottom: RFValue(8),
                   }}
                 >
@@ -13112,28 +13230,28 @@ const AuthScreen = ({ onLogin }) => {
                   value={patientCondition}
                   onChangeText={setPatientCondition}
                   style={{
-                    backgroundColor: "#FFFFFF",
+                    backgroundColor: theme.card,
                     borderRadius: RFValue(14),
                     paddingHorizontal: RFValue(16),
                     paddingVertical: RFValue(16),
                     marginBottom: RFValue(14),
                     borderWidth: 1,
-                    borderColor: "#E5E7EB",
+                    borderColor: theme.inputBorder,
                     fontSize: RFValue(15),
-                    color: "#1E1B4B",
+                    color: theme.textPrimary,
                   }}
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={theme.textTertiary}
                 />
 
                 <PatientHealthProfileFields
                   palette={{
-                    card: "#FFFFFF",
-                    border: "#E5E7EB",
-                    textPrimary: "#1E1B4B",
-                    textSecondary: "#374151",
-                    textTertiary: "#6B7280",
-                    placeholder: "#9CA3AF",
-                    accent: "#4338CA",
+                    card: theme.card,
+                    border: theme.inputBorder,
+                    textPrimary: theme.textPrimary,
+                    textSecondary: theme.textSecondary,
+                    textTertiary: theme.textTertiary,
+                    placeholder: theme.textTertiary,
+                    accent: theme.accent,
                     accentText: "#FFFFFF",
                   }}
                   values={patientHealthValues}
@@ -13145,7 +13263,7 @@ const AuthScreen = ({ onLogin }) => {
                   style={{
                     fontSize: RFValue(13),
                     fontWeight: "700",
-                    color: "#374151",
+                    color: theme.textSecondary,
                     marginBottom: RFValue(8),
                   }}
                 >
@@ -13172,9 +13290,9 @@ const AuthScreen = ({ onLogin }) => {
                           paddingHorizontal: RFValue(18),
                           paddingVertical: RFValue(10),
                           borderRadius: RFValue(12),
-                          backgroundColor: active ? "#4338CA" : "#FFFFFF",
+                          backgroundColor: active ? theme.accent : theme.card,
                           borderWidth: 1,
-                          borderColor: active ? "#4338CA" : "#E5E7EB",
+                          borderColor: active ? theme.accent : theme.inputBorder,
                           marginRight: RFValue(8),
                           marginBottom: RFValue(8),
                         }}
@@ -13183,7 +13301,7 @@ const AuthScreen = ({ onLogin }) => {
                           style={{
                             fontSize: RFValue(14),
                             fontWeight: "700",
-                            color: active ? "#FFF" : "#374151",
+                            color: active ? "#FFF" : theme.textSecondary,
                           }}
                         >
                           {genderOption.label}
@@ -13196,7 +13314,7 @@ const AuthScreen = ({ onLogin }) => {
                   style={{
                     fontSize: RFValue(13),
                     fontWeight: "700",
-                    color: "#374151",
+                    color: theme.textSecondary,
                     marginBottom: RFValue(8),
                   }}
                 >
@@ -13219,9 +13337,9 @@ const AuthScreen = ({ onLogin }) => {
                   style={{
                     height: RFValue(120),
                     borderRadius: RFValue(14),
-                    backgroundColor: "#FFFFFF",
+                    backgroundColor: theme.card,
                     borderWidth: 2,
-                    borderColor: "#E5E7EB",
+                    borderColor: theme.inputBorder,
                     borderStyle: "dashed",
                     justifyContent: "center",
                     alignItems: "center",
@@ -13240,11 +13358,11 @@ const AuthScreen = ({ onLogin }) => {
                       <Ionicons
                         name="camera"
                         size={RFValue(32)}
-                        color="#9CA3AF"
+                        color={theme.textTertiary}
                       />
                       <Text
                         style={{
-                          color: "#9CA3AF",
+                          color: theme.textTertiary,
                           marginTop: RFValue(6),
                           fontSize: RFValue(13),
                         }}
@@ -13279,7 +13397,7 @@ const AuthScreen = ({ onLogin }) => {
                   style={{
                     fontSize: RFValue(13),
                     fontWeight: "700",
-                    color: "#374151",
+                    color: theme.textSecondary,
                     marginBottom: RFValue(8),
                   }}
                 >
@@ -13290,23 +13408,23 @@ const AuthScreen = ({ onLogin }) => {
                   value={doctorSpecialtyField}
                   onChangeText={setDoctorSpecialtyField}
                   style={{
-                    backgroundColor: "#FFFFFF",
+                    backgroundColor: theme.card,
                     borderRadius: RFValue(14),
                     paddingHorizontal: RFValue(16),
                     paddingVertical: RFValue(16),
                     marginBottom: RFValue(14),
                     borderWidth: 1,
-                    borderColor: "#E5E7EB",
+                    borderColor: theme.inputBorder,
                     fontSize: RFValue(15),
-                    color: "#1E1B4B",
+                    color: theme.textPrimary,
                   }}
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={theme.textTertiary}
                 />
                 <Text
                   style={{
                     fontSize: RFValue(13),
                     fontWeight: "700",
-                    color: "#374151",
+                    color: theme.textSecondary,
                     marginBottom: RFValue(8),
                   }}
                 >
@@ -13317,17 +13435,17 @@ const AuthScreen = ({ onLogin }) => {
                   value={doctorClinic}
                   onChangeText={setDoctorClinic}
                   style={{
-                    backgroundColor: "#FFFFFF",
+                    backgroundColor: theme.card,
                     borderRadius: RFValue(14),
                     paddingHorizontal: RFValue(16),
                     paddingVertical: RFValue(16),
                     marginBottom: RFValue(14),
                     borderWidth: 1,
-                    borderColor: "#E5E7EB",
+                    borderColor: theme.inputBorder,
                     fontSize: RFValue(15),
-                    color: "#1E1B4B",
+                    color: theme.textPrimary,
                   }}
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={theme.textTertiary}
                 />
               </>
             )}
@@ -13335,7 +13453,7 @@ const AuthScreen = ({ onLogin }) => {
             {!!authSuccess && (
               <Text
                 style={{
-                  color: "#059669",
+                  color: theme.success,
                   marginBottom: RFValue(14),
                   fontSize: RFValue(14),
                 }}
@@ -13347,7 +13465,7 @@ const AuthScreen = ({ onLogin }) => {
             {!!authError && (
               <Text
                 style={{
-                  color: "#DC2626",
+                  color: theme.danger,
                   marginBottom: RFValue(14),
                   fontSize: RFValue(14),
                 }}
@@ -13359,18 +13477,18 @@ const AuthScreen = ({ onLogin }) => {
             {role === "patient" && (
               <View
                 style={{
-                  backgroundColor: "#EEF2FF",
+                  backgroundColor: theme.accentLight,
                   borderRadius: RFValue(14),
                   padding: RFValue(14),
                   marginBottom: RFValue(12),
                   borderWidth: 1,
-                  borderColor: "#C7D2FE",
+                  borderColor: theme.cardBorder,
                 }}
               >
                 <Text
                   style={{
                     fontWeight: "800",
-                    color: "#3730A3",
+                    color: theme.accent,
                     marginBottom: RFValue(6),
                     fontSize: RFValue(14),
                   }}
@@ -13380,7 +13498,7 @@ const AuthScreen = ({ onLogin }) => {
                 <Text
                   style={{
                     fontSize: RFValue(12),
-                    color: "#475569",
+                    color: theme.textSecondary,
                     lineHeight: 18,
                   }}
                 >
@@ -13399,7 +13517,7 @@ const AuthScreen = ({ onLogin }) => {
               onPress={handlePocketBaseAuth}
               disabled={authLoading}
               style={{
-                backgroundColor: "#4338CA",
+                backgroundColor: theme.accentBg,
                 borderRadius: RFValue(16),
                 paddingVertical: RFValue(16),
                 alignItems: "center",
@@ -13408,7 +13526,7 @@ const AuthScreen = ({ onLogin }) => {
             >
               <Text
                 style={{
-                  color: "#FFFFFF",
+                  color: theme.headerText,
                   fontWeight: "700",
                   fontSize: RFValue(16),
                 }}
@@ -13425,19 +13543,19 @@ const AuthScreen = ({ onLogin }) => {
               onPress={handleGoogleAuth}
               disabled={authLoading}
               style={{
-                backgroundColor: "#FFFFFF",
+                backgroundColor: theme.card,
                 borderRadius: RFValue(16),
                 paddingVertical: RFValue(16),
                 alignItems: "center",
                 marginTop: RFValue(12),
                 borderWidth: 1,
-                borderColor: "#E5E7EB",
+                borderColor: theme.inputBorder,
                 opacity: authLoading ? 0.7 : 1,
               }}
             >
               <Text
                 style={{
-                  color: "#1E1B4B",
+                  color: theme.textPrimary,
                   fontWeight: "700",
                   fontSize: RFValue(15),
                 }}
@@ -15584,7 +15702,7 @@ const DoctorEmergencyScreen = ({ navigation }) => {
 };
 
 const DoctorProfileScreen = ({ onLogout }) => {
-  const { theme } = useTheme();
+  const { theme, followSystem, setFollowSystem } = useTheme();
   const { currentUser, refreshAllData } = useAppData();
   const [showTheme, setShowTheme] = useState(false);
   const [showPackageSetup, setShowPackageSetup] = useState(false);
@@ -16083,17 +16201,19 @@ const DoctorProfileScreen = ({ onLogout }) => {
           {/* Stats */}
           <View
             style={{
-              backgroundColor: "#FFFFFF",
+              backgroundColor: theme.card,
               borderRadius: RFValue(18),
               padding: RFValue(16),
               marginBottom: RFValue(16),
-              shadowColor: "#000",
+              shadowColor: theme.shadowColor,
               shadowOpacity: 0.06,
               shadowOffset: { width: 0, height: 4 },
               shadowRadius: 12,
               elevation: 3,
               flexDirection: "row",
               justifyContent: "space-between",
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
             }}
           >
             <View style={{ alignItems: "center", flex: 1 }}>
@@ -16187,14 +16307,16 @@ const DoctorProfileScreen = ({ onLogout }) => {
           {/* Settings */}
           <View
             style={{
-              backgroundColor: "#FFFFFF",
+              backgroundColor: theme.card,
               borderRadius: RFValue(18),
               marginBottom: RFValue(16),
-              shadowColor: "#000",
+              shadowColor: theme.shadowColor,
               shadowOpacity: 0.06,
               shadowOffset: { width: 0, height: 4 },
               shadowRadius: 12,
               elevation: 3,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
             }}
           >
             <Text
@@ -16286,6 +16408,45 @@ const DoctorProfileScreen = ({ onLogout }) => {
             >
               Appearance
             </Text>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: RFValue(16),
+                paddingBottom: RFValue(12),
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: RFValue(12) }}>
+                <Text
+                  style={{
+                    fontSize: RFValue(15),
+                    fontWeight: "600",
+                    color: theme.textPrimary,
+                  }}
+                >
+                  Use device appearance
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    color: theme.textSecondary,
+                    marginTop: RFValue(4),
+                    lineHeight: RFValue(16),
+                  }}
+                >
+                  Matches this phone&apos;s light or dark mode when enabled.
+                </Text>
+              </View>
+              <Switch
+                value={followSystem}
+                onValueChange={setFollowSystem}
+                trackColor={{
+                  false: theme.inputBorder,
+                  true: theme.accentLight,
+                }}
+                thumbColor={followSystem ? theme.accent : theme.textTertiary}
+              />
+            </View>
             <TouchableOpacity
               onPress={() => setShowTheme(true)}
               style={{
@@ -16326,7 +16487,9 @@ const DoctorProfileScreen = ({ onLogout }) => {
                 <Text
                   style={{ fontSize: RFValue(12), color: theme.textSecondary }}
                 >
-                  {theme.name}
+                  {followSystem
+                    ? `${theme.name} (from device)`
+                    : theme.name}
                 </Text>
               </View>
               <Ionicons
@@ -25787,7 +25950,11 @@ const PharmacyOrdersScreen = ({ orders }) => {
 };
 
 export default function App() {
-  const [themeKey, setThemeKey] = useState("light");
+  const [paletteKey, setPaletteKey] = useState("light");
+  const [followSystem, setFollowSystemState] = useState(false);
+  const [systemScheme, setSystemScheme] = useState(
+    Appearance.getColorScheme() === "dark" ? "dark" : "light",
+  );
   const [userRole, setUserRole] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [patientProfile, setPatientProfile] = useState(null);
@@ -25847,24 +26014,61 @@ export default function App() {
   ]);
   const [localCareMode, setLocalCareMode] = useState("");
 
-  const theme = THEMES[themeKey] || THEMES.light;
-  const changeTheme = (key) => {
+  const resolvedPaletteKey = useMemo(() => {
+    if (followSystem) return systemScheme === "dark" ? "dark" : "light";
+    return THEMES[paletteKey] ? paletteKey : "light";
+  }, [followSystem, systemScheme, paletteKey]);
+
+  const theme = THEMES[resolvedPaletteKey] || THEMES.light;
+
+  const setFollowSystem = useCallback((next) => {
+    const v = !!next;
+    setFollowSystemState(v);
+    AsyncStorage.setItem(THEME_FOLLOW_SYSTEM_KEY, v ? "true" : "false").catch(
+      () => {},
+    );
+  }, []);
+
+  const changeTheme = useCallback((key) => {
     if (!THEMES[key]) return;
-    setThemeKey(key);
+    setPaletteKey(key);
+    setFollowSystemState(false);
     AsyncStorage.setItem(THEME_STORAGE_KEY, key).catch(() => {});
-  };
+    AsyncStorage.setItem(THEME_FOLLOW_SYSTEM_KEY, "false").catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const subscription = Appearance.addChangeListener(({ colorScheme }) => {
+      setSystemScheme(colorScheme === "dark" ? "dark" : "light");
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     let active = true;
-    AsyncStorage.getItem(THEME_STORAGE_KEY)
-      .then((savedThemeKey) => {
-        if (active && THEMES[savedThemeKey]) setThemeKey(savedThemeKey);
-      })
-      .catch(() => {});
+    (async () => {
+      try {
+        const [savedPalette, savedFollow] = await Promise.all([
+          AsyncStorage.getItem(THEME_STORAGE_KEY),
+          AsyncStorage.getItem(THEME_FOLLOW_SYSTEM_KEY),
+        ]);
+        if (!active) return;
+        if (savedFollow === "true" || savedFollow === "1") {
+          setFollowSystemState(true);
+        }
+        if (THEMES[savedPalette]) setPaletteKey(savedPalette);
+      } catch {
+        /* ignore */
+      }
+    })();
     return () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(theme.bg);
+  }, [theme.bg]);
 
   useEffect(() => {
     if (!userRole) {
@@ -28163,7 +28367,18 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <ThemeContext.Provider value={{ theme, changeTheme, themeKey }}>
+      <ThemeContext.Provider
+        value={{
+          theme,
+          changeTheme,
+          /** @deprecated use paletteKey — kept for any legacy reads */
+          themeKey: paletteKey,
+          paletteKey,
+          resolvedPaletteKey,
+          followSystem,
+          setFollowSystem,
+        }}
+      >
         <AppDataContext.Provider value={appDataValue}>
           <RootErrorBoundary theme={theme}>
             <AppContent
