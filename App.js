@@ -199,6 +199,7 @@ import {
   getAuthUser,
   getPbAppointmentsCollection,
   isPbAppointmentDoctorProfileRelation,
+  recordPaymentTransaction,
   signUpWithEmail,
   loginWithEmail,
   requestPasswordReset,
@@ -27221,11 +27222,48 @@ export default function App() {
         "You can only pay after the doctor has approved this appointment.",
       );
     }
+    let paymentResult = null;
     if (PAYMENT_MODE === "cashfree") {
-      await runCashfreeAppointmentPayment(appointment);
+      paymentResult = await runCashfreeAppointmentPayment(appointment);
     } else if (PAYMENT_MODE === "stripe") {
       throw new Error("Stripe payment mode is not configured in this build.");
     }
+    const amountPaise = appointmentFeePaise(appointment);
+    await recordPaymentTransaction({
+      patientUserId: currentUser?.id || appointment.patientId,
+      doctorUserId: appointment.doctorUserId || appointment.doctorId,
+      sourceCollection: PB_APPOINTMENTS_COLLECTION,
+      sourceId: appointment.id,
+      kind: "appointment",
+      provider: PAYMENT_MODE === "cashfree" ? "cashfree" : "stub",
+      providerOrderId:
+        paymentResult?.cashfreeOrderId ||
+        paymentResult?.orderId ||
+        paymentResult?.order_id,
+      providerPaymentId:
+        paymentResult?.paymentId ||
+        paymentResult?.payment_id ||
+        paymentResult?.cfPaymentId ||
+        paymentResult?.cf_payment_id,
+      providerReferenceId:
+        paymentResult?.referenceId ||
+        paymentResult?.reference_id ||
+        paymentResult?.bankReference ||
+        paymentResult?.bank_reference,
+      amountPaise,
+      currency: "INR",
+      status: "success",
+      description: `Appointment payment with ${appointment.doctorName || "doctor"}`,
+      customerName: currentUser?.name || patientProfile?.name || "Patient",
+      customerEmail: currentUser?.email || "",
+      customerPhone: appointment.customerPhone || patientProfilePhoneRaw(patientProfile),
+      metadata: {
+        payment_mode: PAYMENT_MODE,
+        appointment_id: appointment.id,
+        consultation_type: appointment.consultationType || "video",
+        verified: paymentResult || null,
+      },
+    });
     await updateAppointmentStatus({
       appointmentId: appointment.id,
       nextStatus: "paid",

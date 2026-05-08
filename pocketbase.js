@@ -61,7 +61,7 @@ export const pb = new PocketBase(PB_URL, authStore);
  *   **`pbAppointmentDoctorIsProfile`** in `app.json` to match whether `doctor` points at
  *   **doctor_profile** or **users**.
  *
- * **`conversations` (for Package Doctor demo threads)**  
+ * **`conversations` (for Package Doctor demo threads)**
  * The app creates a **separate** conversation per package-demo appointment (not the generic DM).
  * Recommended fields (names must match your Admin schema - check **API rules** generated names):
  * - `members` - relation to auth users (multi), exactly **patient + doctor** user ids
@@ -71,13 +71,13 @@ export const pb = new PocketBase(PB_URL, authStore);
  * - **`lastMessageAt`** or **`last_message_at`** - datetime - use the same casing as your existing
  *   `conversations` rows / `ensureDirectConversation` in `App.js`
  *
- * **`package_offers`**  
+ * **`package_offers`**
  * Unchanged core: `patient`, `doctor`, `title`, `amount_inr`, `platform_fee_inr`, `doctor_coins`,
  * `sessions`, `validity_days`, `notes`, `status` (`sent` / `paid` / …). The app **links** an offer
  * to a demo meeting by storing **`package_offer_id`** on the appointment’s **`workflow_json`**
  * (no extra relation required on `package_offers`).
  *
- * **API rules (minimum)**  
+ * **API rules (minimum)**
  * - **appointments - Create:** patient can create when `@request.auth.id` is set and
  *   `patient = @request.auth.id` (and doctor points at allowed doctor ids / profile ids).
  * - **appointments - Update:** patient may update **own** rows (cancel package request, workflow);
@@ -98,6 +98,74 @@ export function getPbAppointmentsCollection() {
     Constants.expoConfig?.extra?.pbAppointmentsCollection ||
     "appointments"
   );
+}
+
+export async function recordPaymentTransaction({
+  patientUserId,
+  doctorUserId,
+  sourceCollection,
+  sourceId,
+  kind,
+  provider = "stub",
+  providerOrderId,
+  providerPaymentId,
+  providerReferenceId,
+  amountInr,
+  amountPaise,
+  currency = "INR",
+  status = "success",
+  description,
+  customerName,
+  customerEmail,
+  customerPhone,
+  metadata,
+} = {}) {
+  const activeUserId = getAuthUser()?.id || "";
+  const rupees = Number(amountInr);
+  const paise = Number(amountPaise);
+  const computedAmountInr = Number.isFinite(rupees)
+    ? rupees
+    : Number.isFinite(paise)
+      ? paise / 100
+      : 0;
+  const computedAmountPaise = Number.isFinite(paise)
+    ? Math.round(paise)
+    : Math.round(computedAmountInr * 100);
+  const payload = {
+    source_collection: String(sourceCollection || "").trim(),
+    source_id: String(sourceId || "").trim(),
+    kind: String(kind || "").trim(),
+    provider: String(provider || "stub").trim(),
+    provider_order_id: String(providerOrderId || "").trim(),
+    provider_payment_id: String(providerPaymentId || "").trim(),
+    provider_reference_id: String(providerReferenceId || "").trim(),
+    amount_inr: computedAmountInr,
+    amount_paise: computedAmountPaise,
+    currency: String(currency || "INR")
+      .trim()
+      .toUpperCase(),
+    status: String(status || "success").trim(),
+    paid_at: new Date().toISOString(),
+    description: String(description || "").trim(),
+    customer_name: String(customerName || "").trim(),
+    customer_email: String(customerEmail || "").trim(),
+    customer_phone: String(customerPhone || "").trim(),
+    metadata: metadata && typeof metadata === "object" ? metadata : {},
+  };
+  const patient = String(patientUserId || activeUserId || "").trim();
+  const doctor = String(doctorUserId || "").trim();
+  if (patient) payload.patient = patient;
+  if (doctor) payload.doctor = doctor;
+
+  try {
+    return await pb.collection("payment_transactions").create(payload);
+  } catch (error) {
+    throw new Error(
+      formatPocketBaseClientError(error) ||
+        error?.message ||
+        "Payment succeeded, but saving the transaction to PocketBase failed. Add the `payment_transactions` collection and fields.",
+    );
+  }
 }
 
 /**
@@ -142,11 +210,16 @@ const LOGIN_HOLD_MS = 20 * 60 * 1000;
 const LOGIN_FAILURE_LIMIT = 5;
 
 function getLoginHoldStorageKey(email) {
-  return `${LOGIN_HOLD_STORAGE_PREFIX}${String(email || "").trim().toLowerCase()}`;
+  return `${LOGIN_HOLD_STORAGE_PREFIX}${String(email || "")
+    .trim()
+    .toLowerCase()}`;
 }
 
 function formatHoldRemaining(untilMs) {
-  const remainingMinutes = Math.max(1, Math.ceil((untilMs - Date.now()) / 60000));
+  const remainingMinutes = Math.max(
+    1,
+    Math.ceil((untilMs - Date.now()) / 60000),
+  );
   return `${remainingMinutes} minute${remainingMinutes === 1 ? "" : "s"}`;
 }
 
@@ -177,7 +250,10 @@ async function readLoginHoldState(email) {
 
 async function writeLoginHoldState(email, state) {
   if (!email) return;
-  await AsyncStorage.setItem(getLoginHoldStorageKey(email), JSON.stringify(state));
+  await AsyncStorage.setItem(
+    getLoginHoldStorageKey(email),
+    JSON.stringify(state),
+  );
 }
 
 async function clearLoginHoldState(email) {
@@ -486,8 +562,9 @@ async function createDoctorProfileRecord(userId, merged) {
  */
 async function createPharmacyProfileRecord(userId, merged) {
   const authUser = getAuthUser();
-  const fallbackStoreName = String(merged.store_name || authUser?.name || "")
-    .trim();
+  const fallbackStoreName = String(
+    merged.store_name || authUser?.name || "",
+  ).trim();
 
   const payload = { user: userId };
   if (fallbackStoreName) payload.store_name = fallbackStoreName;
@@ -515,9 +592,7 @@ async function createPharmacyProfileRecord(userId, merged) {
     // signup. They will fill the rest from PharmacyProfileScreen.
     if (error?.status === 400) {
       try {
-        return await pb
-          .collection("pharmacy_profile")
-          .create({ user: userId });
+        return await pb.collection("pharmacy_profile").create({ user: userId });
       } catch (innerError) {
         console.log(
           "Pharmacy profile minimal create also failed:",

@@ -8,8 +8,10 @@ import * as Notifications from "expo-notifications";
 import {
   pb,
   formatPocketBaseClientError,
+  getAuthUser,
   getPbAppointmentsCollection,
   isPbAppointmentDoctorProfileRelation,
+  recordPaymentTransaction,
 } from "./pocketbase";
 
 export const CARE_MODE = {
@@ -1936,6 +1938,14 @@ export async function listPackageOffersForDoctor(doctorUserId) {
  */
 export async function patientPayPackageOfferStub(offerId, doctorUserId) {
   if (!offerId) throw new Error("Missing offer.");
+  let offer = null;
+  try {
+    offer = await pb.collection("package_offers").getOne(offerId, {
+      requestKey: null,
+    });
+  } catch {
+    offer = null;
+  }
   const paidPayload = {
     status: "paid",
     deal_started_at: new Date().toISOString(),
@@ -1951,6 +1961,23 @@ export async function patientPayPackageOfferStub(offerId, doctorUserId) {
       throw new Error(msg || "Payment update failed.");
     }
   }
+  await recordPaymentTransaction({
+    patientUserId: getAuthUser()?.id,
+    doctorUserId,
+    sourceCollection: "package_offers",
+    sourceId: offerId,
+    kind: "package_offer",
+    provider: "stub",
+    amountInr: offer?.amount_inr ?? offer?.amountInr,
+    currency: "INR",
+    status: "success",
+    description: offer?.title || "Package offer payment",
+    metadata: {
+      package_offer_id: offerId,
+      platform_fee_inr: offer?.platform_fee_inr ?? offer?.platformFeeInr ?? null,
+      doctor_coins: offer?.doctor_coins ?? offer?.doctorCoins ?? null,
+    },
+  });
   const ts = new Date().toISOString();
   const lines = [
     {
