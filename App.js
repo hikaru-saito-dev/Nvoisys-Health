@@ -1544,6 +1544,11 @@ const cancelDoseReminder = async (scheduleId) => {
   }
 };
 
+const WEEKLY_ADHERENCE_MARKER_PREFIX = "[ADHERENCE_WEEKLY]";
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+const pbFilterDateTime = (value) =>
+  new Date(value).toISOString().replace("T", " ").slice(0, 19);
+
 // ---------------------------------------------------------------------------
 // Step 9 - AI calls (Groq / OpenAI-compatible or legacy JSON gateway).
 // Never throws; returns null so callers can fall back to stubs.
@@ -27927,6 +27932,165 @@ export default function App() {
       return null;
     }
   };
+
+  const weeklyAdherenceBusyRef = useRef(false);
+  const weeklyAdherenceLastRunMsRef = useRef(0);
+
+  const fetchWeeklyAdherenceStats = async ({
+    prescriptionId,
+    weekStart,
+    weekEnd,
+  }) => {
+    if (!prescriptionId) {
+      return { total: 0, taken: 0, missed: 0, pending: 0, rate: 0 };
+    }
+    try {
+      const records = await pb.collection("medication_schedule").getFullList({
+        requestKey: null,
+        sort: "due_at",
+        filter: `prescription="${prescriptionId}" && due_at>="${pbFilterDateTime(weekStart)}" && due_at<"${pbFilterDateTime(weekEnd)}"`,
+      });
+      const total = records.length;
+      const taken = records.filter((row) => row?.status === "taken").length;
+      const missed = records.filter((row) => row?.status === "missed").length;
+      const pending = Math.max(0, total - taken - missed);
+      const countable = taken + missed;
+      const rate = countable ? Math.round((taken / countable) * 100) : 0;
+      return { total, taken, missed, pending, rate };
+    } catch (error) {
+      console.log("fetchWeeklyAdherenceStats error:", error?.message);
+      return { total: 0, taken: 0, missed: 0, pending: 0, rate: 0 };
+    }
+  };
+
+  const hasWeeklyAdherenceMarker = async ({ conversationId, marker }) => {
+    if (!conversationId || !marker) return false;
+    try {
+      const rows = await pb.collection("messages").getFullList({
+        requestKey: null,
+        sort: "-created",
+        filter: `conversation="${conversationId}"`,
+        expand: "sender",
+      });
+      return rows
+        .map((row) => mapMessageRecord(row))
+        .some(
+          (row) =>
+            String(row?.kind || "").toLowerCase() === "system" &&
+            String(row?.text || "").includes(marker),
+        );
+    } catch (error) {
+      console.log("hasWeeklyAdherenceMarker error:", error?.message);
+      return false;
+    }
+  };
+
+  const sendWeeklyAdherenceNotifications = useCallback(async () => {
+    if (
+      userRole !== "doctor" ||
+      !currentUser?.id ||
+      dataLoading ||
+      weeklyAdherenceBusyRef.current
+    ) {
+      return;
+    }
+    const nowMs = Date.now();
+    // Avoid duplicate rapid runs when multiple state updates land together.
+    if (nowMs - weeklyAdherenceLastRunMsRef.current < 30000) {
+      return;
+    }
+    weeklyAdherenceBusyRef.current = true;
+    weeklyAdherenceLastRunMsRef.current = nowMs;
+    try {
+      const doctorPrescriptions = safeArray(prescriptions).filter(
+        (rx) => rx?.doctorId === currentUser.id && rx?.patientId,
+      );
+      for (const rx of doctorPrescriptions) {
+        const createdMs = prescriptionRecordCreatedMs(rx);
+        if (!Number.isFinite(createdMs)) continue;
+        const elapsedWeeks = Math.floor((nowMs - createdMs) / MS_PER_WEEK);
+        if (elapsedWeeks < 1) continue;
+
+        for (let weekNumber = 1; weekNumber <= elapsedWeeks; weekNumber += 1) {
+          const marker = `${WEEKLY_ADHERENCE_MARKER_PREFIX}|rx:${rx.id}|week:${weekNumber}`;
+          let conversationId = rx?.conversation || null;
+          if (!conversationId) {
+            try {
+              const direct = await ensureDirectConversation(rx.patientId);
+              conversationId = direct?.id || null;
+            } catch (_) {
+              conversationId = null;
+            }
+          }
+          if (!conversationId) continue;
+
+          const alreadySent = await hasWeeklyAdherenceMarker({
+            conversationId,
+            marker,
+          });
+          if (alreadySent) continue;
+
+          const weekStart = new Date(createdMs + (weekNumber - 1) * MS_PER_WEEK);
+          const weekEnd = new Date(
+            Math.min(createdMs + weekNumber * MS_PER_WEEK, nowMs),
+          );
+          const stats = await fetchWeeklyAdherenceStats({
+            prescriptionId: rx.id,
+            weekStart,
+            weekEnd,
+          });
+          const dateLabel = `${weekStart.toLocaleDateString()} - ${weekEnd.toLocaleDateString()}`;
+          const patientName = rx.patientName || "the patient";
+          const note =
+            stats.total === 0
+              ? `No scheduled medication doses were recorded for this period (${dateLabel}).`
+              : `Scheduled doses: ${stats.total}\nTaken: ${stats.taken}\nMissed: ${stats.missed}\nPending: ${stats.pending}\nAdherence: ${stats.rate}%`;
+          const text =
+            `${marker}\nWeekly medication adherence update (week ${weekNumber}) for ${patientName}.\n${note}`;
+          try {
+            const created = await createEncryptedMessage(
+              { conversation: conversationId, kind: "system" },
+              text,
+            );
+            await pb.collection("conversations").update(conversationId, {
+              lastMessageAt: new Date().toISOString(),
+            });
+            if (created) {
+              updateConversationPreview(conversationId, mapMessageRecord(created));
+            }
+          } catch (error) {
+            console.log(
+              "sendWeeklyAdherenceNotifications message error:",
+              error?.message,
+            );
+          }
+        }
+      }
+    } finally {
+      weeklyAdherenceBusyRef.current = false;
+    }
+  }, [
+    userRole,
+    currentUser?.id,
+    dataLoading,
+    prescriptions,
+    ensureDirectConversation,
+  ]);
+
+  useEffect(() => {
+    if (userRole !== "doctor" || !currentUser?.id || dataLoading) return;
+    sendWeeklyAdherenceNotifications();
+    const interval = setInterval(
+      () => sendWeeklyAdherenceNotifications(),
+      60 * 60 * 1000,
+    );
+    return () => clearInterval(interval);
+  }, [
+    userRole,
+    currentUser?.id,
+    dataLoading,
+    sendWeeklyAdherenceNotifications,
+  ]);
 
   // -------------------------------------------------------------------------
   // Step 9 - AI assistant conversation helpers.
