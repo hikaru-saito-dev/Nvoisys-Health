@@ -72,10 +72,30 @@ export const pb = new PocketBase(PB_URL, authStore);
  *   `conversations` rows / `ensureDirectConversation` in `App.js`
  *
  * **`package_offers`**
- * Unchanged core: `patient`, `doctor`, `title`, `amount_inr`, `platform_fee_inr`, `doctor_coins`,
+ * Core: `patient`, `doctor`, `title`, `amount_inr`, `platform_fee_inr`, `doctor_coins`,
  * `sessions`, `validity_days`, `notes`, `status` (`sent` / `paid` / …). The app **links** an offer
  * to a demo meeting by storing **`package_offer_id`** on the appointment’s **`workflow_json`**
- * (no extra relation required on `package_offers`).
+ * (no extra relation required on `package_offers`). Patients can also select/pay a doctor's package
+ * directly from Package Mode; if the doctor fee is missing, the app uses the default package amount.
+ *
+ * **`patient_doctor_packages` (optional but recommended)**
+ * Mirrors the fixed paid package pair for admin reporting: `patient`, `doctor`, `package_offer`,
+ * `status`, `started_at`, `amount_inr`, `platform_fee_inr`, `doctor_pool_coins`, `remaining_coins`,
+ * `package_slot`, `title`. If this collection is absent, the app infers active pairs from paid
+ * `package_offers`, so coin settlement still works.
+ *
+ * **Coins**
+ * Package Cashfree success marks the offer paid, creates the patient coin load in `coin_ledger`, and
+ * keeps the doctor's share pending. Completed package appointments settle only when the completed
+ * appointment's patient/doctor match an active paid package pair and a same-day chat/audio/video
+ * interaction exists in `patient_doctor_interactions`.
+ *
+ * **`package_referrals`**
+ * Enables Doctor A → Doctor B referral for an active paid package. Fields: `package_offer`,
+ * `patient`, `from_doctor`, `to_doctor`, `status`, `referred_at`, optional
+ * `monthly_commission_coins`, `notes`. Referral updates the fixed package doctor to Doctor B;
+ * future package session coins go to B. Monthly settlement creates `coin_ledger` lines that deduct
+ * 1000 coins from B and credit A when B earned package coins from that referred patient in the month.
  *
  * **API rules (minimum)**
  * - **appointments - Create:** patient can create when `@request.auth.id` is set and

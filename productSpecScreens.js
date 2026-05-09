@@ -22,6 +22,7 @@ import {
   cancelQuickRequest,
   CARE_MODE,
   closeQuickRequest,
+  createPatientSelectedPackageOffer,
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
   createQuickSolutionRequest,
@@ -30,10 +31,13 @@ import {
   doctorPackagesSetupComplete,
   doctorProposePackageMeetingReschedule,
   doctorSendPackageOfferFromSlot,
+  doctorTierEligibleForPackageMode,
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
   getCoinBalanceForUser,
   getDoctorCoinBalance,
+  listActivePackagePairsForDoctor,
+  listActivePackagePairsForPatient,
   listActiveQuickRequestsForPatient,
   listCoinLedgerForUser,
   listInferredOffersByDoctor,
@@ -43,12 +47,14 @@ import {
   listQueuedQuickCounsellingRequestsForProvider,
   listQueuedQuickSolutionRequestsForProvider,
   listQuickHelpOffersByDoctor,
+  listPackageReferralsForDoctor,
   mergeLocalFeesOntoSlots,
   normalizeDoctorPackageSlots,
   PACKAGE_MEETING_STATUS,
   packageMeetingClosedLabel,
   packageMeetingDoctorListBucket,
   packageMeetingStatusLabel,
+  packageSlotUsesDefaultAmount,
   packageTemplatesRawFromRecord,
   patientCancelPackageDemoMeeting,
   patientChooseRescheduleSlot,
@@ -56,8 +62,11 @@ import {
   persistPackageSetupSkip,
   persistPatientCareMode,
   readLocalDoctorPackageFees,
+  referPackagePatientToDoctor,
   requestPackageDoctorChange,
+  resolvePackageSlotAmountInr,
   saveDoctorPackageTemplates,
+  settleDueReferralMonthlyCommissions,
   uploadMedicalRecord,
 } from "./productSpecApi";
 
@@ -81,11 +90,40 @@ export function CareModeOnboardingScreen({
   patientProfile,
   currentUser,
   onDone,
+  onLoadPackageDoctors,
+  onPaySelectedPackage,
 }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
+  const [packageStep, setPackageStep] = useState(false);
+  const [packageDoctors, setPackageDoctors] = useState([]);
+  const [doctorSearch, setDoctorSearch] = useState("");
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [loadingDoctors, setLoadingDoctors] = useState(false);
+
+  const loadPackageDoctors = useCallback(async () => {
+    if (typeof onLoadPackageDoctors !== "function") return [];
+    setLoadingDoctors(true);
+    try {
+      const list = await onLoadPackageDoctors();
+      setPackageDoctors(Array.isArray(list) ? list : []);
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      Alert.alert("Doctors", e?.message || "Could not load doctors.");
+      setPackageDoctors([]);
+      return [];
+    } finally {
+      setLoadingDoctors(false);
+    }
+  }, [onLoadPackageDoctors]);
 
   const pick = async (mode) => {
+    if (mode === CARE_MODE.PACKAGE) {
+      setPackageStep(true);
+      void loadPackageDoctors();
+      return;
+    }
     try {
       setBusy(true);
       await persistPatientCareMode({
@@ -101,6 +139,65 @@ export function CareModeOnboardingScreen({
     }
   };
 
+  const finishPackageMode = async () => {
+    try {
+      setBusy(true);
+      await persistPatientCareMode({
+        profileId: patientProfile?.id,
+        userId: currentUser?.id,
+        mode: CARE_MODE.PACKAGE,
+      });
+      onDone?.(CARE_MODE.PACKAGE);
+    } catch (e) {
+      Alert.alert("Could not save", e?.message || "Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const paySelectedPackage = async () => {
+    if (!currentUser?.id) {
+      Alert.alert("Sign in", "Please sign in again before paying.");
+      return;
+    }
+    if (!selectedDoctor?.userId || !selectedSlot) {
+      Alert.alert("Package", "Choose a doctor and one package.");
+      return;
+    }
+    try {
+      setBusy(true);
+      const offer = await createPatientSelectedPackageOffer({
+        patientUserId: currentUser.id,
+        doctorUserId: selectedDoctor.userId,
+        slot: selectedSlot,
+        packageSlotIndex: selectedSlot.slot,
+      });
+      if (typeof onPaySelectedPackage === "function") {
+        await onPaySelectedPackage(offer, selectedDoctor.userId);
+      } else {
+        await patientPayPackageOfferStub(offer.id, selectedDoctor.userId);
+      }
+      await finishPackageMode();
+      Alert.alert(
+        "Package active",
+        "Your doctor is fixed for this package and your package coins are now visible on the dashboard.",
+      );
+    } catch (e) {
+      Alert.alert("Payment", e?.message || "Could not start package.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const filteredPackageDoctors = useMemo(() => {
+    const q = doctorSearch.trim().toLowerCase();
+    const base = packageDoctors || [];
+    if (!q) return base;
+    return base.filter((d) =>
+      `${d.name || ""} ${d.specialty || ""}`.toLowerCase().includes(q),
+    );
+  }, [packageDoctors, doctorSearch]);
+
   const card = {
     backgroundColor: theme.card,
     borderRadius: 20,
@@ -109,6 +206,186 @@ export function CareModeOnboardingScreen({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.cardBorder,
   };
+
+  if (packageStep) {
+    const slots = Array.isArray(selectedDoctor?.packageSlots)
+      ? selectedDoctor.packageSlots
+      : [];
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: theme.bg,
+          paddingTop: insets.top + 12,
+        }}
+      >
+        <ScrollView
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: insets.bottom + 24,
+          }}
+        >
+          <TouchableOpacity
+            onPress={() => setPackageStep(false)}
+            disabled={busy}
+            style={{ marginBottom: 14, alignSelf: "flex-start" }}
+          >
+            <Text style={{ color: theme.accent, fontWeight: "800" }}>
+              Back
+            </Text>
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 24,
+              fontWeight: "800",
+            }}
+          >
+            Choose your package doctor
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              marginTop: 8,
+              marginBottom: 14,
+              lineHeight: 20,
+            }}
+          >
+            Pick a doctor and package now. If a doctor has not set a package
+            fee yet, the app uses the default amount. After Cashfree confirms
+            payment, this doctor-patient package pair becomes fixed and coins
+            are loaded to your wallet.
+          </Text>
+          <TextInput
+            placeholder="Search package doctors"
+            placeholderTextColor={theme.textTertiary}
+            value={doctorSearch}
+            onChangeText={setDoctorSearch}
+            style={slotInput(theme)}
+          />
+          {loadingDoctors ? (
+            <ActivityIndicator color={theme.accent} style={{ margin: 12 }} />
+          ) : null}
+          {!loadingDoctors && filteredPackageDoctors.length === 0 ? (
+            <Text style={{ color: theme.warning, fontSize: S.small }}>
+              No package doctors are available right now. You can continue and
+              choose one later from the dashboard.
+            </Text>
+          ) : null}
+          {filteredPackageDoctors.map((d) => {
+            const selected = selectedDoctor?.userId === d.userId;
+            return (
+              <TouchableOpacity
+                key={d.profileId || d.userId}
+                onPress={() => {
+                  setSelectedDoctor(d);
+                  const firstSlot = Array.isArray(d.packageSlots)
+                    ? d.packageSlots[0]
+                    : null;
+                  setSelectedSlot(firstSlot || null);
+                }}
+                style={{
+                  ...card,
+                  borderColor: selected ? theme.accent : theme.cardBorder,
+                  backgroundColor: selected ? theme.accentLight : theme.card,
+                }}
+              >
+                <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                  {d.name || "Doctor"}
+                </Text>
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    fontSize: S.small,
+                    marginTop: 4,
+                  }}
+                >
+                  {d.specialty || "General Physician"}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+          {selectedDoctor ? (
+            <View style={{ marginTop: 8 }}>
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontWeight: "900",
+                  marginBottom: 8,
+                }}
+              >
+                Select package
+              </Text>
+              {slots.map((slot) => {
+                const selected = selectedSlot?.slot === slot.slot;
+                const amount = resolvePackageSlotAmountInr(slot);
+                const usesDefault = packageSlotUsesDefaultAmount(slot);
+                return (
+                  <TouchableOpacity
+                    key={slot.slot}
+                    onPress={() => setSelectedSlot(slot)}
+                    style={{
+                      padding: 12,
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: selected ? theme.accent : theme.cardBorder,
+                      backgroundColor: selected ? theme.accentLight : theme.card,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <Text
+                      style={{ color: theme.textPrimary, fontWeight: "800" }}
+                    >
+                      {slot.name || `Package ${slot.slot}`}
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.textSecondary,
+                        fontSize: S.small,
+                        marginTop: 4,
+                      }}
+                    >
+                      Pay ₹{amount}
+                      {usesDefault ? " · default amount" : " · doctor fee"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                onPress={paySelectedPackage}
+                disabled={busy || !selectedSlot}
+                style={{
+                  backgroundColor: theme.success,
+                  borderRadius: 16,
+                  padding: 16,
+                  alignItems: "center",
+                  opacity: busy || !selectedSlot ? 0.55 : 1,
+                }}
+              >
+                {busy ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: "#fff", fontWeight: "900" }}>
+                    Pay with Cashfree
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          <TouchableOpacity
+            onPress={finishPackageMode}
+            disabled={busy}
+            style={{ marginTop: 16, padding: 12, alignItems: "center" }}
+          >
+            <Text style={{ color: theme.textSecondary, fontWeight: "800" }}>
+              Choose package later from dashboard
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -1039,6 +1316,7 @@ export function PatientPackageMeetingsPanel({
   doctors = [],
   onOpenChatWithDoctor,
   onAfterPackagePayment,
+  onPayPackageOffer,
   onPayAppointment,
   /** Extra ScrollView bottom inset when this sits above a floating tab bar (see App.js). */
   scrollContentBottomInset = 120,
@@ -1125,7 +1403,11 @@ export function PatientPackageMeetingsPanel({
     try {
       setBusy(true);
       const doctorUserId = offerDoctorUserId(offer);
-      await patientPayPackageOfferStub(offer.id, doctorUserId);
+      if (typeof onPayPackageOffer === "function") {
+        await onPayPackageOffer(offer, doctorUserId);
+      } else {
+        await patientPayPackageOfferStub(offer.id, doctorUserId);
+      }
       try {
         await onAfterPackagePayment?.({
           doctorUserId,
@@ -1257,7 +1539,7 @@ export function PatientPackageMeetingsPanel({
             x.appointment_status || "",
           ).toLowerCase();
           const isPaid =
-            offerStatus === "paid" ||
+            ["paid", "active", "started"].includes(offerStatus) ||
             appointmentStatus === "paid" ||
             appointmentStatus === "completed";
           const isConfirmed = st === PACKAGE_MEETING_STATUS.CONFIRMED;
@@ -1608,7 +1890,9 @@ export function PatientPackageMeetingsPanel({
               Other package offers
             </Text>
             {orphans.map((o) => {
-              const isPaid = String(o.status || "").toLowerCase() === "paid";
+              const isPaid = ["paid", "active", "started"].includes(
+                String(o.status || "").toLowerCase(),
+              );
               return (
                 <View
                   key={o.id}
@@ -1688,6 +1972,8 @@ export function PackageDoctorJourneyScreen({
   scrollContentBottomInset = 120,
   /** Optional: open the Appts tab where all meetings are listed. */
   onGoToAppointmentsTab,
+  onPaySelectedPackage,
+  onPackagePaid,
 }) {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState("");
@@ -1696,6 +1982,7 @@ export function PackageDoctorJourneyScreen({
   const [meetingDateTime, setMeetingDateTime] = useState(null);
   const [pickerMode, setPickerMode] = useState(null);
   const [meetingDesc, setMeetingDesc] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1761,6 +2048,36 @@ export function PackageDoctorJourneyScreen({
       }
     } catch (e) {
       Alert.alert("Booking", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const paySelectedPackage = async () => {
+    if (!selectedDoctor?.userId || !selectedSlot) {
+      Alert.alert("Package", "Select a doctor and package first.");
+      return;
+    }
+    try {
+      setBusy(true);
+      const offer = await createPatientSelectedPackageOffer({
+        patientUserId,
+        doctorUserId: selectedDoctor.userId,
+        slot: selectedSlot,
+        packageSlotIndex: selectedSlot.slot,
+      });
+      if (typeof onPaySelectedPackage === "function") {
+        await onPaySelectedPackage(offer, selectedDoctor.userId);
+      } else {
+        await patientPayPackageOfferStub(offer.id, selectedDoctor.userId);
+      }
+      await onPackagePaid?.(offer);
+      Alert.alert(
+        "Package active",
+        "Payment confirmed. This doctor is fixed for the package and coins are loaded to your dashboard.",
+      );
+    } catch (e) {
+      Alert.alert("Package payment", e?.message || "Failed");
     } finally {
       setBusy(false);
     }
@@ -1925,14 +2242,11 @@ export function PackageDoctorJourneyScreen({
             marginBottom: 12,
           }}
         >
-          Search by doctor name, book your demo date and time, and describe your
-          visit. Your doctor accepts or proposes other times; once confirmed you
-          get a reminder 30 minutes before the voice/video call. After the call
-          they tap Send package options - you see the breakdown under Appts (My
-          appointments) with Pay now. Payment is to the company first; the
-          doctor’s share becomes withdrawable coins after they complete package
-          duties (1 coin = ₹1). Changing assigned doctor later has no refund;
-          the new doctor continues remaining care.
+          Search by doctor name, choose a package and pay immediately, or book a
+          demo meeting first. Payment is to the company first; the doctor’s
+          share becomes withdrawable coins after they complete package duties (1
+          coin = ₹1). Changing assigned doctor later has no refund; the new
+          doctor continues remaining care.
         </Text>
         {(!doctors || doctors.length === 0) && (
           <Text
@@ -1959,7 +2273,13 @@ export function PackageDoctorJourneyScreen({
         {filtered.slice(0, 8).map((d) => (
           <TouchableOpacity
             key={d.profileId || d.userId}
-            onPress={() => setSelectedDoctor(d)}
+            onPress={() => {
+              setSelectedDoctor(d);
+              const firstSlot = Array.isArray(d.packageSlots)
+                ? d.packageSlots[0]
+                : null;
+              setSelectedSlot(firstSlot || null);
+            }}
             style={{
               padding: 12,
               borderRadius: 12,
@@ -1988,6 +2308,89 @@ export function PackageDoctorJourneyScreen({
             </Text>
           </TouchableOpacity>
         ))}
+
+        {selectedDoctor ? (
+          <View
+            style={{
+              marginTop: 12,
+              padding: 14,
+              borderRadius: 16,
+              backgroundColor: theme.card,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text style={{ color: theme.textPrimary, fontWeight: "900" }}>
+              Start package with {selectedDoctor.name || "Doctor"}
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginTop: 6,
+                marginBottom: 10,
+                lineHeight: 18,
+              }}
+            >
+              Pay the doctor’s configured package fee, or the default amount if
+              the fee is not configured. The paid doctor-patient pair is fixed
+              for coin settlement.
+            </Text>
+            {(selectedDoctor.packageSlots || []).map((slot) => {
+              const amount = resolvePackageSlotAmountInr(slot);
+              const selected = selectedSlot?.slot === slot.slot;
+              const usesDefault = packageSlotUsesDefaultAmount(slot);
+              return (
+                <TouchableOpacity
+                  key={slot.slot}
+                  onPress={() => setSelectedSlot(slot)}
+                  style={{
+                    padding: 12,
+                    borderRadius: 12,
+                    marginBottom: 8,
+                    borderWidth: 1,
+                    borderColor: selected ? theme.accent : theme.cardBorder,
+                    backgroundColor: selected ? theme.accentLight : theme.bg,
+                  }}
+                >
+                  <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                    {slot.name || `Package ${slot.slot}`}
+                  </Text>
+                  <Text
+                    style={{
+                      color: theme.textSecondary,
+                      fontSize: S.small,
+                      marginTop: 4,
+                    }}
+                  >
+                    Pay ₹{amount}
+                    {usesDefault ? " · default amount" : " · doctor fee"}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              onPress={paySelectedPackage}
+              disabled={busy || !selectedSlot}
+              style={{
+                marginTop: 4,
+                backgroundColor: theme.success,
+                padding: 14,
+                borderRadius: 14,
+                alignItems: "center",
+                opacity: busy || !selectedSlot ? 0.55 : 1,
+              }}
+            >
+              {busy ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={{ color: "#fff", fontWeight: "900" }}>
+                  Pay package with Cashfree
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         <Text
           style={{ marginTop: 8, fontWeight: "800", color: theme.textPrimary }}
@@ -4134,14 +4537,68 @@ export function CoinWalletDoctorPanel({ theme }) {
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
   const [balance, setBalance] = useState(0);
+  const [pairs, setPairs] = useState([]);
+  const [referrals, setReferrals] = useState([]);
+  const [packageDoctors, setPackageDoctors] = useState([]);
+  const [referralTargets, setReferralTargets] = useState({});
 
   const refreshBalance = useCallback(async () => {
-    setBalance(await getDoctorCoinBalance(user?.id));
+    const [coins, activePairs, referralRows] = await Promise.all([
+      getDoctorCoinBalance(user?.id),
+      listActivePackagePairsForDoctor(user?.id),
+      listPackageReferralsForDoctor(user?.id),
+    ]);
+    setBalance(coins);
+    setPairs(activePairs || []);
+    setReferrals(referralRows || []);
   }, [user?.id]);
 
   useEffect(() => {
     void refreshBalance();
   }, [refreshBalance]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await pb.collection("doctor_profile").getFullList({
+          requestKey: null,
+          filter: `status="approved"`,
+          expand: "user",
+        });
+        if (cancelled) return;
+        const mapped = (rows || [])
+          .map((row) => ({
+            profileId: row.id,
+            userId: row.user || row.expand?.user?.id || "",
+            name: row.expand?.user?.name || row.full_name || "Doctor",
+            specialty: row.specialty || "General Physician",
+            practitionerTier: String(
+              row.practitioner_tier || row.tier || row.doctor_class || "",
+            ).toLowerCase(),
+          }))
+          .filter(
+            (doctor) =>
+              doctor.userId &&
+              doctor.userId !== user?.id &&
+              doctorTierEligibleForPackageMode(doctor.practitionerTier),
+          );
+        setPackageDoctors(mapped);
+      } catch {
+        setPackageDoctors([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    void settleDueReferralMonthlyCommissions(user.id).then(() =>
+      refreshBalance(),
+    );
+  }, [user?.id, refreshBalance]);
 
   const runWithdraw = async () => {
     try {
@@ -4156,6 +4613,39 @@ export function CoinWalletDoctorPanel({ theme }) {
     }
   };
 
+  const runReferral = async (pair) => {
+    const targetDoctorId = referralTargets[pair.offerId];
+    if (!targetDoctorId) {
+      Alert.alert("Referral", "Choose the doctor you want to refer to.");
+      return;
+    }
+    try {
+      setBusy(true);
+      await referPackagePatientToDoctor({
+        packageOfferId: pair.offerId,
+        patientUserId: pair.patient_user_id,
+        fromDoctorUserId: user?.id,
+        toDoctorUserId: targetDoctorId,
+      });
+      setReferralTargets((prev) => ({ ...prev, [pair.offerId]: "" }));
+      await refreshBalance();
+      Alert.alert(
+        "Referred",
+        "This patient is now fixed to the referred doctor. Future package coins will settle to them, with monthly referral commission back to you.",
+      );
+    } catch (e) {
+      Alert.alert("Referral", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const outgoingReferralOfferIds = new Set(
+    (referrals || [])
+      .filter((r) => String(r.from_doctor || "") === String(user?.id || ""))
+      .map((r) => String(r.package_offer || "")),
+  );
+
   return (
     <View style={{ marginTop: 12 }}>
       <Text
@@ -4168,6 +4658,94 @@ export function CoinWalletDoctorPanel({ theme }) {
       >
         {balance} coins available
       </Text>
+      <Text
+        style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
+      >
+        Active package pairs: {pairs.length}
+      </Text>
+      {pairs.slice(0, 5).map((pair) => {
+        const alreadyReferred = outgoingReferralOfferIds.has(String(pair.offerId));
+        return (
+          <View
+            key={pair.offerId}
+            style={{
+              marginTop: 10,
+              padding: 10,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+              backgroundColor: theme.bg,
+            }}
+          >
+            <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+              {pair.title}
+            </Text>
+            <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 3 }}>
+              patient {String(pair.patient_user_id || "").slice(-6)} · pool {pair.doctor_coins} coins
+            </Text>
+            {alreadyReferred ? (
+              <Text style={{ color: theme.success, fontSize: 11, marginTop: 6 }}>
+                Referred. Future coins go to the referred doctor; monthly 1000-coin commission returns to you after they earn from this patient.
+              </Text>
+            ) : packageDoctors.length ? (
+              <View style={{ marginTop: 8 }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {packageDoctors.map((doctor) => {
+                    const selected = referralTargets[pair.offerId] === doctor.userId;
+                    return (
+                      <TouchableOpacity
+                        key={`${pair.offerId}-${doctor.userId}`}
+                        onPress={() =>
+                          setReferralTargets((prev) => ({
+                            ...prev,
+                            [pair.offerId]: doctor.userId,
+                          }))
+                        }
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                          borderRadius: 999,
+                          marginRight: 8,
+                          backgroundColor: selected ? theme.accent : theme.card,
+                          borderWidth: 1,
+                          borderColor: selected ? theme.accent : theme.cardBorder,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: selected ? "#fff" : theme.textPrimary,
+                            fontWeight: "800",
+                            fontSize: 11,
+                          }}
+                        >
+                          {doctor.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                <TouchableOpacity
+                  onPress={() => runReferral(pair)}
+                  disabled={busy || !referralTargets[pair.offerId]}
+                  style={{
+                    marginTop: 8,
+                    alignSelf: "flex-start",
+                    backgroundColor: theme.warning,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 10,
+                    opacity: busy || !referralTargets[pair.offerId] ? 0.55 : 1,
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11 }}>
+                    Refer patient
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
+        );
+      })}
       <Text
         style={{
           color: theme.textSecondary,
@@ -4289,18 +4867,26 @@ export function DoctorCoinPaymentHistoryPanel({ theme }) {
   );
 }
 
-export function PatientCoinHistoryPanel({ theme, userId }) {
+export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
   const [rows, setRows] = useState([]);
   const [balance, setBalance] = useState(0);
+  const [pairs, setPairs] = useState([]);
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      const [ledger, coins] = await Promise.all([
+      const [ledger, coins, activePairs] = await Promise.all([
         listCoinLedgerForUser(userId),
         getCoinBalanceForUser(userId),
+        listActivePackagePairsForPatient(userId),
       ]);
+      if (cancelled) return;
       setRows(ledger);
       setBalance(coins);
+      setPairs(activePairs || []);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [userId]);
   return (
     <View style={{ marginTop: 8 }}>
@@ -4312,7 +4898,19 @@ export function PatientCoinHistoryPanel({ theme, userId }) {
       <Text style={{ color: theme.textPrimary, fontWeight: "900", marginBottom: 6 }}>
         Balance: {balance} coins
       </Text>
-      {rows.length === 0 ? (
+      <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 6 }}>
+        Active package pairs: {pairs.length}
+      </Text>
+      {pairs.slice(0, compact ? 2 : 4).map((pair) => (
+        <Text
+          key={pair.offerId}
+          style={{ color: theme.textTertiary, fontSize: 11, marginBottom: 3 }}
+        >
+          {pair.title} · doctor {String(pair.doctor_user_id || "").slice(-6)} ·
+          pool {pair.doctor_coins} coins
+        </Text>
+      ))}
+      {compact ? null : rows.length === 0 ? (
         <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
           No movements yet.
         </Text>

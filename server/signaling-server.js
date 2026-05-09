@@ -56,12 +56,18 @@ const readJsonBody = (req) =>
     req.on("error", reject);
   });
 
-const buildReceipt = (appointmentId) =>
-  `appt_${String(appointmentId || "unknown").replace(/[^a-zA-Z0-9_-]/g, "")}`
+const paymentSourceId = (payload) =>
+  toSafeString(payload.sourceId || payload.appointmentId || payload.packageOfferId);
+
+const paymentSourceType = (payload) =>
+  toSafeString(payload.sourceType || payload.kind || "appointment") || "appointment";
+
+const buildReceipt = (sourceId, sourceType = "appointment") =>
+  `${sourceType === "package_offer" ? "pkg" : "appt"}_${String(sourceId || "unknown").replace(/[^a-zA-Z0-9_-]/g, "")}`
     .slice(0, 40) || `appt_${Date.now()}`;
 
-const buildCashfreeOrderId = (appointmentId) =>
-  `${buildReceipt(appointmentId)}_${Date.now()}`.slice(0, 50);
+const buildCashfreeOrderId = (sourceId, sourceType) =>
+  `${buildReceipt(sourceId, sourceType)}_${Date.now()}`.slice(0, 50);
 
 const toSafeString = (value) => String(value || "").trim();
 
@@ -137,9 +143,10 @@ const createCashfreeOrder = async (payload, origin) => {
     throw new Error("Invalid payment amount");
   }
 
-  const appointmentId = toSafeString(payload.appointmentId);
-  if (!appointmentId) {
-    throw new Error("appointmentId is required");
+  const sourceId = paymentSourceId(payload);
+  const sourceType = paymentSourceType(payload);
+  if (!sourceId) {
+    throw new Error("payment source id is required");
   }
 
   const currency = toSafeString(payload.currency || "INR").toUpperCase();
@@ -149,7 +156,7 @@ const createCashfreeOrder = async (payload, origin) => {
     throw new Error("Customer phone is required for Cashfree payments");
   }
 
-  const orderId = buildCashfreeOrderId(appointmentId);
+  const orderId = buildCashfreeOrderId(sourceId, sourceType);
   const returnUrl = toSafeString(payload.returnUrl) || "myapp://payment/cashfree";
   const orderPayload = {
     order_id: orderId,
@@ -157,7 +164,7 @@ const createCashfreeOrder = async (payload, origin) => {
     order_currency: currency,
     order_note: toSafeString(payload.description) || "Appointment consultation fee",
     customer_details: {
-      customer_id: toSafeString(payload.metadata?.patientId) || appointmentId,
+      customer_id: toSafeString(payload.metadata?.patientId) || sourceId,
       customer_name: toSafeString(customer.name) || "Patient",
       customer_email: toSafeString(customer.email),
       customer_phone: customerPhone,
@@ -166,7 +173,10 @@ const createCashfreeOrder = async (payload, origin) => {
       return_url: `${origin}/payments/cashfree/return?orderId={order_id}`,
     },
     order_tags: {
-      appointmentId,
+      appointmentId: sourceType === "appointment" ? sourceId : "",
+      sourceId,
+      sourceType,
+      packageOfferId: sourceType === "package_offer" ? sourceId : "",
       patientId: toSafeString(payload.metadata?.patientId),
       doctorId: toSafeString(payload.metadata?.doctorId),
     },
@@ -187,7 +197,9 @@ const createCashfreeOrder = async (payload, origin) => {
   const storedOrder = {
     cashfreeOrderId: data.order_id || orderId,
     paymentSessionId: data.payment_session_id,
-    appointmentId,
+    appointmentId: sourceType === "appointment" ? sourceId : "",
+    sourceId,
+    sourceType,
     amount: amountPaise,
     currency,
     description:
@@ -239,6 +251,8 @@ const renderCashfreeCheckout = (order) => {
           appendQueryParams(order.returnUrl, {
             status: "failed",
             appointmentId: order.appointmentId,
+            sourceId: order.sourceId,
+            sourceType: order.sourceType,
             cashfreeOrderId: order.cashfreeOrderId,
             message: "Unable to open Cashfree checkout",
           }),
@@ -268,6 +282,13 @@ const verifyCashfreePayment = async (payload) => {
     storedOrder.appointmentId !== payload.appointmentId
   ) {
     throw new Error("Payment does not match this appointment");
+  }
+  if (
+    storedOrder?.sourceId &&
+    payload.sourceId &&
+    storedOrder.sourceId !== payload.sourceId
+  ) {
+    throw new Error("Payment does not match this source");
   }
 
   const response = await fetch(`${CASHFREE_API_BASE}/orders/${encodeURIComponent(orderId)}`, {
@@ -309,6 +330,8 @@ const handleHttpRequest = async (req, res) => {
         orderId: order.cashfreeOrderId,
         amount: order.amount,
         currency: order.currency,
+        sourceId: order.sourceId,
+        sourceType: order.sourceType,
         checkoutUrl: `${publicOrigin}/payments/cashfree/checkout?orderId=${encodeURIComponent(
           order.cashfreeOrderId,
         )}`,
@@ -345,12 +368,16 @@ const handleHttpRequest = async (req, res) => {
       targetUrl = appendQueryParams(appReturnUrl, {
         status: "success",
         appointmentId: verified.appointmentId,
+        sourceId: verified.sourceId,
+        sourceType: verified.sourceType,
         cashfreeOrderId: verified.cashfreeOrderId,
       });
     } catch (error) {
       targetUrl = appendQueryParams(appReturnUrl, {
         status: "failed",
         appointmentId: order?.appointmentId,
+        sourceId: order?.sourceId,
+        sourceType: order?.sourceType,
         cashfreeOrderId: orderId,
         message: error.message || "Payment verification failed",
       });
@@ -367,6 +394,8 @@ const handleHttpRequest = async (req, res) => {
       sendHttpJson(res, 200, {
         verified: true,
         appointmentId: order.appointmentId || body.appointmentId || null,
+        sourceId: order.sourceId || body.sourceId || null,
+        sourceType: order.sourceType || body.sourceType || "appointment",
         cashfreeOrderId: order.cashfreeOrderId,
         cashfreePaymentStatus: order.cashfreePaymentStatus,
       });
