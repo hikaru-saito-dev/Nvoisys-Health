@@ -92,6 +92,8 @@ import {
   readLocalDoctorPackageFees,
   readLocalPackageSetupSkip,
   recordQuickHelpOffer,
+  recordPatientDoctorInteraction,
+  settlePackageCoinsForCompletedAppointment,
   writeLocalCareMode,
 } from "./productSpecApi";
 import {
@@ -2721,6 +2723,24 @@ const mapConversationRecord = (record, currentUserId, previewMap = {}) => {
     ),
     unread: 0,
     raw: record,
+  };
+};
+
+const patientDoctorPairFromConversation = (conversation, fallbackCurrentUser) => {
+  const members = safeArray(
+    conversation?.memberUsers || conversation?.expand?.members || [],
+  );
+  let patient = members.find((member) => normalizeUserRole(member?.role) === "patient");
+  let doctor = members.find((member) => normalizeUserRole(member?.role) === "doctor");
+  if (!patient && normalizeUserRole(fallbackCurrentUser?.role) === "patient") {
+    patient = fallbackCurrentUser;
+  }
+  if (!doctor && normalizeUserRole(fallbackCurrentUser?.role) === "doctor") {
+    doctor = fallbackCurrentUser;
+  }
+  return {
+    patientUserId: patient?.id || "",
+    doctorUserId: doctor?.id || "",
   };
 };
 
@@ -6294,6 +6314,21 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
 
     setActiveCall({ roomId, callType, contact: contactForCall });
 
+    const pair =
+      userRole === "patient" && contact.role === "doctor"
+        ? { patientUserId: currentUserId, doctorUserId: contact.id }
+        : userRole === "doctor" && contact.role === "patient"
+          ? { patientUserId: contact.id, doctorUserId: currentUserId }
+          : null;
+    if (pair) {
+      void recordPatientDoctorInteraction({
+        ...pair,
+        kind: callType,
+        conversationId: roomId,
+        source: "call_directory",
+      });
+    }
+
     try {
       await ensureDirectConversation(contact.id);
     } catch {
@@ -6841,6 +6876,21 @@ const PatientChatScreen = () => {
   }, [selectedContact?.id]);
 
   useEffect(() => {
+    if (!selectedContact?.id) return;
+    if (isAssistantConversation(selectedContact)) return;
+    const pair = patientDoctorPairFromConversation(selectedContact, {
+      id: currentUserId,
+    });
+    if (!pair.patientUserId || !pair.doctorUserId) return;
+    void recordPatientDoctorInteraction({
+      ...pair,
+      kind: "chat",
+      conversationId: selectedContact.id,
+      source: "chat_opened",
+    });
+  }, [selectedContact?.id, currentUserId]);
+
+  useEffect(() => {
     const showEv =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEv =
@@ -6925,6 +6975,15 @@ const PatientChatScreen = () => {
     }
     const created = await sendConversationMessage(selectedContact.id, text);
     if (created) {
+      const pair = patientDoctorPairFromConversation(selectedContact, {
+        id: currentUserId,
+      });
+      void recordPatientDoctorInteraction({
+        ...pair,
+        kind: "chat",
+        conversationId: selectedContact.id,
+        source: "chat_message",
+      });
       setMessage("");
       // Sending a message should always pin the user to the latest message,
       // even if they had scrolled up earlier - they expect to see the line
@@ -7000,6 +7059,15 @@ const PatientChatScreen = () => {
 
       const created = await sendConversationImage(selectedContact.id, asset);
       if (created) {
+        const pair = patientDoctorPairFromConversation(selectedContact, {
+          id: currentUserId,
+        });
+        void recordPatientDoctorInteraction({
+          ...pair,
+          kind: "chat",
+          conversationId: selectedContact.id,
+          source: "chat_attachment",
+        });
         setContactMessages((prev) => {
           if (prev.some((item) => item.id === created.id)) return prev;
           return [...prev, created];
@@ -7121,25 +7189,43 @@ const PatientChatScreen = () => {
           <View style={{ flexDirection: "row", opacity: 0.45 }}>
             <TouchableOpacity
               style={{ padding: 8 }}
-              onPress={() =>
+              onPress={() => {
+                const pair = patientDoctorPairFromConversation(selectedContact, {
+                  id: currentUserId,
+                });
+                void recordPatientDoctorInteraction({
+                  ...pair,
+                  kind: "audio",
+                  conversationId: selectedContact.id,
+                  source: "chat_call_button",
+                });
                 setActiveCall({
                   conversationId: resolveCallRoomId(selectedContact),
                   callType: "audio",
                   contact: selectedContact,
-                })
-              }
+                });
+              }}
             >
               <Ionicons name="call" size={RFValue(20)} color={theme.accent} />
             </TouchableOpacity>
             <TouchableOpacity
               style={{ padding: 8, marginLeft: 8 }}
-              onPress={() =>
+              onPress={() => {
+                const pair = patientDoctorPairFromConversation(selectedContact, {
+                  id: currentUserId,
+                });
+                void recordPatientDoctorInteraction({
+                  ...pair,
+                  kind: "video",
+                  conversationId: selectedContact.id,
+                  source: "chat_call_button",
+                });
                 setActiveCall({
                   conversationId: resolveCallRoomId(selectedContact),
                   callType: "video",
                   contact: selectedContact,
-                })
-              }
+                });
+              }}
             >
               <Ionicons
                 name="videocam"
@@ -27001,6 +27087,14 @@ export default function App() {
       await pb
         .collection(PB_APPOINTMENTS_COLLECTION)
         .update(appointmentId, payload);
+      if (normalized === "completed" && existing) {
+        void settlePackageCoinsForCompletedAppointment({
+          ...existing,
+          status: normalized,
+        }).catch((error) => {
+          console.log("package coin settlement skipped:", error?.message);
+        });
+      }
     } catch (error) {
       throw new Error(
         formatPocketBaseClientError(error) ||

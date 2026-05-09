@@ -32,6 +32,8 @@ import {
   doctorSendPackageOfferFromSlot,
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
+  getCoinBalanceForUser,
+  getDoctorCoinBalance,
   listActiveQuickRequestsForPatient,
   listCoinLedgerForUser,
   listInferredOffersByDoctor,
@@ -4131,12 +4133,22 @@ export function CoinWalletDoctorPanel({ theme }) {
   const user = getAuthUser();
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
+  const [balance, setBalance] = useState(0);
+
+  const refreshBalance = useCallback(async () => {
+    setBalance(await getDoctorCoinBalance(user?.id));
+  }, [user?.id]);
+
+  useEffect(() => {
+    void refreshBalance();
+  }, [refreshBalance]);
 
   const runWithdraw = async () => {
     try {
       setBusy(true);
       await doctorWithdrawCoinsStub(user?.id, Number(withdraw));
       setWithdraw("");
+      await refreshBalance();
     } catch (e) {
       Alert.alert("Withdraw", e?.message || "Failed");
     } finally {
@@ -4152,14 +4164,20 @@ export function CoinWalletDoctorPanel({ theme }) {
         Coin wallet (1 coin = ₹1)
       </Text>
       <Text
+        style={{ color: theme.textPrimary, fontSize: S.title, fontWeight: "900" }}
+      >
+        {balance} coins available
+      </Text>
+      <Text
         style={{
           color: theme.textSecondary,
           fontSize: S.small,
           marginBottom: 8,
+          marginTop: 6,
         }}
       >
-        Pending and settled package earnings appear here. Withdraw anytime (stub
-        records a ledger debit).
+        Settled package earnings appear here. Withdraw requests are checked
+        against your available coins before they are sent.
       </Text>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
         <TextInput
@@ -4273,9 +4291,15 @@ export function DoctorCoinPaymentHistoryPanel({ theme }) {
 
 export function PatientCoinHistoryPanel({ theme, userId }) {
   const [rows, setRows] = useState([]);
+  const [balance, setBalance] = useState(0);
   useEffect(() => {
     (async () => {
-      setRows(await listCoinLedgerForUser(userId));
+      const [ledger, coins] = await Promise.all([
+        listCoinLedgerForUser(userId),
+        getCoinBalanceForUser(userId),
+      ]);
+      setRows(ledger);
+      setBalance(coins);
     })();
   }, [userId]);
   return (
@@ -4284,6 +4308,9 @@ export function PatientCoinHistoryPanel({ theme, userId }) {
         style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 6 }}
       >
         Coin & payments history
+      </Text>
+      <Text style={{ color: theme.textPrimary, fontWeight: "900", marginBottom: 6 }}>
+        Balance: {balance} coins
       </Text>
       {rows.length === 0 ? (
         <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
