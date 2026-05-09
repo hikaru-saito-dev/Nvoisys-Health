@@ -73,6 +73,7 @@ import {
   cleanAppointmentReasonForDisplay,
   clearPatientCareMode,
   combineDateAndTimeToIso,
+  completePackageOfferPayment,
   createPackageMeetingRequest,
   decodeMeetingWorkflowFromAppointmentRow,
   doctorPackagesSetupComplete,
@@ -752,6 +753,11 @@ const appointmentFeePaise = (appointment) => {
     100,
     Math.round((Number.isFinite(rupees) ? rupees : 500) * 100),
   );
+};
+
+const packageOfferAmountPaise = (offer) => {
+  const rupees = Number(offer?.amount_inr || offer?.amountInr || 0);
+  return Math.max(100, Math.round((Number.isFinite(rupees) ? rupees : 0) * 100));
 };
 
 const parseUrlQueryParams = (url) => {
@@ -3908,6 +3914,7 @@ const PatientHomeScreen = () => {
     ensureDirectConversation,
     sendConversationMessage,
     loadConversationMessages,
+    payForPackageOffer,
   } = useAppData();
   const patientFirstName =
     String(patientProfile?.full_name || currentUser?.name || "")
@@ -4213,6 +4220,8 @@ const PatientHomeScreen = () => {
           setShowPackageJourney(false);
           tabNav?.navigateTab?.("Appts");
         }}
+        onPaySelectedPackage={payForPackageOffer}
+        onPackagePaid={() => refreshAllData()}
       />
     );
 
@@ -4713,6 +4722,11 @@ const PatientHomeScreen = () => {
                   uses professional doctors for demos and paid packages (1 coin
                   = ₹1).
                 </Text>
+                <PatientCoinHistoryPanel
+                  theme={theme}
+                  userId={currentUser?.id}
+                  compact
+                />
                 <View
                   style={{
                     flexDirection: "row",
@@ -9075,6 +9089,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
     sendConversationMessage,
     requestOpenConversation,
     payForAppointment,
+    payForPackageOffer,
     setPatientProfile,
   } = useAppData();
   const showBack = typeof onBack === "function";
@@ -9467,6 +9482,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
           doctors={packageDoctors}
           onOpenChatWithDoctor={handleOpenChatWithDoctor}
           onAfterPackagePayment={handleAfterPackagePayment}
+          onPayPackageOffer={payForPackageOffer}
           onPayAppointment={handlePayForAppointment}
           scrollContentBottomInset={tabScrollBottomPadding()}
           emptyHint="None yet. Use Book Appt on Home or Package journey to schedule - everything appears here."
@@ -26994,6 +27010,31 @@ export default function App() {
         );
       };
 
+      const completedPackageRowsForAutoSettlement = (appointmentRecords || [])
+        .filter(
+          (record) =>
+            normalizeAppointmentStatus(record?.status) === "completed" &&
+            (activeRole === "patient"
+              ? record?.patient === activeUser.id
+              : activeRole === "doctor"
+                ? doctorMatchesAppointment(record)
+                : false),
+        )
+        .slice(0, 20);
+      if (completedPackageRowsForAutoSettlement.length) {
+        void Promise.all(
+          completedPackageRowsForAutoSettlement.map((record) =>
+            settlePackageCoinsForCompletedAppointment(record).catch((error) => {
+              console.log(
+                "auto package coin settlement skipped:",
+                error?.message,
+              );
+              return null;
+            }),
+          ),
+        );
+      }
+
       if (activeRole === "patient") {
         setWounds(
           allWounds.filter((record) => record.patientId === activeUser.id),
@@ -27512,14 +27553,6 @@ export default function App() {
       await pb
         .collection(PB_APPOINTMENTS_COLLECTION)
         .update(appointmentId, payload);
-      if (normalized === "completed" && existing) {
-        void settlePackageCoinsForCompletedAppointment({
-          ...existing,
-          status: normalized,
-        }).catch((error) => {
-          console.log("package coin settlement skipped:", error?.message);
-        });
-      }
     } catch (error) {
       throw new Error(
         formatPocketBaseClientError(error) ||
@@ -27654,6 +27687,15 @@ export default function App() {
             "Unable to update appointment status.",
         );
       }
+    }
+
+    if (normalized === "completed" && existing) {
+      void settlePackageCoinsForCompletedAppointment({
+        ...existing,
+        status: normalized,
+      }).catch((error) => {
+        console.log("package coin settlement skipped:", error?.message);
+      });
     }
 
     const conversationId = existing?.conversation || null;
@@ -28236,6 +28278,84 @@ export default function App() {
     return verified;
   };
 
+  const runCashfreePackagePayment = async (offer, doctorUserId) => {
+    const amountPaise = packageOfferAmountPaise(offer);
+    const customerPhone = String(
+      offer?.customerPhone ||
+        patientProfilePhoneRaw(patientProfile) ||
+        patientProfilePhoneRaw(currentUser) ||
+        "",
+    ).replace(/\D/g, "");
+    if (customerPhone.length < 10) {
+      throw new Error("Please add your mobile number before paying.");
+    }
+    const offerId = String(offer?.id || "").trim();
+    if (!offerId) throw new Error("Package offer not found.");
+    const order = await postPaymentJson("/payments/cashfree/orders", {
+      appointmentId: offerId,
+      sourceType: "package_offer",
+      sourceId: offerId,
+      amountPaise,
+      currency: "INR",
+      description: `Nvoisys package: ${offer?.title || "Care package"}`,
+      returnUrl: PAYMENT_CASHFREE_RETURN_URL,
+      customer: {
+        name: currentUser?.name || patientProfile?.name || "Patient",
+        email: currentUser?.email || "",
+        phone: customerPhone,
+      },
+      metadata: {
+        patientId: currentUser?.id || "",
+        doctorId: doctorUserId || offer?.doctor_user_id || offer?.doctor || "",
+        sourceType: "package_offer",
+        packageOfferId: offerId,
+      },
+    });
+
+    const checkoutUrl = order.checkoutUrl || order.paymentUrl;
+    if (!checkoutUrl) {
+      throw new Error("Payment checkout URL was not returned by the backend.");
+    }
+
+    const browserResult = await WebBrowser.openAuthSessionAsync(
+      checkoutUrl,
+      PAYMENT_CASHFREE_RETURN_URL,
+    );
+    if (browserResult.type !== "success" || !browserResult.url) {
+      throw new Error("Payment was cancelled before completion.");
+    }
+    const params = parseUrlQueryParams(browserResult.url);
+    if (params.status !== "success") {
+      throw new Error(
+        params.message || "Payment was cancelled before completion.",
+      );
+    }
+    const verifyPayload = {
+      appointmentId: offerId,
+      sourceType: "package_offer",
+      sourceId: offerId,
+      cashfreeOrderId:
+        params.cashfree_order_id ||
+        params.cashfreeOrderId ||
+        params.order_id ||
+        order.cashfreeOrderId ||
+        order.orderId,
+    };
+    if (!verifyPayload.cashfreeOrderId) {
+      throw new Error(
+        "Payment response was incomplete. Please contact support.",
+      );
+    }
+    const verified = await postPaymentJson(
+      "/payments/cashfree/verify",
+      verifyPayload,
+    );
+    if (!verified?.verified) {
+      throw new Error("Payment verification failed.");
+    }
+    return { ...verified, customerPhone };
+  };
+
   const payForAppointment = async (appointment) => {
     if (!appointment?.id) {
       throw new Error("Appointment not found.");
@@ -28294,6 +28414,42 @@ export default function App() {
       appointmentId: appointment.id,
       nextStatus: "paid",
     });
+  };
+
+  const payForPackageOffer = async (offer, doctorUserId) => {
+    if (!offer?.id) throw new Error("Package offer not found.");
+    let paymentResult = null;
+    if (PAYMENT_MODE === "cashfree") {
+      paymentResult = await runCashfreePackagePayment(offer, doctorUserId);
+    } else if (PAYMENT_MODE === "stripe") {
+      throw new Error("Stripe payment mode is not configured in this build.");
+    }
+    await completePackageOfferPayment(offer.id, doctorUserId, {
+      provider: PAYMENT_MODE === "cashfree" ? "cashfree" : "stub",
+      paymentMode: PAYMENT_MODE,
+      patientUserId: currentUser?.id,
+      doctorUserId,
+      providerOrderId:
+        paymentResult?.cashfreeOrderId ||
+        paymentResult?.orderId ||
+        paymentResult?.order_id,
+      providerPaymentId:
+        paymentResult?.paymentId ||
+        paymentResult?.payment_id ||
+        paymentResult?.cfPaymentId ||
+        paymentResult?.cf_payment_id,
+      providerReferenceId:
+        paymentResult?.referenceId ||
+        paymentResult?.reference_id ||
+        paymentResult?.bankReference ||
+        paymentResult?.bank_reference,
+      customerName: currentUser?.name || patientProfile?.name || "Patient",
+      customerEmail: currentUser?.email || "",
+      customerPhone:
+        paymentResult?.customerPhone || patientProfilePhoneRaw(patientProfile),
+      verified: paymentResult || null,
+    });
+    await refreshAllData();
   };
 
   // -------------------------------------------------------------------------
@@ -29035,6 +29191,7 @@ export default function App() {
     applyPatientRescheduleChoice,
     cancelAppointmentByPatient,
     payForAppointment,
+    payForPackageOffer,
     fetchMedicationSchedule,
     markScheduleDoseTaken,
     markScheduleDoseMissed,
@@ -29273,6 +29430,8 @@ const AppContent = ({
     setDoctorSelectedWoundId,
     setPatientSelectedWoundId,
     setPatientShowNewWound,
+    fetchApprovedDoctors,
+    payForPackageOffer,
   } = useAppData();
 
   const handleAuthSuccess = ({ user, profile }) => {
@@ -29424,6 +29583,10 @@ const AppContent = ({
         theme={theme}
         patientProfile={patientProfile}
         currentUser={currentUser}
+        onLoadPackageDoctors={() =>
+          fetchApprovedDoctors?.({ packageModeOnly: true })
+        }
+        onPaySelectedPackage={payForPackageOffer}
         onDone={async (mode) => {
           await persistPatientCareMode({
             profileId: patientProfile?.id,
