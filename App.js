@@ -7026,7 +7026,12 @@ const PatientChatScreen = () => {
 
   if (showPrescriptionViewer) {
     return (
-      <PrescriptionScreen onBack={() => setShowPrescriptionViewer(false)} />
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+        edges={["top", "left", "right"]}
+      >
+        <PrescriptionScreen onBack={() => setShowPrescriptionViewer(false)} />
+      </SafeAreaView>
     );
   }
 
@@ -18952,6 +18957,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
 };
 
 const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
+  const { theme } = useTheme();
   const {
     prescriptions: prescriptionRecords,
     wounds: woundRecords,
@@ -19065,13 +19071,16 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   }, [highlightPrescriptionId, cards]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      edges={["bottom", "left", "right"]}
+    >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
+          paddingTop: RFValue(16),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -19113,6 +19122,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
         ref={scrollRef}
         contentContainerStyle={{
           padding: RFValue(16),
+          paddingTop: RFValue(8),
           paddingBottom: tabScrollBottomPadding(),
         }}
       >
@@ -21846,13 +21856,16 @@ const MedicationTrackerScreen = ({ onBack }) => {
 
 const FamilyHealthScreen = ({ onBack }) => {
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      edges={["bottom", "left", "right"]}
+    >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
         style={{
           backgroundColor: "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
+          paddingTop: RFValue(16),
           borderBottomWidth: 1,
           borderBottomColor: "#F3F4F6",
         }}
@@ -21887,9 +21900,9 @@ const FamilyHealthScreen = ({ onBack }) => {
       <ScrollView
         contentContainerStyle={{
           flexGrow: 1,
-          justifyContent: "center",
           alignItems: "center",
           padding: RFValue(24),
+          paddingTop: RFValue(12),
         }}
       >
         <GlowView glowColor="#4338CA" size={RFValue(120)}>
@@ -22070,6 +22083,7 @@ const EmergencySOScreen = ({ onBack }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: sosActive ? "#7F1D1D" : "#F8FAFC" }}
+      edges={["bottom", "left", "right"]}
     >
       <StatusBar
         barStyle={sosActive ? "light-content" : "dark-content"}
@@ -22079,7 +22093,7 @@ const EmergencySOScreen = ({ onBack }) => {
         style={{
           backgroundColor: sosActive ? "#7F1D1D" : "#FFFFFF",
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
+          paddingTop: RFValue(16),
           borderBottomWidth: 1,
           borderBottomColor: sosActive ? "#991B1B" : "#F3F4F6",
         }}
@@ -22118,9 +22132,11 @@ const EmergencySOScreen = ({ onBack }) => {
       <View
         style={{
           flex: 1,
-          justifyContent: "center",
+          justifyContent: "flex-start",
           alignItems: "center",
-          padding: RFValue(24),
+          paddingHorizontal: RFValue(24),
+          paddingTop: RFValue(16),
+          paddingBottom: RFValue(24),
         }}
       >
         {sosActive ? (
@@ -24252,10 +24268,15 @@ const WoundDetailScreen = ({
 
   if (showPrescriptionViewer) {
     return (
-      <PrescriptionScreen
-        onBack={() => setShowPrescriptionViewer(false)}
-        highlightPrescriptionId={linkedPrescription?.id || null}
-      />
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        edges={["top", "left", "right"]}
+      >
+        <PrescriptionScreen
+          onBack={() => setShowPrescriptionViewer(false)}
+          highlightPrescriptionId={linkedPrescription?.id || null}
+        />
+      </SafeAreaView>
     );
   }
 
