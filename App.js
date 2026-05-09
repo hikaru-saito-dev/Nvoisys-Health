@@ -1461,6 +1461,11 @@ const MEAL_TIMING_NOTIFICATION_HINT = {
   no_preference: "",
 };
 
+/** Master switch for in-app notification presentation + scheduling (Profile → Notifications). */
+const notificationDisplayPrefs = { enabled: true };
+
+const NOTIFICATIONS_ENABLED_STORAGE_KEY = "nvhs_notifications_enabled";
+
 let notificationsHandlerConfigured = false;
 const configureNotificationsHandler = () => {
   if (notificationsHandlerConfigured) return;
@@ -1468,10 +1473,10 @@ const configureNotificationsHandler = () => {
   try {
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
+        shouldShowAlert: notificationDisplayPrefs.enabled,
+        shouldShowBanner: notificationDisplayPrefs.enabled,
+        shouldShowList: notificationDisplayPrefs.enabled,
+        shouldPlaySound: notificationDisplayPrefs.enabled,
         shouldSetBadge: false,
       }),
     });
@@ -1501,6 +1506,7 @@ const ensureReminderPermissions = async () => {
 
 const scheduleDoseReminder = async (scheduleRecord) => {
   if (!scheduleRecord?.id || !scheduleRecord?.due_at) return null;
+  if (!notificationDisplayPrefs.enabled) return null;
   const dueAt = new Date(scheduleRecord.due_at);
   if (!Number.isFinite(dueAt.getTime())) return null;
   if (dueAt.getTime() < Date.now() + 30 * 1000) return null;
@@ -3832,6 +3838,10 @@ const PatientHomeScreen = () => {
     sendConversationMessage,
     loadConversationMessages,
   } = useAppData();
+  const patientFirstName =
+    String(patientProfile?.full_name || currentUser?.name || "")
+      .trim()
+      .split(/\s+/)[0] || "Patient";
   const tabNav = useMainTabNav();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
 
@@ -4225,143 +4235,211 @@ const PatientHomeScreen = () => {
             <View
               style={{
                 backgroundColor: theme.accent,
-                padding: RFValue(24),
-                paddingBottom: RFValue(28),
                 borderBottomLeftRadius: RFValue(28),
                 borderBottomRightRadius: RFValue(28),
+                overflow: "hidden",
               }}
             >
               <View
                 style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: RFValue(20),
+                  position: "absolute",
+                  width: RFValue(190),
+                  height: RFValue(190),
+                  borderRadius: RFValue(95),
+                  backgroundColor: "rgba(255,255,255,0.12)",
+                  top: RFValue(-76),
+                  right: RFValue(-56),
                 }}
-              >
-                <View>
-                  <Text
-                    style={{
-                      color: "rgba(255,255,255,0.7)",
-                      fontSize: RFValue(13),
-                      fontWeight: "600",
-                      marginBottom: RFValue(4),
-                    }}
-                  >
-                    {new Date().getHours() < 12
-                      ? "Good Morning"
-                      : new Date().getHours() < 17
-                        ? "Good Afternoon"
-                        : "Good Evening"}
-                  </Text>
-                  <Text
-                    style={{
-                      color: "#FFF",
-                      fontSize: RFValue(24),
-                      fontWeight: "800",
-                    }}
-                  >
-                    Patient
-                  </Text>
-                </View>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <TouchableOpacity
-                    style={{
-                      width: RFValue(40),
-                      height: RFValue(40),
-                      borderRadius: RFValue(12),
-                      backgroundColor: "rgba(255,255,255,0.15)",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginRight: RFValue(10),
-                    }}
-                  >
-                    <Ionicons
-                      name="notifications-outline"
-                      size={RFValue(22)}
-                      color="#FFF"
-                    />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={{
-                      width: RFValue(40),
-                      height: RFValue(40),
-                      borderRadius: RFValue(12),
-                      backgroundColor: "#EF4444",
-                      justifyContent: "center",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Ionicons
-                      name="alert-circle"
-                      size={RFValue(22)}
-                      color="#FFF"
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Mood selector */}
+              />
               <View
                 style={{
-                  backgroundColor: "rgba(255,255,255,0.12)",
-                  borderRadius: RFValue(16),
-                  padding: RFValue(14),
-                  borderWidth: StyleSheet.hairlineWidth,
-                  borderColor: "rgba(255,255,255,0.22)",
+                  position: "absolute",
+                  width: RFValue(110),
+                  height: RFValue(110),
+                  borderRadius: RFValue(55),
+                  backgroundColor: "rgba(255,255,255,0.08)",
+                  bottom: RFValue(36),
+                  left: RFValue(-40),
+                }}
+              />
+              <View
+                style={{
+                  paddingHorizontal: RFValue(20),
+                  paddingTop: RFValue(22),
+                  paddingBottom: RFValue(26),
                 }}
               >
-                <Text
-                  style={{
-                    color: "rgba(255,255,255,0.8)",
-                    fontSize: RFValue(12),
-                    fontWeight: "600",
-                    marginBottom: RFValue(10),
-                  }}
-                >
-                  How are you feeling today?
-                </Text>
                 <View
                   style={{
                     flexDirection: "row",
-                    flexWrap: "wrap",
                     justifyContent: "space-between",
-                    rowGap: RFValue(8),
+                    alignItems: "flex-start",
                   }}
                 >
-                  {["Great", "Good", "Neutral", "Bad", "Awful"].map(
-                    (mood, index) => (
+                  <View style={{ flex: 1, paddingRight: RFValue(12) }}>
+                    <Text
+                      style={{
+                        color: "rgba(255,255,255,0.72)",
+                        fontSize: RFValue(11),
+                        fontWeight: "800",
+                        letterSpacing: 1,
+                        textTransform: "uppercase",
+                        marginBottom: RFValue(6),
+                      }}
+                    >
+                      {new Date().getHours() < 12
+                        ? "Good morning"
+                        : new Date().getHours() < 17
+                          ? "Good afternoon"
+                          : "Good evening"}
+                    </Text>
+                    <Text
+                      style={{
+                        color: "#FFF",
+                        fontSize: RFValue(26),
+                        fontWeight: "800",
+                        letterSpacing: -0.4,
+                      }}
+                    >
+                      {patientFirstName}
+                    </Text>
+                    <Text
+                      style={{
+                        color: "rgba(255,255,255,0.78)",
+                        fontSize: RFValue(13),
+                        marginTop: RFValue(8),
+                        lineHeight: RFValue(19),
+                        fontWeight: "500",
+                      }}
+                    >
+                      Your care hub — track how you feel and reach help quickly.
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <TouchableOpacity
+                      onPress={() => tabNav?.navigateTab?.("Profile")}
+                      activeOpacity={0.85}
+                      style={{
+                        width: RFValue(44),
+                        height: RFValue(44),
+                        borderRadius: RFValue(14),
+                        backgroundColor: "rgba(255,255,255,0.2)",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        marginRight: RFValue(10),
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: "rgba(255,255,255,0.35)",
+                      }}
+                    >
+                      <Ionicons
+                        name="notifications-outline"
+                        size={RFValue(22)}
+                        color="#FFF"
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowSOS(true)}
+                      activeOpacity={0.85}
+                      style={{
+                        width: RFValue(44),
+                        height: RFValue(44),
+                        borderRadius: RFValue(14),
+                        backgroundColor: "rgba(239,68,68,0.95)",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: "rgba(255,255,255,0.35)",
+                      }}
+                    >
+                      <Ionicons
+                        name="alert-circle"
+                        size={RFValue(22)}
+                        color="#FFF"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View
+                  style={{
+                    marginTop: RFValue(22),
+                    backgroundColor: "rgba(255,255,255,0.14)",
+                    borderRadius: RFValue(20),
+                    paddingVertical: RFValue(14),
+                    paddingHorizontal: RFValue(14),
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: "rgba(255,255,255,0.28)",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.9)",
+                      fontSize: RFValue(13),
+                      fontWeight: "700",
+                      marginBottom: RFValue(12),
+                    }}
+                  >
+                    How are you feeling today?
+                  </Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      paddingRight: RFValue(4),
+                    }}
+                  >
+                    {[
+                      { label: "Great", emoji: "😊" },
+                      { label: "Good", emoji: "🙂" },
+                      { label: "Neutral", emoji: "😐" },
+                      { label: "Bad", emoji: "😟" },
+                      { label: "Awful", emoji: "😣" },
+                    ].map((mood, index) => (
                       <TouchableOpacity
-                        key={index}
-                        onPress={() => setSelectedEmoji(mood)}
+                        key={mood.label}
+                        onPress={() => setSelectedEmoji(mood.label)}
+                        activeOpacity={0.88}
                         style={{
-                          backgroundColor:
-                            selectedEmoji === mood
-                              ? "rgba(255,255,255,0.3)"
-                              : "rgba(255,255,255,0.1)",
-                          paddingHorizontal: RFValue(10),
-                          minHeight: RFValue(36),
-                          borderRadius: RFValue(14),
-                          justifyContent: "center",
+                          flexDirection: "row",
                           alignItems: "center",
-                          borderWidth: selectedEmoji === mood ? 2 : 0,
-                          borderColor: "#FFF",
-                          marginBottom: RFValue(6),
-                          minWidth: "18%",
+                          backgroundColor:
+                            selectedEmoji === mood.label
+                              ? "#FFF"
+                              : "rgba(255,255,255,0.12)",
+                          paddingHorizontal: RFValue(14),
+                          paddingVertical: RFValue(10),
+                          borderRadius: RFValue(999),
+                          borderWidth: selectedEmoji === mood.label ? 0 : 1,
+                          borderColor: "rgba(255,255,255,0.22)",
+                          marginRight:
+                            index < 4 ? RFValue(8) : 0,
                         }}
                       >
                         <Text
                           style={{
-                            fontSize: RFValue(13),
-                            fontWeight: "700",
-                            color: "#FFF",
+                            fontSize: RFValue(15),
+                            marginRight: RFValue(6),
                           }}
                         >
-                          {mood}
+                          {mood.emoji}
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: RFValue(13),
+                            fontWeight: "700",
+                            color:
+                              selectedEmoji === mood.label
+                                ? theme.accent
+                                : "#FFF",
+                          }}
+                        >
+                          {mood.label}
                         </Text>
                       </TouchableOpacity>
-                    ),
-                  )}
+                    ))}
+                  </ScrollView>
                 </View>
               </View>
             </View>
@@ -9428,6 +9506,8 @@ const PatientAppointmentsScreen = ({ onBack }) => {
   );
 };
 
+const NVOISYS_PRIVACY_POLICY_URL = "https://nvoisyshealth.com/privacy";
+
 const PatientProfileScreen = ({
   currentUser,
   patientProfile,
@@ -9438,6 +9518,7 @@ const PatientProfileScreen = ({
   const [showAppointments, setShowAppointments] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showMedicalRecords, setShowMedicalRecords] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const { theme, followSystem, setFollowSystem } = useTheme();
   const {
     upgradeToPackageMode,
@@ -9450,6 +9531,72 @@ const PatientProfileScreen = ({
   const phoneDisplay = formatPhoneForDisplay(
     patientProfilePhoneRaw(patientProfile),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(NOTIFICATIONS_ENABLED_STORAGE_KEY);
+        if (cancelled) return;
+        const on = raw !== "false";
+        notificationDisplayPrefs.enabled = on;
+        setNotificationsEnabled(on);
+      } catch {
+        if (!cancelled) {
+          setNotificationsEnabled(notificationDisplayPrefs.enabled);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleNotificationsToggle = async (value) => {
+    setNotificationsEnabled(value);
+    notificationDisplayPrefs.enabled = value;
+    try {
+      await AsyncStorage.setItem(
+        NOTIFICATIONS_ENABLED_STORAGE_KEY,
+        value ? "true" : "false",
+      );
+    } catch {
+      /* ignore */
+    }
+    configureNotificationsHandler();
+    if (value) {
+      try {
+        const asked = await Notifications.requestPermissionsAsync();
+        if (!asked.granted) {
+          Alert.alert(
+            "Notifications",
+            "Allow notifications in system settings to receive medication reminders and alerts.",
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        await Notifications.cancelAllScheduledNotificationsAsync();
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const openPrivacyPolicy = async () => {
+    try {
+      const can = await Linking.canOpenURL(NVOISYS_PRIVACY_POLICY_URL);
+      if (can) {
+        await Linking.openURL(NVOISYS_PRIVACY_POLICY_URL);
+      } else {
+        Alert.alert("Privacy", "Unable to open the privacy policy link.");
+      }
+    } catch {
+      Alert.alert("Privacy", "Unable to open the privacy policy link.");
+    }
+  };
 
   if (showMedicalRecords)
     return (
@@ -9749,61 +9896,192 @@ const PatientProfileScreen = ({
             >
               Account
             </Text>
-            {[
-              {
-                icon: "person-outline",
-                label: "Edit Profile",
-                onPress: () => setShowEditProfile(true),
-              },
-              { icon: "shield-checkmark-outline", label: "Privacy & Security" },
-              { icon: "notifications-outline", label: "Notifications" },
-              { icon: "language-outline", label: "Language" },
-            ].map((item, idx) => (
-              <TouchableOpacity
-                key={idx}
-                onPress={item.onPress}
+            <TouchableOpacity
+              onPress={() => setShowEditProfile(true)}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: RFValue(16),
+                paddingBottom: RFValue(12),
+              }}
+            >
+              <View
                 style={{
-                  flexDirection: "row",
+                  width: RFValue(36),
+                  height: RFValue(36),
+                  borderRadius: RFValue(10),
+                  backgroundColor: theme.bg,
+                  justifyContent: "center",
                   alignItems: "center",
-                  padding: RFValue(16),
-                  paddingTop: idx === 0 ? 0 : RFValue(16),
-                  paddingBottom: idx === 3 ? RFValue(16) : RFValue(12),
+                  marginRight: RFValue(14),
                 }}
               >
-                <View
-                  style={{
-                    width: RFValue(36),
-                    height: RFValue(36),
-                    borderRadius: RFValue(10),
-                    backgroundColor: theme.bg,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    marginRight: RFValue(14),
-                  }}
-                >
-                  <Ionicons
-                    name={item.icon}
-                    size={RFValue(22)}
-                    color={theme.textSecondary}
-                  />
-                </View>
+                <Ionicons
+                  name="person-outline"
+                  size={RFValue(22)}
+                  color={theme.textSecondary}
+                />
+              </View>
+              <Text
+                style={{
+                  fontSize: RFValue(15),
+                  fontWeight: "600",
+                  color: theme.textPrimary,
+                  flex: 1,
+                }}
+              >
+                Edit Profile
+              </Text>
+              <Ionicons
+                name="chevron-forward"
+                size={RFValue(20)}
+                color={theme.textTertiary}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={openPrivacyPolicy}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: RFValue(16),
+                paddingBottom: RFValue(12),
+              }}
+            >
+              <View
+                style={{
+                  width: RFValue(36),
+                  height: RFValue(36),
+                  borderRadius: RFValue(10),
+                  backgroundColor: theme.bg,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginRight: RFValue(14),
+                }}
+              >
+                <Ionicons
+                  name="shield-checkmark-outline"
+                  size={RFValue(22)}
+                  color={theme.textSecondary}
+                />
+              </View>
+              <Text
+                style={{
+                  fontSize: RFValue(15),
+                  fontWeight: "600",
+                  color: theme.textPrimary,
+                  flex: 1,
+                }}
+              >
+                Privacy & Security
+              </Text>
+              <Ionicons
+                name="open-outline"
+                size={RFValue(18)}
+                color={theme.textTertiary}
+              />
+            </TouchableOpacity>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: RFValue(16),
+                paddingBottom: RFValue(12),
+              }}
+            >
+              <View
+                style={{
+                  width: RFValue(36),
+                  height: RFValue(36),
+                  borderRadius: RFValue(10),
+                  backgroundColor: theme.bg,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginRight: RFValue(14),
+                }}
+              >
+                <Ionicons
+                  name="notifications-outline"
+                  size={RFValue(22)}
+                  color={theme.textSecondary}
+                />
+              </View>
+              <View style={{ flex: 1, paddingRight: RFValue(12) }}>
                 <Text
                   style={{
                     fontSize: RFValue(15),
                     fontWeight: "600",
                     color: theme.textPrimary,
-                    flex: 1,
                   }}
                 >
-                  {item.label}
+                  Notifications
                 </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    color: theme.textSecondary,
+                    marginTop: RFValue(3),
+                  }}
+                >
+                  Turn app notifications on or off
+                </Text>
+              </View>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={handleNotificationsToggle}
+                trackColor={{
+                  false: theme.inputBorder,
+                  true: theme.accentLight,
+                }}
+                thumbColor={
+                  notificationsEnabled ? theme.accent : theme.textTertiary
+                }
+              />
+            </View>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: RFValue(16),
+                paddingBottom: RFValue(16),
+              }}
+            >
+              <View
+                style={{
+                  width: RFValue(36),
+                  height: RFValue(36),
+                  borderRadius: RFValue(10),
+                  backgroundColor: theme.bg,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  marginRight: RFValue(14),
+                }}
+              >
                 <Ionicons
-                  name="chevron-forward"
-                  size={RFValue(20)}
-                  color={theme.textTertiary}
+                  name="language-outline"
+                  size={RFValue(22)}
+                  color={theme.textSecondary}
                 />
-              </TouchableOpacity>
-            ))}
+              </View>
+              <Text
+                style={{
+                  fontSize: RFValue(15),
+                  fontWeight: "600",
+                  color: theme.textPrimary,
+                  flex: 1,
+                }}
+              >
+                Language
+              </Text>
+              <Text
+                style={{
+                  fontSize: RFValue(14),
+                  fontWeight: "700",
+                  color: theme.textSecondary,
+                }}
+              >
+                English
+              </Text>
+            </View>
           </View>
 
           <View
@@ -26169,6 +26447,22 @@ export default function App() {
           setFollowSystemState(true);
         }
         if (THEMES[savedPalette]) setPaletteKey(savedPalette);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(NOTIFICATIONS_ENABLED_STORAGE_KEY);
+        if (!active) return;
+        notificationDisplayPrefs.enabled = raw !== "false";
       } catch {
         /* ignore */
       }
