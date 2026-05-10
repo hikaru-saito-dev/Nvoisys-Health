@@ -33,6 +33,7 @@ import {
   Platform,
   RefreshControl,
   ScrollView,
+  Share,
   StatusBar,
   StyleSheet,
   Switch,
@@ -436,7 +437,22 @@ const THEME_FOLLOW_SYSTEM_KEY = "app_theme_follow_system";
 
 // Theme Context
 const ThemeContext = createContext();
-const useTheme = () => useContext(ThemeContext);
+const fallbackThemeFromAppearance = () =>
+  Appearance.getColorScheme() === "dark" ? "dark" : "light";
+const useTheme = () => {
+  const ctx = useContext(ThemeContext);
+  if (ctx) return ctx;
+  const key = fallbackThemeFromAppearance();
+  return {
+    theme: THEMES[key] || THEMES.light,
+    changeTheme: () => {},
+    themeKey: key,
+    paletteKey: key,
+    resolvedPaletteKey: key,
+    followSystem: true,
+    setFollowSystem: () => {},
+  };
+};
 
 const AppDataContext = createContext(null);
 const useAppData = () => useContext(AppDataContext);
@@ -3915,6 +3931,7 @@ const PatientHomeScreen = () => {
     sendConversationMessage,
     loadConversationMessages,
     payForPackageOffer,
+    registerPatientPharmacyDirectoryOpener,
   } = useAppData();
   const patientFirstName =
     String(patientProfile?.full_name || currentUser?.name || "")
@@ -4083,6 +4100,26 @@ const PatientHomeScreen = () => {
       cancelled = true;
     };
   }, [showPackageJourney, fetchApprovedDoctors]);
+
+  useEffect(() => {
+    if (!registerPatientPharmacyDirectoryOpener) return undefined;
+    registerPatientPharmacyDirectoryOpener(() => {
+      setShowFindDoctor(false);
+      setShowPrescription(false);
+      setShowMeds(false);
+      setShowFamily(false);
+      setShowSOS(false);
+      setShowHospital(false);
+      setShowAppointments(false);
+      setShowMedical(false);
+      setShowQuickSol(false);
+      setShowQuickCounselling(false);
+      setShowPackageJourney(false);
+      tabNav?.navigateTab?.("Home");
+      setShowPharmacy(true);
+    });
+    return () => registerPatientPharmacyDirectoryOpener(null);
+  }, [registerPatientPharmacyDirectoryOpener, tabNav]);
 
   const upcomingAppointments = (appointments || [])
     .filter((appointment) => {
@@ -7266,7 +7303,10 @@ const PatientChatScreen = () => {
         style={{ flex: 1, backgroundColor: theme.bg }}
         edges={["top", "left", "right"]}
       >
-        <PrescriptionScreen onBack={() => setShowPrescriptionViewer(false)} />
+        <PrescriptionScreen
+          onBack={() => setShowPrescriptionViewer(false)}
+          onCloseAfterOrderMeds={() => setShowPrescriptionViewer(false)}
+        />
       </SafeAreaView>
     );
   }
@@ -17505,6 +17545,26 @@ const AppointmentBookingScreen = ({
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookingError, setBookingError] = useState("");
   const [scheduledIso, setScheduledIso] = useState("");
+  const bookingScrollRef = useRef(null);
+  const [keyboardPad, setKeyboardPad] = useState(0);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = (e) => {
+      const h = e?.endCoordinates?.height;
+      setKeyboardPad(Number.isFinite(h) ? Math.round(h) : 0);
+    };
+    const onHide = () => setKeyboardPad(0);
+    const subShow = Keyboard.addListener(showEvent, onShow);
+    const subHide = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      subShow.remove();
+      subHide.remove();
+    };
+  }, []);
 
   useEffect(() => {
     setSelectedSlot(null);
@@ -17902,14 +17962,19 @@ const AppointmentBookingScreen = ({
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? RFValue(10) : 0}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? RFValue(72) : 0}
       >
         <ScrollView
+          ref={bookingScrollRef}
           style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={{
             padding: RFValue(16),
-            paddingBottom: Math.max(tabScrollBottomPadding(), RFValue(120)),
+            paddingBottom: Math.max(
+              tabScrollBottomPadding(),
+              RFValue(120),
+              keyboardPad + RFValue(56),
+            ),
           }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
@@ -18304,6 +18369,13 @@ const AppointmentBookingScreen = ({
               onChangeText={(value) => {
                 setReason(value);
                 if (bookingError) setBookingError("");
+              }}
+              onFocus={() => {
+                InteractionManager.runAfterInteractions(() => {
+                  setTimeout(() => {
+                    bookingScrollRef.current?.scrollToEnd({ animated: true });
+                  }, 280);
+                });
               }}
               placeholder="e.g. Persistent cough for 5 days, mild fever, asking for an online review."
               placeholderTextColor={theme.textTertiary}
@@ -19412,13 +19484,18 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   );
 };
 
-const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
+const PrescriptionScreen = ({
+  onBack,
+  highlightPrescriptionId = null,
+  onCloseAfterOrderMeds = null,
+}) => {
   const { theme } = useTheme();
   const {
     prescriptions: prescriptionRecords,
     wounds: woundRecords,
     runSideEffectCheck,
     patientProfile,
+    requestPatientPharmacyDirectory,
   } = useAppData();
   const scrollRef = React.useRef(null);
   const cardOffsetsRef = React.useRef({});
@@ -19467,6 +19544,50 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
       };
     });
   }, [prescriptionRecords, woundRecords]);
+
+  const buildPrescriptionShareMessage = React.useCallback((rx) => {
+    const lines = [];
+    lines.push(`Prescription — ${rx.date}`);
+    lines.push(`Doctor: ${rx.doctor}`);
+    lines.push(`Rx ID: ${rx.id}`);
+    if (rx.woundDescription) {
+      lines.push(`Related wound: ${rx.woundDescription}`);
+    }
+    if (rx.diagnosis) lines.push(`Diagnosis: ${rx.diagnosis}`);
+    lines.push("");
+    (rx.medicines || []).forEach((m) => {
+      const dose =
+        m.dosage && String(m.dosage).trim() && m.dosage !== "-"
+          ? ` (${m.dosage})`
+          : "";
+      lines.push(`• ${m.name}${dose}`);
+      lines.push(`  When to take: ${m.whenToTake}`);
+      lines.push(`  Duration: ${m.duration}`);
+    });
+    lines.push("");
+    lines.push("From Nvoisys Health");
+    return lines.join("\n");
+  }, []);
+
+  const handleDownloadPrescription = async (rx) => {
+    try {
+      await Share.share({
+        title: "Prescription",
+        message: buildPrescriptionShareMessage(rx),
+      });
+    } catch (e) {
+      const msg = String(e?.message || e || "");
+      if (/cancel|dismiss/i.test(msg)) return;
+      Alert.alert("Share", msg || "Could not share this prescription.");
+    }
+  };
+
+  const handleOrderMeds = () => {
+    const ok = requestPatientPharmacyDirectory?.();
+    if (ok && typeof onCloseAfterOrderMeds === "function") {
+      onCloseAfterOrderMeds();
+    }
+  };
 
   // Step 9 - Same AI side-effect check as PrescriptionModal, debounced per load.
   React.useEffect(() => {
@@ -19914,6 +20035,8 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                 }}
               >
                 <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => handleDownloadPrescription(rx)}
                   style={{
                     flex: 1,
                     flexDirection: "row",
@@ -19942,6 +20065,8 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={handleOrderMeds}
                   style={{
                     flex: 1,
                     flexDirection: "row",
@@ -22366,19 +22491,23 @@ const MedicationTrackerScreen = ({ onBack }) => {
 };
 
 const FamilyHealthScreen = ({ onBack }) => {
+  const { theme } = useTheme();
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
+      style={{ flex: 1, backgroundColor: theme.bg }}
       edges={["bottom", "left", "right"]}
     >
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar
+        barStyle={theme.statusBarStyle}
+        backgroundColor={theme.bgSolid}
+      />
       <View
         style={{
-          backgroundColor: "#FFFFFF",
+          backgroundColor: theme.card,
           padding: RFValue(20),
           paddingTop: RFValue(16),
           borderBottomWidth: 1,
-          borderBottomColor: "#F3F4F6",
+          borderBottomColor: theme.cardBorder,
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -22388,19 +22517,23 @@ const FamilyHealthScreen = ({ onBack }) => {
               width: RFValue(36),
               height: RFValue(36),
               borderRadius: RFValue(10),
-              backgroundColor: "#F3F4F6",
+              backgroundColor: theme.inputBg,
               justifyContent: "center",
               alignItems: "center",
               marginRight: RFValue(14),
             }}
           >
-            <Ionicons name="arrow-back" size={RFValue(20)} color="#374151" />
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
           </TouchableOpacity>
           <Text
             style={{
               fontSize: RFValue(18),
               fontWeight: "800",
-              color: "#1E1B4B",
+              color: theme.textPrimary,
             }}
           >
             Family Health
@@ -22414,27 +22547,28 @@ const FamilyHealthScreen = ({ onBack }) => {
           alignItems: "center",
           padding: RFValue(24),
           paddingTop: RFValue(12),
+          paddingBottom: tabScrollBottomPadding(),
         }}
       >
-        <GlowView glowColor="#4338CA" size={RFValue(120)}>
+        <GlowView glowColor={theme.accent} size={RFValue(120)}>
           <View
             style={{
               width: RFValue(100),
               height: RFValue(100),
               borderRadius: RFValue(50),
-              backgroundColor: "#EEF2FF",
+              backgroundColor: theme.accentLight,
               justifyContent: "center",
               alignItems: "center",
             }}
           >
-            <Ionicons name="people" size={RFValue(48)} color="#4338CA" />
+            <Ionicons name="people" size={RFValue(48)} color={theme.accent} />
           </View>
         </GlowView>
 
         <View style={{ marginTop: RFValue(32), alignItems: "center" }}>
           <View
             style={{
-              backgroundColor: "#4338CA",
+              backgroundColor: theme.accentBg,
               paddingHorizontal: RFValue(12),
               paddingVertical: RFValue(4),
               borderRadius: RFValue(20),
@@ -22456,7 +22590,7 @@ const FamilyHealthScreen = ({ onBack }) => {
             style={{
               fontSize: RFValue(24),
               fontWeight: "800",
-              color: "#1E1B4B",
+              color: theme.textPrimary,
               textAlign: "center",
             }}
           >
@@ -22465,7 +22599,7 @@ const FamilyHealthScreen = ({ onBack }) => {
           <Text
             style={{
               fontSize: RFValue(14),
-              color: "#6B7280",
+              color: theme.textSecondary,
               textAlign: "center",
               marginTop: RFValue(8),
               lineHeight: RFValue(20),
@@ -22481,19 +22615,21 @@ const FamilyHealthScreen = ({ onBack }) => {
           style={{
             width: "100%",
             marginTop: RFValue(40),
-            backgroundColor: "#FFFFFF",
+            backgroundColor: theme.card,
             borderRadius: RFValue(16),
             padding: RFValue(16),
-            shadowColor: "#000",
+            shadowColor: theme.shadowColor,
             shadowOpacity: 0.05,
             elevation: 2,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
           }}
         >
           <Text
             style={{
               fontSize: RFValue(14),
               fontWeight: "700",
-              color: "#1E1B4B",
+              color: theme.textPrimary,
               marginBottom: RFValue(16),
             }}
           >
@@ -22527,18 +22663,22 @@ const FamilyHealthScreen = ({ onBack }) => {
                   width: RFValue(28),
                   height: RFValue(28),
                   borderRadius: RFValue(8),
-                  backgroundColor: "#F5F3FF",
+                  backgroundColor: theme.accentLight,
                   justifyContent: "center",
                   alignItems: "center",
                   marginRight: RFValue(12),
                 }}
               >
-                <Ionicons name={item.icon} size={RFValue(16)} color="#4338CA" />
+                <Ionicons
+                  name={item.icon}
+                  size={RFValue(16)}
+                  color={theme.accent}
+                />
               </View>
               <Text
                 style={{
                   fontSize: RFValue(13),
-                  color: "#4B5563",
+                  color: theme.textSecondary,
                   fontWeight: "500",
                 }}
               >
@@ -22551,15 +22691,17 @@ const FamilyHealthScreen = ({ onBack }) => {
         <TouchableOpacity
           style={{
             marginTop: RFValue(32),
-            backgroundColor: "#F3F4F6",
+            backgroundColor: theme.inputBg,
             paddingHorizontal: RFValue(24),
             paddingVertical: RFValue(12),
             borderRadius: RFValue(12),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
           }}
         >
           <Text
             style={{
-              color: "#6B7280",
+              color: theme.textSecondary,
               fontSize: RFValue(13),
               fontWeight: "700",
             }}
@@ -22573,6 +22715,7 @@ const FamilyHealthScreen = ({ onBack }) => {
 };
 
 const EmergencySOScreen = ({ onBack }) => {
+  const { theme } = useTheme();
   const [sosActive, setSosActive] = useState(false);
   const [countdown, setCountdown] = useState(null);
 
@@ -22593,20 +22736,23 @@ const EmergencySOScreen = ({ onBack }) => {
 
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: sosActive ? "#7F1D1D" : "#F8FAFC" }}
+      style={{
+        flex: 1,
+        backgroundColor: sosActive ? "#7F1D1D" : theme.bg,
+      }}
       edges={["bottom", "left", "right"]}
     >
       <StatusBar
-        barStyle={sosActive ? "light-content" : "dark-content"}
-        backgroundColor={sosActive ? "#7F1D1D" : "#FFFFFF"}
+        barStyle={sosActive ? "light-content" : theme.statusBarStyle}
+        backgroundColor={sosActive ? "#7F1D1D" : theme.bgSolid}
       />
       <View
         style={{
-          backgroundColor: sosActive ? "#7F1D1D" : "#FFFFFF",
+          backgroundColor: sosActive ? "#7F1D1D" : theme.card,
           padding: RFValue(20),
           paddingTop: RFValue(16),
           borderBottomWidth: 1,
-          borderBottomColor: sosActive ? "#991B1B" : "#F3F4F6",
+          borderBottomColor: sosActive ? "#991B1B" : theme.cardBorder,
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -22616,7 +22762,9 @@ const EmergencySOScreen = ({ onBack }) => {
               width: RFValue(36),
               height: RFValue(36),
               borderRadius: RFValue(10),
-              backgroundColor: sosActive ? "rgba(255,255,255,0.2)" : "#F3F4F6",
+              backgroundColor: sosActive
+                ? "rgba(255,255,255,0.2)"
+                : theme.inputBg,
               justifyContent: "center",
               alignItems: "center",
               marginRight: RFValue(14),
@@ -22625,14 +22773,14 @@ const EmergencySOScreen = ({ onBack }) => {
             <Ionicons
               name="arrow-back"
               size={RFValue(20)}
-              color={sosActive ? "#FFF" : "#374151"}
+              color={sosActive ? "#FFF" : theme.textPrimary}
             />
           </TouchableOpacity>
           <Text
             style={{
               fontSize: RFValue(18),
               fontWeight: "800",
-              color: sosActive ? "#FFF" : "#1E1B4B",
+              color: sosActive ? "#FFF" : theme.textPrimary,
             }}
           >
             Emergency SOS
@@ -22648,6 +22796,7 @@ const EmergencySOScreen = ({ onBack }) => {
           paddingHorizontal: RFValue(24),
           paddingTop: RFValue(16),
           paddingBottom: RFValue(24),
+          backgroundColor: sosActive ? "transparent" : theme.bg,
         }}
       >
         {sosActive ? (
@@ -22711,7 +22860,7 @@ const EmergencySOScreen = ({ onBack }) => {
                 width: RFValue(160),
                 height: RFValue(160),
                 borderRadius: RFValue(80),
-                backgroundColor: "#FEF2F2",
+                backgroundColor: theme.dangerLight,
                 justifyContent: "center",
                 alignItems: "center",
                 marginBottom: RFValue(24),
@@ -22748,7 +22897,7 @@ const EmergencySOScreen = ({ onBack }) => {
             </View>
             <Text
               style={{
-                color: "#1E1B4B",
+                color: theme.textPrimary,
                 fontSize: RFValue(20),
                 fontWeight: "800",
                 textAlign: "center",
@@ -22759,7 +22908,7 @@ const EmergencySOScreen = ({ onBack }) => {
             </Text>
             <Text
               style={{
-                color: "#6B7280",
+                color: theme.textSecondary,
                 fontSize: RFValue(14),
                 textAlign: "center",
                 lineHeight: RFValue(22),
@@ -22776,7 +22925,7 @@ const EmergencySOScreen = ({ onBack }) => {
         <View style={{ width: "100%" }}>
           <Text
             style={{
-              color: sosActive ? "#FCA5A5" : "#6B7280",
+              color: sosActive ? "#FCA5A5" : theme.textTertiary,
               fontSize: RFValue(13),
               fontWeight: "700",
               marginBottom: RFValue(12),
@@ -22792,17 +22941,19 @@ const EmergencySOScreen = ({ onBack }) => {
                 style={{
                   backgroundColor: sosActive
                     ? "rgba(255,255,255,0.1)"
-                    : "#FFFFFF",
+                    : theme.card,
                   borderRadius: RFValue(14),
                   padding: RFValue(16),
                   marginBottom: RFValue(10),
                   flexDirection: "row",
                   alignItems: "center",
-                  shadowColor: "#000",
+                  shadowColor: theme.shadowColor,
                   shadowOpacity: sosActive ? 0 : 0.06,
                   shadowOffset: { width: 0, height: 4 },
                   shadowRadius: 12,
                   elevation: sosActive ? 0 : 3,
+                  borderWidth: sosActive ? 0 : StyleSheet.hairlineWidth,
+                  borderColor: sosActive ? "transparent" : theme.cardBorder,
                 }}
               >
                 <View
@@ -22812,7 +22963,7 @@ const EmergencySOScreen = ({ onBack }) => {
                     borderRadius: RFValue(12),
                     backgroundColor: sosActive
                       ? "rgba(255,255,255,0.2)"
-                      : "#FEF2F2",
+                      : theme.dangerLight,
                     justifyContent: "center",
                     alignItems: "center",
                     marginRight: RFValue(14),
@@ -22821,7 +22972,7 @@ const EmergencySOScreen = ({ onBack }) => {
                   <Ionicons
                     name={contact.icon}
                     size={RFValue(20)}
-                    color={sosActive ? "#FFF" : "#DC2626"}
+                    color={sosActive ? "#FFF" : theme.danger}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -22829,7 +22980,7 @@ const EmergencySOScreen = ({ onBack }) => {
                     style={{
                       fontSize: RFValue(14),
                       fontWeight: "700",
-                      color: sosActive ? "#FFF" : "#1E1B4B",
+                      color: sosActive ? "#FFF" : theme.textPrimary,
                     }}
                   >
                     {contact.name}
@@ -22837,7 +22988,7 @@ const EmergencySOScreen = ({ onBack }) => {
                   <Text
                     style={{
                       fontSize: RFValue(12),
-                      color: sosActive ? "#FCA5A5" : "#6B7280",
+                      color: sosActive ? "#FCA5A5" : theme.textSecondary,
                     }}
                   >
                     {contact.phone}
@@ -22848,7 +22999,7 @@ const EmergencySOScreen = ({ onBack }) => {
                     width: RFValue(36),
                     height: RFValue(36),
                     borderRadius: RFValue(10),
-                    backgroundColor: "#059669",
+                    backgroundColor: sosActive ? "#059669" : theme.success,
                     justifyContent: "center",
                     alignItems: "center",
                   }}
@@ -24786,6 +24937,7 @@ const WoundDetailScreen = ({
         <PrescriptionScreen
           onBack={() => setShowPrescriptionViewer(false)}
           highlightPrescriptionId={linkedPrescription?.id || null}
+          onCloseAfterOrderMeds={() => setShowPrescriptionViewer(false)}
         />
       </SafeAreaView>
     );
@@ -26545,6 +26697,29 @@ export default function App() {
     },
   ]);
   const [localCareMode, setLocalCareMode] = useState("");
+
+  const patientPharmacyDirectoryOpenerRef = useRef(null);
+  const registerPatientPharmacyDirectoryOpener = useCallback((fn) => {
+    patientPharmacyDirectoryOpenerRef.current =
+      typeof fn === "function" ? fn : null;
+  }, []);
+
+  const requestPatientPharmacyDirectory = useCallback(() => {
+    const open = patientPharmacyDirectoryOpenerRef.current;
+    if (typeof open === "function") {
+      try {
+        open();
+        return true;
+      } catch (e) {
+        console.log("requestPatientPharmacyDirectory:", e);
+      }
+    }
+    Alert.alert(
+      "Order meds",
+      "From the bottom tabs, open Home, then tap Order Meds again to browse pharmacies.",
+    );
+    return false;
+  }, []);
 
   const resolvedPaletteKey = useMemo(() => {
     if (followSystem) return systemScheme === "dark" ? "dark" : "light";
@@ -29218,6 +29393,8 @@ export default function App() {
     CARE_MODE,
     upgradeToPackageMode,
     resetCareOnboarding,
+    registerPatientPharmacyDirectoryOpener,
+    requestPatientPharmacyDirectory,
   };
 
   return (
