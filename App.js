@@ -1994,12 +1994,8 @@ const patientProfileAvatarUrl = (profile) =>
   patientProfileFileUrl(profile, "photo") ||
   patientProfileFileUrl(profile, "profile_image");
 
-const patientProfilePhoneRaw = (profile) =>
-  profile?.phone ||
-  profile?.mobile ||
-  profile?.phone_number ||
-  profile?.tel ||
-  "";
+const userAuthPhoneRaw = (user) =>
+  user?.phone || user?.mobile || user?.phone_number || user?.tel || "";
 
 const formatPhoneForDisplay = (value) => {
   const digits = String(value || "").replace(/\D/g, "");
@@ -8710,7 +8706,7 @@ const PatientEditProfileScreen = ({
     setFullName(
       String(patientProfile?.full_name || currentUser?.name || "").trim(),
     );
-    setPhone(String(patientProfilePhoneRaw(patientProfile) || ""));
+    setPhone(String(userAuthPhoneRaw(currentUser) || ""));
     setCondition(
       String(
         patientProfile?.primary_condition || patientProfile?.condition || "",
@@ -8721,7 +8717,7 @@ const PatientEditProfileScreen = ({
     setComfortLanguage(String(patientProfile?.language || "").trim());
     setAvatarAsset(null);
     setError("");
-  }, [patientProfile?.id, currentUser?.id]);
+  }, [patientProfile?.id, currentUser?.id, currentUser?.phone]);
 
   const pickAvatar = async (source) => {
     try {
@@ -8782,7 +8778,6 @@ const PatientEditProfileScreen = ({
       setError("");
       await pb.collection("patient_profile").update(patientProfile.id, {
         full_name: fullName.trim(),
-        phone: phone.trim(),
         primary_condition: condition.trim(),
         gender: gender.trim(),
         language: comfortLanguage.trim(),
@@ -8791,6 +8786,7 @@ const PatientEditProfileScreen = ({
       if (currentUser?.id) {
         await pb.collection("UsersAuth").update(currentUser.id, {
           name: fullName.trim(),
+          phone: phone.trim(),
         });
       }
       if (avatarAsset?.uri) {
@@ -8818,7 +8814,7 @@ const PatientEditProfileScreen = ({
       setError(
         saveError?.data?.message ||
           saveError?.message ||
-          "Could not save. Required patient_profile fields in PocketBase: full_name, phone, primary_condition, gender, avatar, plus optional: language, age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies.",
+          "Could not save. Required patient_profile fields in PocketBase: full_name, primary_condition, gender, avatar, plus optional: language, age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies. Phone is saved on UsersAuth.",
       );
     } finally {
       setSaving(false);
@@ -9120,6 +9116,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
   const tabNav = useMainTabNav();
   const {
     currentUser,
+    setCurrentUser,
     patientProfile,
     appointments,
     fetchApprovedDoctors,
@@ -9130,7 +9127,6 @@ const PatientAppointmentsScreen = ({ onBack }) => {
     requestOpenConversation,
     payForAppointment,
     payForPackageOffer,
-    setPatientProfile,
   } = useAppData();
   const showBack = typeof onBack === "function";
   const [packageDoctors, setPackageDoctors] = useState([]);
@@ -9150,7 +9146,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
   const handlePayForAppointment = async (appointment) => {
     if (!payForAppointment || !appointment?.id) return;
     const phoneDigits = String(
-      appointment.customerPhone || patientProfilePhoneRaw(patientProfile) || "",
+      appointment.customerPhone || userAuthPhoneRaw(currentUser) || "",
     ).replace(/\D/g, "");
     if (phoneDigits.length < 10) {
       setPhonePaymentAppointment(appointment);
@@ -9187,13 +9183,17 @@ const PatientAppointmentsScreen = ({ onBack }) => {
     if (!appointment?.id) return;
     try {
       setSavingPaymentPhone(true);
-      if (patientProfile?.id) {
-        const updated = await pb
-          .collection("patient_profile")
-          .update(patientProfile.id, {
-            phone: phoneDigits,
-          });
-        setPatientProfile?.(updated);
+      if (currentUser?.id) {
+        await pb.collection("UsersAuth").update(currentUser.id, {
+          phone: phoneDigits,
+        });
+        if (pb.authStore.isValid) {
+          await pb.collection("UsersAuth").authRefresh();
+        }
+        const refreshedUser = getAuthUser();
+        if (refreshedUser?.id) {
+          setCurrentUser?.(refreshedUser);
+        }
       }
       setPhonePaymentAppointment(null);
       setPaymentPhone("");
@@ -9655,9 +9655,7 @@ const PatientProfileScreen = ({
   } = useAppData();
 
   const avatarUrl = patientProfileAvatarUrl(patientProfile);
-  const phoneDisplay = formatPhoneForDisplay(
-    patientProfilePhoneRaw(patientProfile),
-  );
+  const phoneDisplay = formatPhoneForDisplay(userAuthPhoneRaw(currentUser));
 
   useEffect(() => {
     let cancelled = false;
@@ -28382,8 +28380,7 @@ export default function App() {
     const amountPaise = appointmentFeePaise(appointment);
     const customerPhone = String(
       appointment?.customerPhone ||
-        patientProfilePhoneRaw(patientProfile) ||
-        patientProfilePhoneRaw(currentUser) ||
+        userAuthPhoneRaw(currentUser) ||
         "",
     ).replace(/\D/g, "");
     if (customerPhone.length < 10) {
@@ -28457,8 +28454,7 @@ export default function App() {
     const amountPaise = packageOfferAmountPaise(offer);
     const customerPhone = String(
       offer?.customerPhone ||
-        patientProfilePhoneRaw(patientProfile) ||
-        patientProfilePhoneRaw(currentUser) ||
+        userAuthPhoneRaw(currentUser) ||
         "",
     ).replace(/\D/g, "");
     if (customerPhone.length < 10) {
@@ -28577,7 +28573,7 @@ export default function App() {
       customerName: currentUser?.name || patientProfile?.name || "Patient",
       customerEmail: currentUser?.email || "",
       customerPhone:
-        appointment.customerPhone || patientProfilePhoneRaw(patientProfile),
+        appointment.customerPhone || userAuthPhoneRaw(currentUser),
       metadata: {
         payment_mode: PAYMENT_MODE,
         appointment_id: appointment.id,
@@ -28621,7 +28617,7 @@ export default function App() {
       customerName: currentUser?.name || patientProfile?.name || "Patient",
       customerEmail: currentUser?.email || "",
       customerPhone:
-        paymentResult?.customerPhone || patientProfilePhoneRaw(patientProfile),
+        paymentResult?.customerPhone || userAuthPhoneRaw(currentUser),
       verified: paymentResult || null,
     });
     await refreshAllData();
@@ -29312,6 +29308,7 @@ export default function App() {
   const appDataValue = {
     userRole,
     currentUser,
+    setCurrentUser,
     currentUserId: currentUser?.id || null,
     patientProfile,
     wounds,

@@ -470,7 +470,7 @@ function compactProfileFields(fields) {
 /**
  * Matches PocketBase `patient_profile`:
  *   Required (pre-existing): user, primary_condition, gender
- *   Optional (pre-existing): phone
+ *   Phone now lives on UsersAuth so doctors and patients share one contact field.
  *   Optional (Launch v1.0):  age (number), weight_kg (number), height_cm (number),
  *                            marital_status (text/select), district (text), state (text),
  *                            smoking (text/select), alcohol (text/select),
@@ -483,16 +483,12 @@ function compactProfileFields(fields) {
 async function createPatientProfileRecord(userId, merged) {
   const primary_condition = String(merged.primary_condition || "").trim();
   const gender = String(merged.gender || "").trim();
-  const phone = String(merged.phone || "").trim();
 
   const payload = {
     user: userId,
     primary_condition,
     gender,
   };
-  if (phone) {
-    payload.phone = phone;
-  }
 
   // Launch v1.0 additions. Each field is written only when a non-empty
   // value is supplied, so this remains backwards compatible with older
@@ -731,13 +727,17 @@ export async function signUpWithEmail({
   const { avatarAsset, ...rawProfile } = profileFields || {};
   const profilePayload = compactProfileFields(rawProfile);
 
-  await pb.collection("UsersAuth").create({
+  const authPayload = {
     name: name?.trim() || "",
     email: normalizedEmail,
     password: normalizedPassword,
     passwordConfirm: normalizedPasswordConfirm,
     role,
-  });
+  };
+  const authPhone = String(profilePayload.phone || "").trim();
+  if (authPhone) authPayload.phone = authPhone;
+
+  await pb.collection("UsersAuth").create(authPayload);
 
   // Briefly authenticate so we can seed the role-specific profile with
   // collected fields (primary_condition, specialty, avatar, etc.). The user
