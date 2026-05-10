@@ -18,12 +18,17 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  androidKeyboardPad,
+  scheduleScrollAfterTypingLayout,
+  scrollInputAboveImeAndroid,
+  useKeyboardBottomInset,
+} from "./keyboardScrollUtils";
 import { getAuthUser, pb } from "./pocketbase";
 import {
   cancelQuickRequest,
   CARE_MODE,
   closeQuickRequest,
-  consumerPlanDisplayName,
   createPatientSelectedPackageOffer,
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
@@ -36,8 +41,9 @@ import {
   doctorSendPackageOfferFromSlot,
   doctorTierEligibleForPackageMode,
   doctorWithdrawCoinsStub,
-  entitlementsForConsumerPlan,
   fetchMedicalRecordsForPatient,
+  getCoinBalanceForUser,
+  getDoctorCoinBalance,
   listActivePackagePairsForDoctor,
   listActivePackagePairsForPatient,
   listActiveQuickRequestsForPatient,
@@ -71,8 +77,6 @@ import {
   resolvePackageSlotAmountInr,
   saveDoctorPackageTemplates,
   settleDueReferralMonthlyCommissions,
-  parseQuickRequestDoctorTag,
-  settleQuickRequestProvider,
   uploadMedicalRecord,
 } from "./productSpecApi";
 
@@ -457,7 +461,7 @@ export function CareModeOnboardingScreen({
         <Text
           style={{ color: theme.textPrimary, fontSize: 24, fontWeight: "800" }}
         >
-          Choose your care path
+          How would you like to use Nvoisys?
         </Text>
         <Text
           style={{
@@ -467,7 +471,9 @@ export function CareModeOnboardingScreen({
             marginBottom: 20,
           }}
         >
-          Pick one now. You can change this anytime in Profile or Home.
+          Pick one path now (Package Doctor, Casual / Normal, or skip). You can
+          switch later from Home, Profile, or the upgrade entry points - Casual
+          users always see a way to move into Package Doctor Mode.
         </Text>
 
         <TouchableOpacity
@@ -500,14 +506,17 @@ export function CareModeOnboardingScreen({
               Package Doctor Mode
             </Text>
           </View>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: S.small,
-                lineHeight: 20,
-              }}
-            >
-            Demo call with a doctor, then optional paid care packages.
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              lineHeight: 20,
+            }}
+          >
+            Book a short demo with a verified professional doctor, join the
+            voice/video call, then your doctor sends package options from the
+            app - you pay to start structured care. Best for ongoing treatment
+            plans.
           </Text>
         </TouchableOpacity>
 
@@ -538,7 +547,7 @@ export function CareModeOnboardingScreen({
                 flex: 1,
               }}
             >
-              Casual mode
+              Casual / Normal Mode
             </Text>
           </View>
           <Text
@@ -548,7 +557,9 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Quick consults with verified clinics. Upgrade to packages anytime.
+            Quick Solution (₹10) and Quick Counselling (₹25) with verified
+            clinics and RMP doctors. You can upgrade to Package Doctor Mode
+            whenever you like.
           </Text>
         </TouchableOpacity>
 
@@ -589,7 +600,8 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Skip for now. Change path anytime in Profile or Home.
+            Skip for now and go straight to Home. Switch modes later from
+            Profile or the upgrade button on Home.
           </Text>
         </TouchableOpacity>
 
@@ -623,10 +635,52 @@ export function DoctorPackageSetupScreen({
   onSkip,
 }) {
   const insets = useSafeAreaInsets();
+  const keyboardInset = useKeyboardBottomInset();
+  const packageFeeScrollRef = useRef(null);
+  const packageFeeScrollYRef = useRef(0);
+  const focusedFeeSlotIndexRef = useRef(-1);
+  const feeInputRefs = useRef([]);
+  const feeScrollMeasureRef = useRef(null);
   const [slots, setSlots] = useState(() =>
     normalizeDoctorPackageSlots(packageTemplatesRawFromRecord(initialRecord)),
   );
   const [busy, setBusy] = useState(false);
+
+  const scrollFocusedFeeAboveIme = useCallback(() => {
+    if (Platform.OS !== "android") {
+      packageFeeScrollRef.current?.scrollToEnd({ animated: true });
+      return;
+    }
+    const idx = focusedFeeSlotIndexRef.current;
+    if (idx < 0) return;
+    const inputEl = feeInputRefs.current[idx];
+    if (!inputEl) return;
+    if (keyboardInset.height <= 0 && keyboardInset.screenY == null) return;
+    feeScrollMeasureRef.current = inputEl;
+    scrollInputAboveImeAndroid({
+      scrollRef: packageFeeScrollRef,
+      scrollYRef: packageFeeScrollYRef,
+      inputRef: feeScrollMeasureRef,
+      keyboardHeight: keyboardInset.height,
+      keyboardScreenY: keyboardInset.screenY,
+      extraClearance: 96,
+      breathing: 18,
+    });
+  }, [keyboardInset.height, keyboardInset.screenY]);
+
+  const scheduleFeeVisibleWhileTyping = useCallback(() => {
+    if (focusedFeeSlotIndexRef.current < 0) return;
+    scheduleScrollAfterTypingLayout(() => {
+      scrollFocusedFeeAboveIme();
+    });
+  }, [scrollFocusedFeeAboveIme]);
+
+  useEffect(() => {
+    if (Platform.OS !== "android" || keyboardInset.height <= 0) return;
+    if (focusedFeeSlotIndexRef.current < 0) return;
+    const t = setTimeout(scrollFocusedFeeAboveIme, 48);
+    return () => clearTimeout(t);
+  }, [keyboardInset.height, keyboardInset.screenY, scrollFocusedFeeAboveIme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -779,13 +833,28 @@ export function DoctorPackageSetupScreen({
           </TouchableOpacity>
         ) : null}
       </View>
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{
-          padding: S.pad,
-          paddingBottom: insets.bottom + 32,
-        }}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        <ScrollView
+          ref={packageFeeScrollRef}
+          onScroll={(e) => {
+            packageFeeScrollYRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom:
+              insets.bottom +
+              32 +
+              androidKeyboardPad(keyboardInset) +
+              (Platform.OS === "android" && keyboardInset.height > 0 ? 96 : 0),
+          }}
+          nestedScrollEnabled
+        >
         <Text
           style={{ color: theme.textPrimary, fontSize: 22, fontWeight: "900" }}
         >
@@ -795,8 +864,8 @@ export function DoctorPackageSetupScreen({
           style={{
             color: theme.textSecondary,
             fontSize: S.small,
-            marginTop: 6,
-            marginBottom: 14,
+            marginTop: 8,
+            marginBottom: 20,
           }}
         >
           Enter your INR fee for Basic, Gold, and Premium. Skip and finish later
@@ -808,9 +877,9 @@ export function DoctorPackageSetupScreen({
             key={slot.slot}
             style={{
               backgroundColor: theme.card,
-              borderRadius: 14,
-              padding: 12,
-              marginBottom: 10,
+              borderRadius: 16,
+              padding: 14,
+              marginBottom: 16,
               borderWidth: StyleSheet.hairlineWidth,
               borderColor: theme.cardBorder,
             }}
@@ -819,8 +888,7 @@ export function DoctorPackageSetupScreen({
               style={{
                 color: theme.accent,
                 fontWeight: "900",
-                marginBottom: 4,
-                fontSize: 14,
+                marginBottom: 6,
               }}
             >
               {slot.name || packageSlotDisplayName(slot.slot)}
@@ -838,20 +906,77 @@ export function DoctorPackageSetupScreen({
             </Text>
             <Text
               style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginBottom: 10,
+                lineHeight: 20,
+              }}
+            >
+              {slot.description}
+            </Text>
+            {Array.isArray(slot.features) && slot.features.length > 0 ? (
+              <View style={{ marginBottom: 12 }}>
+                {slot.features.map((line, fi) => (
+                  <Text
+                    key={`${slot.slot}-${fi}`}
+                    style={{
+                      color: theme.textTertiary,
+                      fontSize: 12,
+                      marginBottom: 4,
+                    }}
+                  >
+                    • {line}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+            <Text
+              style={{
                 color: theme.textPrimary,
                 fontSize: 12,
                 fontWeight: "700",
-                marginBottom: 4,
+                marginBottom: 6,
               }}
             >
-              Your fee (INR)
+              Your service fee (INR)
             </Text>
             <TextInput
               placeholder={`e.g. ${packageSlotMinimumFeeInr(slot.slot)}`}
               placeholderTextColor={theme.textTertiary}
               keyboardType="numeric"
               value={String(slot.total_amount_inr ?? "")}
-              onChangeText={(t) => patchSlot(index, { total_amount_inr: t })}
+              onChangeText={(t) => {
+                patchSlot(index, { total_amount_inr: t });
+                scheduleFeeVisibleWhileTyping();
+              }}
+              onFocus={() => {
+                focusedFeeSlotIndexRef.current = index;
+                if (Platform.OS === "android") {
+                  packageFeeScrollRef.current?.scrollToEnd({ animated: false });
+                  requestAnimationFrame(() => {
+                    scrollFocusedFeeAboveIme();
+                  });
+                  [40, 120, 260, 420, 600].forEach((ms) =>
+                    setTimeout(() => {
+                      if (focusedFeeSlotIndexRef.current !== index) return;
+                      scrollFocusedFeeAboveIme();
+                    }, ms),
+                  );
+                } else {
+                  requestAnimationFrame(() => {
+                    setTimeout(() => {
+                      packageFeeScrollRef.current?.scrollToEnd({
+                        animated: true,
+                      });
+                    }, 120);
+                  });
+                }
+              }}
+              onBlur={() => {
+                if (focusedFeeSlotIndexRef.current === index) {
+                  focusedFeeSlotIndexRef.current = -1;
+                }
+              }}
               style={slotInput(theme)}
             />
           </View>
@@ -862,8 +987,8 @@ export function DoctorPackageSetupScreen({
           disabled={busy || !doctorPackagesSetupComplete(slots)}
           style={{
             backgroundColor: theme.accent,
-            padding: 14,
-            borderRadius: 14,
+            padding: 16,
+            borderRadius: 16,
             alignItems: "center",
             opacity: busy || !doctorPackagesSetupComplete(slots) ? 0.55 : 1,
           }}
@@ -872,11 +997,12 @@ export function DoctorPackageSetupScreen({
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>
-              Save
+              Save & enter dashboard
             </Text>
           )}
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -1076,7 +1202,7 @@ export function MedicalRecordsScreen({
               }}
             >
               <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                {String(r.title || "Record").replace(/^\[Diet log\]\s*/i, "")}
+                {r.title || "Record"}
               </Text>
               <Text
                 style={{
@@ -1273,59 +1399,23 @@ export function QuickSolutionScreen({
   const keyboardPad = useKeyboardBottomPad();
   const scrollRef = useRef(null);
   const [notes, setNotes] = useState("");
-  const [aiQuestion, setAiQuestion] = useState("");
-  const [aiReply, setAiReply] = useState("");
   const [privateMode, setPrivateMode] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [aiBusy, setAiBusy] = useState(false);
 
-  const ent = quickCareBinding
-    ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
-    : null;
-
-  const runAi = async () => {
-    const q = String(aiQuestion || "").trim();
-    if (!q) {
-      Alert.alert("Quick Solve", "Type a question for instant AI guidance.");
-      return;
-    }
-    if (!onAskAi) {
-      Alert.alert("Quick Solve", "AI is not available in this build.");
-      return;
-    }
-    try {
-      setAiBusy(true);
-      setAiReply("");
-      const reply = await onAskAi(q);
-      setAiReply(String(reply || "").trim() || "(No reply)");
-    } catch (e) {
-      Alert.alert("Quick Solve", e?.message || "AI failed");
-    } finally {
-      setAiBusy(false);
-    }
-  };
-
-  const submitDoctorReview = async () => {
-    if (!quickCareBinding?.doctorUserId) return;
-    const body = String(notes || "").trim();
-    if (!body) {
-      Alert.alert("Quick Solve", "Describe what you want your doctor to review.");
-      return;
-    }
+  const submit = async () => {
     try {
       setBusy(true);
       await createQuickSolutionRequest({
         patientUserId,
-        notes: `[Doctor review]\n${body}`,
+        notes,
         privateMode,
         imagePart: null,
-        assignedDoctorUserId: quickCareBinding.doctorUserId,
       });
       Alert.alert(
-        "Sent to your doctor",
+        "Submitted",
         privateMode
-          ? "Private mode is on. Your package doctor will review in the app."
-          : "Your package doctor was notified (10 coins).",
+          ? "Private mode is on: your name, photo, and contact details are hidden from the clinic side."
+          : "Your query is queued for a verified clinic (10 coins / ₹10).",
       );
       onBack?.();
     } catch (e) {
@@ -1431,7 +1521,7 @@ export function QuickSolutionScreen({
             fontWeight: "800",
           }}
         >
-          Quick Solve
+          Quick Solution
         </Text>
       </View>
       <ScrollView
@@ -1577,8 +1667,8 @@ export function QuickSolutionScreen({
             fontSize: S.small,
           }}
         >
-          Optional: send a written query to your package doctor’s Quick queue
-          (same doctor as above).
+          ₹10 (10 coins) per snap or query - platform 5 coins, clinic 5 coins.
+          Verified clinics and RMP doctors only.
         </Text>
         <TouchableOpacity
           onPress={() => setPrivateMode((v) => !v)}
@@ -1610,12 +1700,13 @@ export function QuickSolutionScreen({
                 marginTop: 4,
               }}
             >
-              Hide your name, photo, and contact info from the clinic side.
+              Hide your name, photo, and contact info from the clinic for
+              sensitive issues. You still see the provider details.
             </Text>
           </View>
         </TouchableOpacity>
         <TextInput
-          placeholder="Message for your doctor…"
+          placeholder="Describe your question or symptom…"
           placeholderTextColor={theme.textTertiary}
           multiline
           value={notes}
@@ -1633,7 +1724,7 @@ export function QuickSolutionScreen({
           }}
         />
         <TouchableOpacity
-          onPress={submitDoctorReview}
+          onPress={submit}
           disabled={busy}
           style={{
             marginTop: 12,
@@ -1647,7 +1738,7 @@ export function QuickSolutionScreen({
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Submit to doctor (10 coins)
+              Submit (10 coins)
             </Text>
           )}
         </TouchableOpacity>
@@ -1676,35 +1767,15 @@ export function QuickCounsellingScreen({
   const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
-  const ent = quickCareBinding
-    ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
-    : null;
-
   const submit = async () => {
-    if (!quickCareBinding?.doctorUserId) return;
-    if (
-      ent &&
-      consultMinutesLimit > 0 &&
-      consultMinutesUsed >= consultMinutesLimit
-    ) {
-      Alert.alert(
-        "Consultation limit",
-        "You have reached the included consultation time for your plan this week (estimated from completed visits). Message your doctor in Chat, or consider Premium for wider access.",
-      );
-      return;
-    }
     try {
       setBusy(true);
-      await createQuickCounsellingRequest({
-        patientUserId,
-        topic,
-        assignedDoctorUserId: quickCareBinding.doctorUserId,
-      });
+      await createQuickCounsellingRequest({ patientUserId, topic });
       Alert.alert(
-        "Queued for your doctor",
+        "Queued",
         fromWoundTracker
-          ? "Quick Counselling (25 coins) — routed to your package doctor for a video call."
-          : `Quick Counselling (25 coins) — ${quickCareBinding.doctorName || "Your package doctor"} will follow up.`,
+          ? "Quick Counselling (25 coins). An RMP/clinic doctor will reach out for a video call. Platform 10, doctor/clinic 15 coins."
+          : "Quick Counselling (25 coins). Platform 10, doctor/clinic 15.",
       );
       onBack?.();
     } catch (e) {
@@ -3466,7 +3537,7 @@ function PackageSuggestAfterMeetingInline({
   );
 }
 
-export function PackageMeetingDoctorPanel({ theme, dashboardLayout = false }) {
+export function PackageMeetingDoctorPanel({ theme }) {
   const user = getAuthUser();
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -3474,12 +3545,6 @@ export function PackageMeetingDoctorPanel({ theme, dashboardLayout = false }) {
   const [modalMeetingId, setModalMeetingId] = useState(null);
   const [altSlotTimes, setAltSlotTimes] = useState([null, null, null, null]);
   const [altPicker, setAltPicker] = useState(null);
-  const [bucketOpen, setBucketOpen] = useState({
-    pending: true,
-    discussing: false,
-    confirmedDemo: false,
-    closed: false,
-  });
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -3939,22 +4004,20 @@ export function PackageMeetingDoctorPanel({ theme, dashboardLayout = false }) {
             <Text
               style={{ color: theme.success, fontSize: 11, fontWeight: "700" }}
             >
-              Confirmed — reminder 30 min before.
+              Confirmed - reminder 30 min before.
             </Text>
-            {dashboardLayout ? null : (
-              <Text
-                style={{
-                  color: theme.textTertiary,
-                  fontSize: 11,
-                  marginTop: 6,
-                  lineHeight: 16,
-                }}
-              >
-                After your demo call, use Home → Upcoming Appointments on this
-                patient’s card → Ask package to send a catalogue option (payment
-                is tracked there).
-              </Text>
-            )}
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: 11,
+                marginTop: 6,
+                lineHeight: 16,
+              }}
+            >
+              After your demo call, use Home → Upcoming Appointments on this
+              patient’s card → Ask package to send a catalogue option (payment
+              is tracked there).
+            </Text>
           </View>
         ) : null}
       </View>
@@ -3991,88 +4054,8 @@ export function PackageMeetingDoctorPanel({ theme, dashboardLayout = false }) {
     </Text>
   );
 
-  const dashboardCardStyle = {
-    backgroundColor: theme.card,
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.cardBorder,
-    shadowColor: theme.shadowColor,
-    shadowOpacity: 0.06,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 12,
-    elevation: 3,
-  };
-
-  const bucketToggle = (key, label, count, list, readOnly, first) => (
-    <View
-      key={key}
-      style={{
-        borderTopWidth: first ? 0 : 1,
-        borderTopColor: theme.cardBorder,
-        paddingTop: first ? 0 : 12,
-        marginTop: first ? 0 : 4,
-      }}
-    >
-      <TouchableOpacity
-        onPress={() =>
-          setBucketOpen((s) => ({ ...s, [key]: !s[key] }))
-        }
-        activeOpacity={0.85}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          paddingVertical: 4,
-        }}
-      >
-        <Text
-          style={{
-            flex: 1,
-            fontSize: 15,
-            fontWeight: "800",
-            color: theme.textPrimary,
-          }}
-        >
-          {label}
-        </Text>
-        <View
-          style={{
-            backgroundColor: theme.accentLight,
-            borderRadius: 10,
-            paddingHorizontal: 8,
-            paddingVertical: 3,
-            marginRight: 8,
-          }}
-        >
-          <Text
-            style={{
-              fontWeight: "800",
-              color: theme.accent,
-              fontSize: 11,
-            }}
-          >
-            {count}
-          </Text>
-        </View>
-        <Ionicons
-          name={bucketOpen[key] ? "chevron-up" : "chevron-down"}
-          size={18}
-          color={theme.textTertiary}
-        />
-      </TouchableOpacity>
-      {bucketOpen[key] ? (
-        list.length === 0 ? (
-          emptyLine("None.")
-        ) : (
-          list.map((x) => renderMeetingCard(x, { readOnly }))
-        )
-      ) : null}
-    </View>
-  );
-
-  const legacyBody = (
-    <>
+  return (
+    <View style={{ marginBottom: 16 }}>
       <Text
         style={{
           fontSize: S.title,
@@ -4146,102 +4129,6 @@ export function PackageMeetingDoctorPanel({ theme, dashboardLayout = false }) {
           </>
         )}
       </ScrollView>
-    </>
-  );
-
-  return (
-    <View style={{ marginBottom: 16 }}>
-      {dashboardLayout ? (
-        <View style={dashboardCardStyle}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginBottom: 8,
-            }}
-          >
-            <View
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                backgroundColor: theme.bg,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: 10,
-              }}
-            >
-              <Ionicons name="calendar" size={18} color={theme.accent} />
-            </View>
-            <Text
-              style={{
-                fontSize: 16,
-                fontWeight: "800",
-                color: theme.textPrimary,
-                flex: 1,
-              }}
-            >
-              Booking Tracks
-            </Text>
-            <TouchableOpacity
-              onPress={() => void onRefresh()}
-              disabled={refreshing}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="refresh" size={20} color={theme.accent} />
-            </TouchableOpacity>
-          </View>
-          {rows.length === 0 ? (
-            <Text
-              style={{
-                color: theme.textTertiary,
-                fontSize: S.small,
-                textAlign: "center",
-                paddingVertical: 10,
-              }}
-            >
-              No package meetings yet.
-            </Text>
-          ) : (
-            <>
-              {bucketToggle(
-                "pending",
-                "Pending",
-                pending.length,
-                pending,
-                false,
-                true,
-              )}
-              {bucketToggle(
-                "discussing",
-                "Discussing",
-                discussing.length,
-                discussing,
-                false,
-                false,
-              )}
-              {bucketToggle(
-                "confirmedDemo",
-                "Confirmed demo",
-                confirmedDemo.length,
-                confirmedDemo,
-                false,
-                false,
-              )}
-              {bucketToggle(
-                "closed",
-                "Declined",
-                closed.length,
-                closed,
-                true,
-                false,
-              )}
-            </>
-          )}
-        </View>
-      ) : (
-        legacyBody
-      )}
 
       <Modal visible={!!modalMeetingId} transparent animationType="fade">
         <View
@@ -4447,7 +4334,6 @@ export function DoctorQuickRequestsPanel({
   doctorUserId,
   onHelpPatient,
   onOpenHelpChat,
-  dashboardLayout = false,
 }) {
   const user = getAuthUser();
   const effectiveDoctorId = doctorUserId || user?.id || "";
@@ -4472,16 +4358,12 @@ export function DoctorQuickRequestsPanel({
     let sol = [];
     let cou = [];
     try {
-      sol = await listQueuedQuickSolutionRequestsForProvider(
-        effectiveDoctorId,
-      );
+      sol = await listQueuedQuickSolutionRequestsForProvider();
     } catch (e) {
       parts.push(`Quick Solution: ${e?.message || "list failed"}`);
     }
     try {
-      cou = await listQueuedQuickCounsellingRequestsForProvider(
-        effectiveDoctorId,
-      );
+      cou = await listQueuedQuickCounsellingRequestsForProvider();
     } catch (e) {
       parts.push(`Quick Counselling: ${e?.message || "list failed"}`);
     }
@@ -4697,7 +4579,7 @@ export function DoctorQuickRequestsPanel({
         padding: 12,
         borderRadius: 14,
         marginBottom: 10,
-        backgroundColor: dashboardLayout ? theme.bg : theme.card,
+        backgroundColor: theme.card,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.cardBorder,
       }}
@@ -4729,7 +4611,7 @@ export function DoctorQuickRequestsPanel({
         padding: 12,
         borderRadius: 14,
         marginBottom: 10,
-        backgroundColor: dashboardLayout ? theme.bg : theme.card,
+        backgroundColor: theme.card,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.cardBorder,
       }}
@@ -4754,35 +4636,13 @@ export function DoctorQuickRequestsPanel({
     </View>
   );
 
-  const inner = (
-    <>
+  return (
+    <View style={{ marginTop: 12 }}>
       <View
         style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}
       >
-        {dashboardLayout ? (
-          <View
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              backgroundColor: theme.bg,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: 10,
-            }}
-          >
-            <Ionicons name="flash" size={18} color={theme.warning} />
-          </View>
-        ) : null}
-        <Text
-          style={{
-            color: theme.textPrimary,
-            fontWeight: "800",
-            flex: 1,
-            fontSize: dashboardLayout ? 16 : undefined,
-          }}
-        >
-          {dashboardLayout ? "Quick Queues" : "Quick queues (clinic / RMP)"}
+        <Text style={{ color: theme.textPrimary, fontWeight: "800", flex: 1 }}>
+          Quick queues (clinic / RMP)
         </Text>
         <TouchableOpacity
           onPress={() => void load()}
@@ -4801,22 +4661,20 @@ export function DoctorQuickRequestsPanel({
           </Text>
         </TouchableOpacity>
       </View>
-      {dashboardLayout ? null : (
-        <Text
-          style={{
-            color: theme.textSecondary,
-            fontSize: S.small,
-            marginBottom: 10,
-          }}
-        >
-          The app only loads rows with{" "}
-          <Text style={{ fontWeight: "700" }}>status = queued</Text>. Tap{" "}
-          <Text style={{ fontWeight: "700" }}>Help</Text> on a card to open a
-          chat with the patient - your first message starts the thread and they
-          will see “you want to help” on their tracking list. The patient can
-          close or cancel the request anytime.
-        </Text>
-      )}
+      <Text
+        style={{
+          color: theme.textSecondary,
+          fontSize: S.small,
+          marginBottom: 10,
+        }}
+      >
+        The app only loads rows with{" "}
+        <Text style={{ fontWeight: "700" }}>status = queued</Text>. Tap{" "}
+        <Text style={{ fontWeight: "700" }}>Help</Text> on a card to open a chat
+        with the patient - your first message starts the thread and they will
+        see “you want to help” on their tracking list. The patient can close or
+        cancel the request anytime.
+      </Text>
       {err ? (
         <Text
           style={{ color: theme.danger, fontSize: S.small, marginBottom: 8 }}
@@ -4988,32 +4846,8 @@ export function DoctorQuickRequestsPanel({
           </View>
         </View>
       </Modal>
-    </>
+    </View>
   );
-
-  if (dashboardLayout) {
-    return (
-      <View
-        style={{
-          backgroundColor: theme.card,
-          borderRadius: 20,
-          padding: 16,
-          marginBottom: 16,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: theme.cardBorder,
-          shadowColor: theme.shadowColor,
-          shadowOpacity: 0.06,
-          shadowOffset: { width: 0, height: 4 },
-          shadowRadius: 12,
-          elevation: 3,
-        }}
-      >
-        {inner}
-      </View>
-    );
-  }
-
-  return <View style={{ marginTop: 12 }}>{inner}</View>;
 }
 
 /**
@@ -5121,23 +4955,11 @@ export function PatientQuickRequestsTrackerPanel({
     );
   };
 
-  const handleOpenOffer = async (row, offer) => {
-    const doctorUserId = offer?.expand?.doctor?.id || offer.doctor;
-    try {
-      await settleQuickRequestProvider({
-        id: row.id,
-        kind: row.kind,
-        doctorUserId,
-      });
-      removeRowLocally(row.kind, row.id);
-    } catch (e) {
-      Alert.alert("Could not select doctor", e?.message || "Please try again.");
-      return;
-    }
+  const handleOpenOffer = (offer) => {
     if (typeof onOpenConversation === "function" && offer?.conversation) {
       onOpenConversation(
         offer.conversation,
-        doctorUserId,
+        offer?.expand?.doctor?.id || offer.doctor,
       );
     } else {
       Alert.alert(
@@ -5147,7 +4969,7 @@ export function PatientQuickRequestsTrackerPanel({
     }
   };
 
-  const renderOffer = (row, offer) => {
+  const renderOffer = (offer) => {
     const doctor = offer?.expand?.doctor;
     const doctorName = doctor?.name || doctor?.email || "Doctor";
     return (
@@ -5192,7 +5014,7 @@ export function PatientQuickRequestsTrackerPanel({
           ) : null}
         </View>
         <TouchableOpacity
-          onPress={() => handleOpenOffer(row, offer)}
+          onPress={() => handleOpenOffer(offer)}
           accessibilityLabel="Open chat with this doctor"
           style={{
             width: 36,
@@ -5212,13 +5034,10 @@ export function PatientQuickRequestsTrackerPanel({
   const renderCard = (row) => {
     const kindLabel =
       row.kind === "counselling" ? "Quick Counselling" : "Quick Solution";
-    const rawCounselling = String(row.topic || "");
-    const rawSolution = String(row.notes || "");
     const summary =
       row.kind === "counselling"
-        ? `Topic: ${truncateOneLine(parseQuickRequestDoctorTag(rawCounselling).body, 140) || "General"}`
-        : truncateOneLine(parseQuickRequestDoctorTag(rawSolution).body, 200) ||
-          "-";
+        ? `Topic: ${truncateOneLine(row.topic, 140) || "General"}`
+        : truncateOneLine(row.notes, 200) || "-";
     const isBusy = busyRowId === `${row.kind}::${row.id}`;
     const offers = Array.isArray(row.offers) ? row.offers : [];
     const hasOffers = offers.length > 0;
@@ -5267,7 +5086,7 @@ export function PatientQuickRequestsTrackerPanel({
           </Text>
         ) : null}
 
-        {offers.map((offer) => renderOffer(row, offer))}
+        {offers.map(renderOffer)}
 
         <View style={{ flexDirection: "row", marginTop: 12 }}>
           <TouchableOpacity
@@ -5392,20 +5211,23 @@ export function PatientQuickRequestsTrackerPanel({
   );
 }
 
-export function CoinWalletDoctorPanel({ theme, suppressHeading = false }) {
+export function CoinWalletDoctorPanel({ theme }) {
   const user = getAuthUser();
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
+  const [balance, setBalance] = useState(0);
   const [pairs, setPairs] = useState([]);
   const [referrals, setReferrals] = useState([]);
   const [packageDoctors, setPackageDoctors] = useState([]);
   const [referralTargets, setReferralTargets] = useState({});
 
   const refreshBalance = useCallback(async () => {
-    const [activePairs, referralRows] = await Promise.all([
+    const [coins, activePairs, referralRows] = await Promise.all([
+      getDoctorCoinBalance(user?.id),
       listActivePackagePairsForDoctor(user?.id),
       listPackageReferralsForDoctor(user?.id),
     ]);
+    setBalance(coins);
     setPairs(activePairs || []);
     setReferrals(referralRows || []);
   }, [user?.id]);
@@ -5504,20 +5326,16 @@ export function CoinWalletDoctorPanel({ theme, suppressHeading = false }) {
   );
 
   return (
-    <View style={{ marginTop: suppressHeading ? 0 : 12 }}>
-      {suppressHeading ? null : (
-        <Text
-          style={{
-            color: theme.textPrimary,
-            fontWeight: "800",
-            marginBottom: 8,
-          }}
-        >
-          Coin wallet (1 coin = ₹1)
-        </Text>
-      )}
-      <Text style={{ color: theme.textSecondary, fontSize: S.small }}>
-        Available balance is shown in the floating wallet.
+    <View style={{ marginTop: 12 }}>
+      <Text
+        style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 8 }}
+      >
+        Coin wallet (1 coin = ₹1)
+      </Text>
+      <Text
+        style={{ color: theme.textPrimary, fontSize: S.title, fontWeight: "900" }}
+      >
+        {balance} coins available
       </Text>
       <Text
         style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
@@ -5646,6 +5464,11 @@ export function CoinWalletDoctorPanel({ theme, suppressHeading = false }) {
           <Text style={{ color: "#fff", fontWeight: "800" }}>Withdraw</Text>
         </TouchableOpacity>
       </View>
+      <Text
+        style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 10 }}
+      >
+        Payment history is on your Profile tab.
+      </Text>
     </View>
   );
 }
@@ -5725,16 +5548,19 @@ export function DoctorCoinPaymentHistoryPanel({ theme }) {
 
 export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
   const [rows, setRows] = useState([]);
+  const [balance, setBalance] = useState(0);
   const [pairs, setPairs] = useState([]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [ledger, activePairs] = await Promise.all([
+      const [ledger, coins, activePairs] = await Promise.all([
         listCoinLedgerForUser(userId),
+        getCoinBalanceForUser(userId),
         listActivePackagePairsForPatient(userId),
       ]);
       if (cancelled) return;
       setRows(ledger);
+      setBalance(coins);
       setPairs(activePairs || []);
     })();
     return () => {
@@ -5748,6 +5574,9 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
       >
         Coin & payments history
       </Text>
+      <Text style={{ color: theme.textPrimary, fontWeight: "900", marginBottom: 6 }}>
+        Balance: {balance} coins
+      </Text>
       <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 6 }}>
         Active package pairs: {pairs.length}
       </Text>
@@ -5757,7 +5586,7 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
           style={{ color: theme.textTertiary, fontSize: 11, marginBottom: 3 }}
         >
           {pair.title} · doctor {String(pair.doctor_user_id || "").slice(-6)} ·
-          package {pair.amount_inr} coins
+          pool {pair.doctor_coins} coins
         </Text>
       ))}
       {compact ? null : rows.length === 0 ? (
