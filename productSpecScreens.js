@@ -404,7 +404,7 @@ export function CareModeOnboardingScreen({
         <Text
           style={{ color: theme.textPrimary, fontSize: 24, fontWeight: "800" }}
         >
-          How would you like to use Nvoisys?
+          Choose your care path
         </Text>
         <Text
           style={{
@@ -414,9 +414,7 @@ export function CareModeOnboardingScreen({
             marginBottom: 20,
           }}
         >
-          Pick one path now (Package Doctor, Casual / Normal, or skip). You can
-          switch later from Home, Profile, or the upgrade entry points - Casual
-          users always see a way to move into Package Doctor Mode.
+          Pick one now. You can change this anytime in Profile or Home.
         </Text>
 
         <TouchableOpacity
@@ -449,17 +447,14 @@ export function CareModeOnboardingScreen({
               Package Doctor Mode
             </Text>
           </View>
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.small,
-              lineHeight: 20,
-            }}
-          >
-            Book a short demo with a verified professional doctor, join the
-            voice/video call, then your doctor sends package options from the
-            app - you pay to start structured care. Best for ongoing treatment
-            plans.
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                lineHeight: 20,
+              }}
+            >
+            Demo call with a doctor, then optional paid care packages.
           </Text>
         </TouchableOpacity>
 
@@ -490,7 +485,7 @@ export function CareModeOnboardingScreen({
                 flex: 1,
               }}
             >
-              Casual / Normal Mode
+              Casual mode
             </Text>
           </View>
           <Text
@@ -500,9 +495,7 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Quick Solution (₹10) and Quick Counselling (₹25) with verified
-            clinics and RMP doctors. You can upgrade to Package Doctor Mode
-            whenever you like.
+            Quick consults with verified clinics. Upgrade to packages anytime.
           </Text>
         </TouchableOpacity>
 
@@ -543,8 +536,7 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Skip for now and go straight to Home. Switch modes later from
-            Profile or the upgrade button on Home.
+            Skip for now. Change path anytime in Profile or Home.
           </Text>
         </TouchableOpacity>
 
@@ -732,6 +724,7 @@ export function DoctorPackageSetupScreen({
         ) : null}
       </View>
       <ScrollView
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={{
           padding: S.pad,
           paddingBottom: insets.bottom + 32,
@@ -746,14 +739,12 @@ export function DoctorPackageSetupScreen({
           style={{
             color: theme.textSecondary,
             fontSize: S.small,
-            marginTop: 8,
-            marginBottom: 20,
+            marginTop: 6,
+            marginBottom: 14,
           }}
         >
-          Package names, periods, descriptions, and included features are fixed
-          by the app and are the same for every doctor. You only set your
-          service fee (INR) for each of the three tiers. Use Skip if you want to
-          finish this later from your profile; you can return any time.
+          Enter your INR fee for each tier (1–3). Skip and finish later from
+          Profile.
         </Text>
 
         {slots.map((slot, index) => (
@@ -761,9 +752,9 @@ export function DoctorPackageSetupScreen({
             key={slot.slot}
             style={{
               backgroundColor: theme.card,
-              borderRadius: 16,
-              padding: 14,
-              marginBottom: 16,
+              borderRadius: 14,
+              padding: 12,
+              marginBottom: 10,
               borderWidth: StyleSheet.hairlineWidth,
               borderColor: theme.cardBorder,
             }}
@@ -772,55 +763,30 @@ export function DoctorPackageSetupScreen({
               style={{
                 color: theme.accent,
                 fontWeight: "900",
-                marginBottom: 6,
+                marginBottom: 4,
+                fontSize: 14,
               }}
             >
               {slot.name}
             </Text>
             <Text
               style={{
-                color: theme.textSecondary,
-                fontSize: S.small,
-                marginBottom: 4,
+                color: theme.textTertiary,
+                fontSize: 11,
+                marginBottom: 8,
               }}
             >
               {slot.total_period} · {slot.treatment_type}
             </Text>
             <Text
               style={{
-                color: theme.textSecondary,
-                fontSize: S.small,
-                marginBottom: 10,
-                lineHeight: 20,
-              }}
-            >
-              {slot.description}
-            </Text>
-            {Array.isArray(slot.features) && slot.features.length > 0 ? (
-              <View style={{ marginBottom: 12 }}>
-                {slot.features.map((line, fi) => (
-                  <Text
-                    key={`${slot.slot}-${fi}`}
-                    style={{
-                      color: theme.textTertiary,
-                      fontSize: 12,
-                      marginBottom: 4,
-                    }}
-                  >
-                    • {line}
-                  </Text>
-                ))}
-              </View>
-            ) : null}
-            <Text
-              style={{
                 color: theme.textPrimary,
                 fontSize: 12,
                 fontWeight: "700",
-                marginBottom: 6,
+                marginBottom: 4,
               }}
             >
-              Your service fee (INR)
+              Your fee (INR)
             </Text>
             <TextInput
               placeholder="e.g. 8000"
@@ -838,8 +804,8 @@ export function DoctorPackageSetupScreen({
           disabled={busy}
           style={{
             backgroundColor: theme.accent,
-            padding: 16,
-            borderRadius: 16,
+            padding: 14,
+            borderRadius: 14,
             alignItems: "center",
             opacity: busy ? 0.85 : 1,
           }}
@@ -848,7 +814,7 @@ export function DoctorPackageSetupScreen({
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>
-              Save & enter dashboard
+              Save
             </Text>
           )}
         </TouchableOpacity>
@@ -2858,7 +2824,7 @@ function PackageSuggestAfterMeetingInline({
   );
 }
 
-export function PackageMeetingDoctorPanel({ theme }) {
+export function PackageMeetingDoctorPanel({ theme, dashboardLayout = false }) {
   const user = getAuthUser();
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -2866,6 +2832,12 @@ export function PackageMeetingDoctorPanel({ theme }) {
   const [modalMeetingId, setModalMeetingId] = useState(null);
   const [altSlotTimes, setAltSlotTimes] = useState([null, null, null, null]);
   const [altPicker, setAltPicker] = useState(null);
+  const [bucketOpen, setBucketOpen] = useState({
+    pending: true,
+    discussing: false,
+    confirmedDemo: false,
+    closed: false,
+  });
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -3325,20 +3297,22 @@ export function PackageMeetingDoctorPanel({ theme }) {
             <Text
               style={{ color: theme.success, fontSize: 11, fontWeight: "700" }}
             >
-              Confirmed - reminder 30 min before.
+              Confirmed — reminder 30 min before.
             </Text>
-            <Text
-              style={{
-                color: theme.textTertiary,
-                fontSize: 11,
-                marginTop: 6,
-                lineHeight: 16,
-              }}
-            >
-              After your demo call, use Home → Upcoming Appointments on this
-              patient’s card → Ask package to send a catalogue option (payment
-              is tracked there).
-            </Text>
+            {dashboardLayout ? null : (
+              <Text
+                style={{
+                  color: theme.textTertiary,
+                  fontSize: 11,
+                  marginTop: 6,
+                  lineHeight: 16,
+                }}
+              >
+                After your demo call, use Home → Upcoming Appointments on this
+                patient’s card → Ask package to send a catalogue option (payment
+                is tracked there).
+              </Text>
+            )}
           </View>
         ) : null}
       </View>
@@ -3375,8 +3349,88 @@ export function PackageMeetingDoctorPanel({ theme }) {
     </Text>
   );
 
-  return (
-    <View style={{ marginBottom: 16 }}>
+  const dashboardCardStyle = {
+    backgroundColor: theme.card,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.cardBorder,
+    shadowColor: theme.shadowColor,
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 12,
+    elevation: 3,
+  };
+
+  const bucketToggle = (key, label, count, list, readOnly, first) => (
+    <View
+      key={key}
+      style={{
+        borderTopWidth: first ? 0 : 1,
+        borderTopColor: theme.cardBorder,
+        paddingTop: first ? 0 : 12,
+        marginTop: first ? 0 : 4,
+      }}
+    >
+      <TouchableOpacity
+        onPress={() =>
+          setBucketOpen((s) => ({ ...s, [key]: !s[key] }))
+        }
+        activeOpacity={0.85}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingVertical: 4,
+        }}
+      >
+        <Text
+          style={{
+            flex: 1,
+            fontSize: 15,
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          {label}
+        </Text>
+        <View
+          style={{
+            backgroundColor: theme.accentLight,
+            borderRadius: 10,
+            paddingHorizontal: 8,
+            paddingVertical: 3,
+            marginRight: 8,
+          }}
+        >
+          <Text
+            style={{
+              fontWeight: "800",
+              color: theme.accent,
+              fontSize: 11,
+            }}
+          >
+            {count}
+          </Text>
+        </View>
+        <Ionicons
+          name={bucketOpen[key] ? "chevron-up" : "chevron-down"}
+          size={18}
+          color={theme.textTertiary}
+        />
+      </TouchableOpacity>
+      {bucketOpen[key] ? (
+        list.length === 0 ? (
+          emptyLine("None.")
+        ) : (
+          list.map((x) => renderMeetingCard(x, { readOnly }))
+        )
+      ) : null}
+    </View>
+  );
+
+  const legacyBody = (
+    <>
       <Text
         style={{
           fontSize: S.title,
@@ -3450,6 +3504,102 @@ export function PackageMeetingDoctorPanel({ theme }) {
           </>
         )}
       </ScrollView>
+    </>
+  );
+
+  return (
+    <View style={{ marginBottom: 16 }}>
+      {dashboardLayout ? (
+        <View style={dashboardCardStyle}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginBottom: 8,
+            }}
+          >
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: theme.bg,
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: 10,
+              }}
+            >
+              <Ionicons name="calendar" size={18} color={theme.accent} />
+            </View>
+            <Text
+              style={{
+                fontSize: 16,
+                fontWeight: "800",
+                color: theme.textPrimary,
+                flex: 1,
+              }}
+            >
+              Booking Tracks
+            </Text>
+            <TouchableOpacity
+              onPress={() => void onRefresh()}
+              disabled={refreshing}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="refresh" size={20} color={theme.accent} />
+            </TouchableOpacity>
+          </View>
+          {rows.length === 0 ? (
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: S.small,
+                textAlign: "center",
+                paddingVertical: 10,
+              }}
+            >
+              No package meetings yet.
+            </Text>
+          ) : (
+            <>
+              {bucketToggle(
+                "pending",
+                "Pending",
+                pending.length,
+                pending,
+                false,
+                true,
+              )}
+              {bucketToggle(
+                "discussing",
+                "Discussing",
+                discussing.length,
+                discussing,
+                false,
+                false,
+              )}
+              {bucketToggle(
+                "confirmedDemo",
+                "Confirmed demo",
+                confirmedDemo.length,
+                confirmedDemo,
+                false,
+                false,
+              )}
+              {bucketToggle(
+                "closed",
+                "Declined",
+                closed.length,
+                closed,
+                true,
+                false,
+              )}
+            </>
+          )}
+        </View>
+      ) : (
+        legacyBody
+      )}
 
       <Modal visible={!!modalMeetingId} transparent animationType="fade">
         <View
@@ -3655,6 +3805,7 @@ export function DoctorQuickRequestsPanel({
   doctorUserId,
   onHelpPatient,
   onOpenHelpChat,
+  dashboardLayout = false,
 }) {
   const user = getAuthUser();
   const effectiveDoctorId = doctorUserId || user?.id || "";
@@ -3900,7 +4051,7 @@ export function DoctorQuickRequestsPanel({
         padding: 12,
         borderRadius: 14,
         marginBottom: 10,
-        backgroundColor: theme.card,
+        backgroundColor: dashboardLayout ? theme.bg : theme.card,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.cardBorder,
       }}
@@ -3932,7 +4083,7 @@ export function DoctorQuickRequestsPanel({
         padding: 12,
         borderRadius: 14,
         marginBottom: 10,
-        backgroundColor: theme.card,
+        backgroundColor: dashboardLayout ? theme.bg : theme.card,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.cardBorder,
       }}
@@ -3957,13 +4108,35 @@ export function DoctorQuickRequestsPanel({
     </View>
   );
 
-  return (
-    <View style={{ marginTop: 12 }}>
+  const inner = (
+    <>
       <View
         style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}
       >
-        <Text style={{ color: theme.textPrimary, fontWeight: "800", flex: 1 }}>
-          Quick queues (clinic / RMP)
+        {dashboardLayout ? (
+          <View
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              backgroundColor: theme.bg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: 10,
+            }}
+          >
+            <Ionicons name="flash" size={18} color={theme.warning} />
+          </View>
+        ) : null}
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            flex: 1,
+            fontSize: dashboardLayout ? 16 : undefined,
+          }}
+        >
+          {dashboardLayout ? "Quick Queues" : "Quick queues (clinic / RMP)"}
         </Text>
         <TouchableOpacity
           onPress={() => void load()}
@@ -3982,20 +4155,22 @@ export function DoctorQuickRequestsPanel({
           </Text>
         </TouchableOpacity>
       </View>
-      <Text
-        style={{
-          color: theme.textSecondary,
-          fontSize: S.small,
-          marginBottom: 10,
-        }}
-      >
-        The app only loads rows with{" "}
-        <Text style={{ fontWeight: "700" }}>status = queued</Text>. Tap{" "}
-        <Text style={{ fontWeight: "700" }}>Help</Text> on a card to open a chat
-        with the patient - your first message starts the thread and they will
-        see “you want to help” on their tracking list. The patient can close or
-        cancel the request anytime.
-      </Text>
+      {dashboardLayout ? null : (
+        <Text
+          style={{
+            color: theme.textSecondary,
+            fontSize: S.small,
+            marginBottom: 10,
+          }}
+        >
+          The app only loads rows with{" "}
+          <Text style={{ fontWeight: "700" }}>status = queued</Text>. Tap{" "}
+          <Text style={{ fontWeight: "700" }}>Help</Text> on a card to open a
+          chat with the patient - your first message starts the thread and they
+          will see “you want to help” on their tracking list. The patient can
+          close or cancel the request anytime.
+        </Text>
+      )}
       {err ? (
         <Text
           style={{ color: theme.danger, fontSize: S.small, marginBottom: 8 }}
@@ -4167,8 +4342,32 @@ export function DoctorQuickRequestsPanel({
           </View>
         </View>
       </Modal>
-    </View>
+    </>
   );
+
+  if (dashboardLayout) {
+    return (
+      <View
+        style={{
+          backgroundColor: theme.card,
+          borderRadius: 20,
+          padding: 16,
+          marginBottom: 16,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.cardBorder,
+          shadowColor: theme.shadowColor,
+          shadowOpacity: 0.06,
+          shadowOffset: { width: 0, height: 4 },
+          shadowRadius: 12,
+          elevation: 3,
+        }}
+      >
+        {inner}
+      </View>
+    );
+  }
+
+  return <View style={{ marginTop: 12 }}>{inner}</View>;
 }
 
 /**
@@ -4532,7 +4731,7 @@ export function PatientQuickRequestsTrackerPanel({
   );
 }
 
-export function CoinWalletDoctorPanel({ theme }) {
+export function CoinWalletDoctorPanel({ theme, suppressHeading = false }) {
   const user = getAuthUser();
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
@@ -4647,12 +4846,18 @@ export function CoinWalletDoctorPanel({ theme }) {
   );
 
   return (
-    <View style={{ marginTop: 12 }}>
-      <Text
-        style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 8 }}
-      >
-        Coin wallet (1 coin = ₹1)
-      </Text>
+    <View style={{ marginTop: suppressHeading ? 0 : 12 }}>
+      {suppressHeading ? null : (
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+          }}
+        >
+          Coin wallet (1 coin = ₹1)
+        </Text>
+      )}
       <Text
         style={{ color: theme.textPrimary, fontSize: S.title, fontWeight: "900" }}
       >
@@ -4785,11 +4990,6 @@ export function CoinWalletDoctorPanel({ theme }) {
           <Text style={{ color: "#fff", fontWeight: "800" }}>Withdraw</Text>
         </TouchableOpacity>
       </View>
-      <Text
-        style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 10 }}
-      >
-        Payment history is on your Profile tab.
-      </Text>
     </View>
   );
 }
