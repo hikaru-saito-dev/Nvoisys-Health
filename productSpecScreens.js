@@ -7,6 +7,7 @@ import {
   Alert,
   AppState,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
@@ -33,6 +34,7 @@ import {
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
   createQuickSolutionRequest,
+  entitlementsForConsumerPlan,
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
   doctorPackageFeeErrors,
@@ -42,7 +44,9 @@ import {
   doctorTierEligibleForPackageMode,
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
+  getAiAssistantUsageToday,
   getCoinBalanceForUser,
+  incrementAiAssistantUsageToday,
   getDoctorCoinBalance,
   listActivePackagePairsForDoctor,
   listActivePackagePairsForPatient,
@@ -1404,6 +1408,61 @@ export function QuickSolutionScreen({
   const [notes, setNotes] = useState("");
   const [privateMode, setPrivateMode] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiReply, setAiReply] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+
+  const ent = useMemo(
+    () =>
+      quickCareBinding?.consumerPlan != null
+        ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
+        : null,
+    [quickCareBinding?.consumerPlan],
+  );
+
+  const runAi = async () => {
+    const q = String(aiQuestion || "").trim();
+    if (!q) {
+      Alert.alert("AI", "Type a question first.");
+      return;
+    }
+    if (!onAskAi) {
+      Alert.alert("AI", "Assistant is not configured on this build.");
+      return;
+    }
+    const limit = ent?.aiChatDailyLimit;
+    if (typeof limit === "number" && limit > 0) {
+      try {
+        const used = await getAiAssistantUsageToday(patientUserId);
+        if (used >= limit) {
+          Alert.alert(
+            "Daily limit",
+            "You have reached today's AI message limit for your plan.",
+          );
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    setAiBusy(true);
+    try {
+      const reply = await onAskAi(q);
+      const text = String(reply || "").trim();
+      setAiReply(text || "(empty reply)");
+      if (typeof limit === "number" && limit > 0) {
+        try {
+          await incrementAiAssistantUsageToday(patientUserId);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (e) {
+      setAiReply(e?.message || "Could not get AI answer.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const submit = async () => {
     try {
@@ -4058,27 +4117,74 @@ export function PackageMeetingDoctorPanel({ theme }) {
   );
 
   return (
-    <View style={{ marginBottom: 16 }}>
-      <Text
+    <View
+      style={{
+        marginBottom: 16,
+        backgroundColor: theme.card,
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.cardBorder,
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.05,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 8,
+        elevation: 2,
+      }}
+    >
+      <View
         style={{
-          fontSize: S.title,
-          fontWeight: "800",
-          color: theme.textPrimary,
-          marginBottom: 8,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: rows.length === 0 ? 10 : 12,
         }}
       >
-        Booked package meetings
-      </Text>
-      <Text
-        style={{
-          color: theme.textSecondary,
-          fontSize: S.small,
-          marginBottom: 10,
-        }}
-      >
-        Flow: pending → discussing (alternate times) → confirmed demo → package
-        offer from Upcoming Appointments → declined/cancelled history.
-      </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              backgroundColor: theme.accentLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: 10,
+            }}
+          >
+            <Ionicons name="calendar" size={22} color={theme.accent} />
+          </View>
+          <Text
+            style={{
+              fontSize: S.title,
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            Booking Tracks
+          </Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => void onRefresh()}
+          disabled={refreshing}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: theme.accentLight,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Ionicons
+            name="refresh"
+            size={22}
+            color={theme.accent}
+            style={{ opacity: refreshing ? 0.45 : 1 }}
+          />
+        </TouchableOpacity>
+      </View>
       <ScrollView
         nestedScrollEnabled
         style={{ maxHeight: 520 }}
@@ -4091,7 +4197,14 @@ export function PackageMeetingDoctorPanel({ theme }) {
         }
       >
         {rows.length === 0 ? (
-          <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
+          <Text
+            style={{
+              color: theme.textTertiary,
+              fontSize: S.small,
+              textAlign: "center",
+              paddingVertical: 6,
+            }}
+          >
             No package meetings yet.
           </Text>
         ) : (
@@ -4640,44 +4753,66 @@ export function DoctorQuickRequestsPanel({
   );
 
   return (
-    <View style={{ marginTop: 12 }}>
+    <View
+      style={{
+        marginTop: 12,
+        backgroundColor: theme.card,
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.cardBorder,
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.05,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 8,
+        elevation: 2,
+      }}
+    >
       <View
-        style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 10,
+        }}
       >
-        <Text style={{ color: theme.textPrimary, fontWeight: "800", flex: 1 }}>
-          Quick queues (clinic / RMP)
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              backgroundColor: theme.warningLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: 10,
+            }}
+          >
+            <Ionicons name="flash" size={22} color={theme.warning} />
+          </View>
+          <Text
+            style={{ color: theme.textPrimary, fontWeight: "800", fontSize: 16 }}
+          >
+            Quick Queues
+          </Text>
+        </View>
         <TouchableOpacity
           onPress={() => void load()}
           disabled={loading}
           style={{
-            paddingHorizontal: 12,
+            paddingHorizontal: 14,
             paddingVertical: 8,
-            borderRadius: 10,
+            borderRadius: 12,
             backgroundColor: theme.accentLight,
           }}
         >
           <Text
-            style={{ color: theme.accent, fontWeight: "700", fontSize: 12 }}
+            style={{ color: theme.accent, fontWeight: "800", fontSize: 12 }}
           >
             {loading ? "…" : "Refresh"}
           </Text>
         </TouchableOpacity>
       </View>
-      <Text
-        style={{
-          color: theme.textSecondary,
-          fontSize: S.small,
-          marginBottom: 10,
-        }}
-      >
-        The app only loads rows with{" "}
-        <Text style={{ fontWeight: "700" }}>status = queued</Text>. Tap{" "}
-        <Text style={{ fontWeight: "700" }}>Help</Text> on a card to open a chat
-        with the patient - your first message starts the thread and they will
-        see “you want to help” on their tracking list. The patient can close or
-        cancel the request anytime.
-      </Text>
       {err ? (
         <Text
           style={{ color: theme.danger, fontSize: S.small, marginBottom: 8 }}

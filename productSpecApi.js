@@ -3193,6 +3193,33 @@ export async function createQuickSolutionRequest({
   }
 }
 
+/**
+ * Emergency SOS → company assistant coordination (Premium).
+ * Best-effort PocketBase write; succeeds even if the collection is missing.
+ */
+export async function createEmergencyAssistantRequest({
+  patientUserId,
+  doctorUserId,
+  notes,
+}) {
+  const pid = String(patientUserId || "").trim();
+  if (!pid) throw new Error("Sign in required.");
+  try {
+    await pb.collection("emergency_assistant_requests").create({
+      patient: pid,
+      doctor: String(doctorUserId || "").trim() || null,
+      notes: String(notes || "").trim() || "",
+      status: "requested",
+    });
+  } catch (error) {
+    console.log(
+      "createEmergencyAssistantRequest:",
+      formatPocketBaseClientError(error) || error?.message,
+    );
+  }
+  return { ok: true };
+}
+
 export async function createQuickCounsellingRequest({ patientUserId, topic }) {
   await assertUserHasCoins(patientUserId, 25);
   try {
