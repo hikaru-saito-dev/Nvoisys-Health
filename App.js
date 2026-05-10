@@ -30200,39 +30200,65 @@ const FloatingCoinWallet = ({ userRole, userId, theme }) => {
       pointerEvents="none"
       style={{
         position: "absolute",
-        top: RFValue(10),
+        top: RFValue(14),
         right: RFValue(14),
-        zIndex: 50,
-        elevation: 50,
+        zIndex: 100,
+        elevation: 100,
       }}
     >
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
-          backgroundColor: theme.card,
-          borderRadius: RFValue(999),
-          paddingHorizontal: RFValue(12),
-          paddingVertical: RFValue(8),
-          borderWidth: 1,
-          borderColor: theme.cardBorder,
+          backgroundColor: theme.bg,
+          borderRadius: RFValue(12),
+          paddingHorizontal: RFValue(14),
+          paddingVertical: RFValue(10),
+          borderWidth: 2,
+          borderColor: theme.accent,
           shadowColor: theme.shadowColor,
-          shadowOpacity: 0.16,
-          shadowOffset: { width: 0, height: 4 },
-          shadowRadius: 12,
+          shadowOpacity: 0.24,
+          shadowOffset: { width: 0, height: 6 },
+          shadowRadius: 16,
+          minWidth: RFValue(116),
         }}
       >
-        <Ionicons name="wallet" size={RFValue(15)} color={theme.accent} />
-        <Text
+        <View
           style={{
-            color: theme.textPrimary,
-            fontSize: RFValue(12),
-            fontWeight: "900",
-            marginLeft: RFValue(6),
+            width: RFValue(28),
+            height: RFValue(28),
+            borderRadius: RFValue(8),
+            backgroundColor: theme.accentLight,
+            alignItems: "center",
+            justifyContent: "center",
+            marginRight: RFValue(9),
           }}
         >
-          {balance} coins
-        </Text>
+          <Ionicons name="wallet" size={RFValue(16)} color={theme.accent} />
+        </View>
+        <View>
+          <Text
+            style={{
+              color: theme.textTertiary,
+              fontSize: RFValue(9),
+              fontWeight: "800",
+              textTransform: "uppercase",
+              letterSpacing: 0.6,
+            }}
+          >
+            Wallet
+          </Text>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: RFValue(14),
+              fontWeight: "900",
+              marginTop: RFValue(1),
+            }}
+          >
+            {balance} coins
+          </Text>
+        </View>
       </View>
     </View>
   );
