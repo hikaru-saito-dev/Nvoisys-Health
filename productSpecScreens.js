@@ -30,6 +30,7 @@ import {
   createQuickSolutionRequest,
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
+  doctorPackageFeeErrors,
   doctorPackagesSetupComplete,
   doctorProposePackageMeetingReschedule,
   doctorSendPackageOfferFromSlot,
@@ -52,6 +53,7 @@ import {
   mergeLocalFeesOntoSlots,
   normalizeDoctorPackageSlots,
   packageSlotDisplayName,
+  packageSlotMinimumFeeInr,
   PACKAGE_MEETING_STATUS,
   packageMeetingClosedLabel,
   packageMeetingDoctorListBucket,
@@ -664,9 +666,12 @@ export function DoctorPackageSetupScreen({
       return;
     }
     if (!doctorPackagesSetupComplete(slots)) {
+      const lines = doctorPackageFeeErrors(slots);
       Alert.alert(
-        "Set all 3 fees",
-        "Enter a service fee greater than zero (INR) for Basic, Gold, and Premium.",
+        "Package fees",
+        lines.length
+          ? lines.join("\n")
+          : "Enter fees for Basic, Gold, and Premium (minimums apply; no maximum).",
       );
       return;
     }
@@ -822,12 +827,14 @@ export function DoctorPackageSetupScreen({
             </Text>
             <Text
               style={{
-                color: theme.textTertiary,
+                color: theme.textSecondary,
                 fontSize: 11,
-                marginBottom: 8,
+                marginBottom: 6,
               }}
             >
-              {slot.total_period} · {slot.treatment_type}
+              Minimum ₹
+              {packageSlotMinimumFeeInr(slot.slot).toLocaleString("en-IN")} · no
+              maximum
             </Text>
             <Text
               style={{
@@ -840,7 +847,7 @@ export function DoctorPackageSetupScreen({
               Your fee (INR)
             </Text>
             <TextInput
-              placeholder="e.g. 8000"
+              placeholder={`e.g. ${packageSlotMinimumFeeInr(slot.slot)}`}
               placeholderTextColor={theme.textTertiary}
               keyboardType="numeric"
               value={String(slot.total_amount_inr ?? "")}
@@ -852,13 +859,13 @@ export function DoctorPackageSetupScreen({
 
         <TouchableOpacity
           onPress={save}
-          disabled={busy}
+          disabled={busy || !doctorPackagesSetupComplete(slots)}
           style={{
             backgroundColor: theme.accent,
             padding: 14,
             borderRadius: 14,
             alignItems: "center",
-            opacity: busy ? 0.85 : 1,
+            opacity: busy || !doctorPackagesSetupComplete(slots) ? 0.55 : 1,
           }}
         >
           {busy ? (
@@ -3215,6 +3222,19 @@ function PackageSuggestAfterMeetingInline({
     }
     if (!draftSlot) return;
     const slotNum = Number(draftSlot.slot) || activeSlotIndex + 1;
+    const minFee = packageSlotMinimumFeeInr(slotNum);
+    const draftAmt = Number(
+      String(draftSlot.total_amount_inr || "")
+        .replace(/,/g, "")
+        .trim() || 0,
+    );
+    if (!Number.isFinite(draftAmt) || draftAmt < minFee) {
+      Alert.alert(
+        "Minimum fee",
+        `${packageSlotDisplayName(slotNum)} requires at least ₹${minFee.toLocaleString("en-IN")} (no maximum).`,
+      );
+      return;
+    }
     try {
       setBusy(true);
       await doctorSendPackageOfferFromSlot({
@@ -3387,7 +3407,10 @@ function PackageSuggestAfterMeetingInline({
                 </View>
               ) : null}
               <Text style={{ color: theme.textTertiary, fontSize: 11 }}>
-                Your service fee (INR)
+                Your service fee (INR) · minimum ₹
+                {packageSlotMinimumFeeInr(
+                  Number(draftSlot?.slot) || 1,
+                ).toLocaleString("en-IN")}
               </Text>
               <TextInput
                 keyboardType="numeric"
@@ -3396,6 +3419,7 @@ function PackageSuggestAfterMeetingInline({
                   setDraftSlot((d) => ({ ...d, total_amount_inr: t }))
                 }
                 style={slotInput(theme)}
+                placeholder={`e.g. ${packageSlotMinimumFeeInr(Number(draftSlot?.slot) || 1)}`}
                 placeholderTextColor={theme.textTertiary}
               />
             </ScrollView>

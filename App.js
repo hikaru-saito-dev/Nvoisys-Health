@@ -11204,9 +11204,8 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
       iconBg: "#EEF2FF",
       iconColor: "#4338CA",
       title: "Welcome to\nNvoisys Health",
-      subtitle: "Your 24/7 health monitoring companion powered by AI",
+      subtitle: "Your 24/7 health companion powered by AI",
       bullets: [
-        "Real-time vital monitoring",
         "Instant emergency response",
         "Connected to doctors across India",
       ],
@@ -11218,11 +11217,9 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
       iconColor: "#7C3AED",
       title: "Your Personal\nHealth Guardian",
       subtitle:
-        "Monitor vitals, get medication recommendations, and connect with your assigned doctor instantly",
+        "Get medication context, AI-assisted guidance, and connect with your assigned doctor",
       bullets: [
-        "Track heart rate, BP, sugar levels",
         "AI-powered health guidance",
-        "Emergency doctor assignment",
         "Chat & video call with doctors",
       ],
     },
@@ -11233,12 +11230,10 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
       iconColor: "#DC2626",
       title: "Emergency Response\nNetwork",
       subtitle:
-        "When seconds matter, our system connects patients with the nearest available doctor and hospital",
+        "When seconds matter, our system helps you reach care pathways and nearby resources",
       bullets: [
-        "Instant SOS to assigned doctor",
         "Automatic nearby doctor alerts",
         "Hospital recommendations",
-        "Real-time location sharing",
       ],
     },
   ];
@@ -15617,7 +15612,9 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const criticalPatients = (patients || []).filter(
     (p) => p.riskLevel === "High",
   ).length;
-  const quickServiceDoctor = doctorTierEligibleForQuickService(patientProfile);
+  /** Doctor tier comes from the signed-in user / doctor profile fields — not patientProfile. */
+  const quickServiceDoctor =
+    doctorTierEligibleForQuickService(currentUser);
 
   // Doctor "Help" flow per spec:
   //   ensure conversation → send first message → record offer →
@@ -23031,7 +23028,7 @@ const FamilyHealthScreen = ({ onBack }) => {
             What to expect:
           </Text>
           {[
-            { icon: "pulse", text: "Real-time vitals monitoring" },
+            { icon: "pulse", text: "Family wellness overview (planned)" },
             {
               icon: "alert-circle-outline",
               text: "Emergency notifications for dependents",

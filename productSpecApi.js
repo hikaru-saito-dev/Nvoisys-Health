@@ -53,6 +53,61 @@ export function packageSlotDisplayName(slot) {
   return "Basic";
 }
 
+/** Minimum package fee (INR) per catalogue slot — Basic / Gold / Premium. No maximum. */
+export const PACKAGE_SLOT_MIN_FEE_INR = Object.freeze({
+  1: 12000,
+  2: 20000,
+  3: 50000,
+});
+
+export function packageSlotMinimumFeeInr(slotNum) {
+  const n = Number(slotNum);
+  const v = PACKAGE_SLOT_MIN_FEE_INR[n];
+  if (Number.isFinite(v) && v > 0) return v;
+  return PACKAGE_SLOT_MIN_FEE_INR[1];
+}
+
+/**
+ * Normalizes stored fee strings: empty stays empty; amounts below the tier
+ * minimum are cleared so doctors must re-enter a valid fee (save stays blocked
+ * until all slots meet minimums — see doctorPackageFeeErrors).
+ */
+function coerceStoredPackageFeeInr(slotNum, feeRaw) {
+  if (feeRaw === undefined || feeRaw === null) return "";
+  const trimmed = String(feeRaw).trim();
+  if (!trimmed) return "";
+  const amount = Number(trimmed.replace(/,/g, "") || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "";
+  const min = packageSlotMinimumFeeInr(slotNum);
+  if (amount < min) return "";
+  return String(Math.round(amount));
+}
+
+/** Human-readable validation lines for doctor package fee inputs. */
+export function doctorPackageFeeErrors(slots) {
+  if (!Array.isArray(slots) || slots.length === 0) {
+    return ["Configure all three package fees."];
+  }
+  const errors = [];
+  for (const s of slots) {
+    const label = packageSlotDisplayName(s.slot);
+    const min = packageSlotMinimumFeeInr(s.slot);
+    const amt = Number(
+      String(s.total_amount_inr || "")
+        .replace(/,/g, "")
+        .trim() || 0,
+    );
+    if (!Number.isFinite(amt) || amt <= 0) {
+      errors.push(`${label}: enter your fee in INR.`);
+    } else if (amt < min) {
+      errors.push(
+        `${label}: minimum ₹${min.toLocaleString("en-IN")} (no maximum).`,
+      );
+    }
+  }
+  return errors;
+}
+
 /** Entitlements for product-spec Basic / Gold / Premium (aligned to package slots 1–3). */
 export function entitlementsForConsumerPlan(plan) {
   const p = String(plan || CONSUMER_PLAN.BASIC).toLowerCase();
@@ -234,12 +289,15 @@ const DEFAULT_PACKAGE_AMOUNT_INR = Math.max(
 const REFERRAL_MONTHLY_COMMISSION_COINS = 1000;
 
 export function resolvePackageSlotAmountInr(slot) {
+  const slotNum = Number(slot?.slot) || 1;
+  const min = packageSlotMinimumFeeInr(slotNum);
   const raw =
     slot?.total_amount_inr ?? slot?.amount_inr ?? slot?.default_amount_inr ?? "";
   const amount = Number(String(raw).replace(/,/g, "").trim() || 0);
-  return Number.isFinite(amount) && amount > 0
-    ? Math.round(amount)
-    : DEFAULT_PACKAGE_AMOUNT_INR;
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return Math.max(min, DEFAULT_PACKAGE_AMOUNT_INR);
+  }
+  return Math.max(min, Math.round(amount));
 }
 
 export function packageSlotUsesDefaultAmount(slot) {
@@ -433,7 +491,13 @@ export function mergeLocalFeesOntoSlots(slots, localFees) {
       L.total_amount_inr != null &&
       String(L.total_amount_inr).trim() !== ""
     ) {
-      return { ...s, total_amount_inr: String(L.total_amount_inr).trim() };
+      return {
+        ...s,
+        total_amount_inr: coerceStoredPackageFeeInr(
+          s.slot,
+          L.total_amount_inr,
+        ),
+      };
     }
     return s;
   });
@@ -456,22 +520,14 @@ export function normalizeDoctorPackageSlots(raw) {
     return {
       ...fixed,
       slot: slotNum,
-      total_amount_inr:
-        feeRaw === undefined || feeRaw === null ? "" : String(feeRaw).trim(),
+      total_amount_inr: coerceStoredPackageFeeInr(slotNum, feeRaw),
     };
   });
 }
 
 export function doctorPackagesSetupComplete(slots) {
   if (!Array.isArray(slots) || slots.length < 3) return false;
-  return slots.every((s) => {
-    const amt = Number(
-      String(s.total_amount_inr || "")
-        .replace(/,/g, "")
-        .trim() || 0,
-    );
-    return Number.isFinite(amt) && amt > 0;
-  });
+  return doctorPackageFeeErrors(slots).length === 0;
 }
 
 /**
@@ -486,6 +542,10 @@ export async function saveDoctorPackageTemplates(
 ) {
   if (!profileId) throw new Error("Missing doctor profile.");
   const normalized = normalizeDoctorPackageSlots(slots);
+  const feeErrs = doctorPackageFeeErrors(normalized);
+  if (feeErrs.length) {
+    throw new Error(feeErrs.join("\n"));
+  }
   const complete = doctorPackagesSetupComplete(normalized);
   const package_templates = normalized.map((s) => ({
     slot: s.slot,
