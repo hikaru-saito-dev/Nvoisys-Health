@@ -36,8 +36,6 @@ import {
   doctorWithdrawCoinsStub,
   entitlementsForConsumerPlan,
   fetchMedicalRecordsForPatient,
-  getCoinBalanceForUser,
-  getDoctorCoinBalance,
   listActivePackagePairsForDoctor,
   listActivePackagePairsForPatient,
   listActiveQuickRequestsForPatient,
@@ -70,6 +68,7 @@ import {
   saveDoctorPackageTemplates,
   settleDueReferralMonthlyCommissions,
   parseQuickRequestDoctorTag,
+  settleQuickRequestProvider,
   uploadMedicalRecord,
 } from "./productSpecApi";
 
@@ -4943,11 +4942,23 @@ export function PatientQuickRequestsTrackerPanel({
     );
   };
 
-  const handleOpenOffer = (offer) => {
+  const handleOpenOffer = async (row, offer) => {
+    const doctorUserId = offer?.expand?.doctor?.id || offer.doctor;
+    try {
+      await settleQuickRequestProvider({
+        id: row.id,
+        kind: row.kind,
+        doctorUserId,
+      });
+      removeRowLocally(row.kind, row.id);
+    } catch (e) {
+      Alert.alert("Could not select doctor", e?.message || "Please try again.");
+      return;
+    }
     if (typeof onOpenConversation === "function" && offer?.conversation) {
       onOpenConversation(
         offer.conversation,
-        offer?.expand?.doctor?.id || offer.doctor,
+        doctorUserId,
       );
     } else {
       Alert.alert(
@@ -4957,7 +4968,7 @@ export function PatientQuickRequestsTrackerPanel({
     }
   };
 
-  const renderOffer = (offer) => {
+  const renderOffer = (row, offer) => {
     const doctor = offer?.expand?.doctor;
     const doctorName = doctor?.name || doctor?.email || "Doctor";
     return (
@@ -5002,7 +5013,7 @@ export function PatientQuickRequestsTrackerPanel({
           ) : null}
         </View>
         <TouchableOpacity
-          onPress={() => handleOpenOffer(offer)}
+          onPress={() => handleOpenOffer(row, offer)}
           accessibilityLabel="Open chat with this doctor"
           style={{
             width: 36,
@@ -5077,7 +5088,7 @@ export function PatientQuickRequestsTrackerPanel({
           </Text>
         ) : null}
 
-        {offers.map(renderOffer)}
+        {offers.map((offer) => renderOffer(row, offer))}
 
         <View style={{ flexDirection: "row", marginTop: 12 }}>
           <TouchableOpacity
@@ -5206,19 +5217,16 @@ export function CoinWalletDoctorPanel({ theme, suppressHeading = false }) {
   const user = getAuthUser();
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
-  const [balance, setBalance] = useState(0);
   const [pairs, setPairs] = useState([]);
   const [referrals, setReferrals] = useState([]);
   const [packageDoctors, setPackageDoctors] = useState([]);
   const [referralTargets, setReferralTargets] = useState({});
 
   const refreshBalance = useCallback(async () => {
-    const [coins, activePairs, referralRows] = await Promise.all([
-      getDoctorCoinBalance(user?.id),
+    const [activePairs, referralRows] = await Promise.all([
       listActivePackagePairsForDoctor(user?.id),
       listPackageReferralsForDoctor(user?.id),
     ]);
-    setBalance(coins);
     setPairs(activePairs || []);
     setReferrals(referralRows || []);
   }, [user?.id]);
@@ -5329,10 +5337,8 @@ export function CoinWalletDoctorPanel({ theme, suppressHeading = false }) {
           Coin wallet (1 coin = ₹1)
         </Text>
       )}
-      <Text
-        style={{ color: theme.textPrimary, fontSize: S.title, fontWeight: "900" }}
-      >
-        {balance} coins available
+      <Text style={{ color: theme.textSecondary, fontSize: S.small }}>
+        Available balance is shown in the floating wallet.
       </Text>
       <Text
         style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
@@ -5540,19 +5546,16 @@ export function DoctorCoinPaymentHistoryPanel({ theme }) {
 
 export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
   const [rows, setRows] = useState([]);
-  const [balance, setBalance] = useState(0);
   const [pairs, setPairs] = useState([]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [ledger, coins, activePairs] = await Promise.all([
+      const [ledger, activePairs] = await Promise.all([
         listCoinLedgerForUser(userId),
-        getCoinBalanceForUser(userId),
         listActivePackagePairsForPatient(userId),
       ]);
       if (cancelled) return;
       setRows(ledger);
-      setBalance(coins);
       setPairs(activePairs || []);
     })();
     return () => {
@@ -5566,9 +5569,6 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
       >
         Coin & payments history
       </Text>
-      <Text style={{ color: theme.textPrimary, fontWeight: "900", marginBottom: 6 }}>
-        Balance: {balance} coins
-      </Text>
       <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 6 }}>
         Active package pairs: {pairs.length}
       </Text>
@@ -5578,7 +5578,7 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
           style={{ color: theme.textTertiary, fontSize: 11, marginBottom: 3 }}
         >
           {pair.title} · doctor {String(pair.doctor_user_id || "").slice(-6)} ·
-          pool {pair.doctor_coins} coins
+          package {pair.amount_inr} coins
         </Text>
       ))}
       {compact ? null : rows.length === 0 ? (

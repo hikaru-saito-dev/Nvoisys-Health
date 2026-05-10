@@ -20,6 +20,7 @@ import {
   Alert,
   Animated,
   Appearance,
+  AppState,
   BackHandler,
   Dimensions,
   Easing,
@@ -82,6 +83,7 @@ import {
   doctorProfilePackageFeesReady,
   doctorProfilePackageSetupSkipped,
   doctorSendAskPackageForDemoAppointment,
+  doctorTierEligibleForQuickService,
   doctorTierEligibleForPackageMode,
   effectiveCareMode,
   ensurePackageDemoMeetingConversation,
@@ -90,6 +92,8 @@ import {
   createEmergencyAssistantRequest,
   getPatientActiveQuickCareBinding,
   incrementAiAssistantUsageToday,
+  getCoinBalanceForUser,
+  getDoctorCoinBalance,
   listPackageOffersForDoctor,
   mergeLocalFeesOntoSlots,
   minutesUsedWithDoctorThisRollingWeek,
@@ -14949,6 +14953,7 @@ const DoctorUpcomingAppointmentsSection = () => {
     appointments,
     updateAppointmentStatus,
     currentUser,
+    patientProfile,
     ensureDirectConversation,
     requestOpenConversation,
     sendConversationMessage,
@@ -15599,6 +15604,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const criticalPatients = (patients || []).filter(
     (p) => p.riskLevel === "High",
   ).length;
+  const quickServiceDoctor = doctorTierEligibleForQuickService(patientProfile);
 
   // Doctor "Help" flow per spec:
   //   ensure conversation → send first message → record offer →
@@ -15822,13 +15828,16 @@ const DoctorDashboard = ({ wounds, patients }) => {
           style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
         >
           <PackageMeetingDoctorPanel theme={theme} dashboardLayout />
-          <DoctorQuickRequestsPanel
-            theme={theme}
-            doctorUserId={currentUser?.id}
-            onHelpPatient={handleHelpQuickPatient}
-            onOpenHelpChat={handleOpenExistingHelpChat}
-            dashboardLayout
-          />
+          {quickServiceDoctor ? (
+            <DoctorQuickRequestsPanel
+              theme={theme}
+              doctorUserId={currentUser?.id}
+              onHelpPatient={handleHelpQuickPatient}
+              onOpenHelpChat={handleOpenExistingHelpChat}
+              dashboardLayout
+            />
+          ) : null}
+          <CoinWalletDoctorPanel theme={theme} suppressHeading />
           {/* Critical Patients */}
           <View
             style={{
@@ -18816,7 +18825,7 @@ const AppointmentBookingScreen = ({
 
 const PatientDoctorBookingFlow = ({ onBack }) => {
   const { theme } = useTheme();
-  const { fetchApprovedDoctors, patientProfile } = useAppData();
+  const { fetchApprovedDoctors, patientProfile, patientCareMode } = useAppData();
   const [step, setStep] = useState("browse");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [doctors, setDoctors] = useState([]);
@@ -18854,7 +18863,9 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
       try {
         setLoading(true);
         setLoadError("");
-        const list = await fetchApprovedDoctors();
+        const list = await fetchApprovedDoctors({
+          quickServiceOnly: patientCareMode === CARE_MODE.CASUAL,
+        });
         if (!cancelled) setDoctors(list);
       } catch (error) {
         if (!cancelled) {
@@ -18867,7 +18878,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
     return () => {
       cancelled = true;
     };
-  }, [fetchApprovedDoctors]);
+  }, [fetchApprovedDoctors, patientCareMode]);
 
   const categories = [
     "All",
@@ -28101,11 +28112,7 @@ export default function App() {
         .map(mapDoctorListingRecord)
         .filter((item) => item.userId);
       if (opts.quickServiceOnly) {
-        list = list.filter((doc) => {
-          const tier = String(doc.practitionerTier || "").toLowerCase();
-          if (tier === "professional" || tier === "specialist") return false;
-          return true;
-        });
+        list = list.filter((doc) => doctorTierEligibleForQuickService(doc));
       }
       if (opts.packageModeOnly) {
         list = list.filter((doc) =>
@@ -30153,6 +30160,84 @@ const MandatoryNameScreen = ({ currentUser, theme, onSaved, onLogout }) => {
   );
 };
 
+const FloatingCoinWallet = ({ userRole, userId, theme }) => {
+  const [balance, setBalance] = useState(null);
+
+  const refresh = useCallback(async () => {
+    if (!userId || !["patient", "doctor"].includes(userRole)) {
+      setBalance(null);
+      return;
+    }
+    try {
+      const nextBalance =
+        userRole === "doctor"
+          ? await getDoctorCoinBalance(userId)
+          : await getCoinBalanceForUser(userId);
+      setBalance(Number(nextBalance) || 0);
+    } catch {
+      setBalance(null);
+    }
+  }, [userId, userRole]);
+
+  useEffect(() => {
+    void refresh();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refresh();
+    });
+    const interval = setInterval(() => void refresh(), 30000);
+    return () => {
+      subscription.remove();
+      clearInterval(interval);
+    };
+  }, [refresh]);
+
+  if (!userId || !["patient", "doctor"].includes(userRole) || balance == null) {
+    return null;
+  }
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        top: RFValue(10),
+        right: RFValue(14),
+        zIndex: 50,
+        elevation: 50,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          backgroundColor: theme.card,
+          borderRadius: RFValue(999),
+          paddingHorizontal: RFValue(12),
+          paddingVertical: RFValue(8),
+          borderWidth: 1,
+          borderColor: theme.cardBorder,
+          shadowColor: theme.shadowColor,
+          shadowOpacity: 0.16,
+          shadowOffset: { width: 0, height: 4 },
+          shadowRadius: 12,
+        }}
+      >
+        <Ionicons name="wallet" size={RFValue(15)} color={theme.accent} />
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontSize: RFValue(12),
+            fontWeight: "900",
+            marginLeft: RFValue(6),
+          }}
+        >
+          {balance} coins
+        </Text>
+      </View>
+    </View>
+  );
+};
+
 const AppContent = ({
   userRole,
   setUserRole,
@@ -30531,6 +30616,11 @@ const AppContent = ({
             },
           ]}
         />
+        <FloatingCoinWallet
+          userRole={userRole}
+          userId={currentUser?.id}
+          theme={theme}
+        />
       </SafeAreaView>
     );
   }
@@ -30721,6 +30811,11 @@ const AppContent = ({
             ),
           },
         ]}
+      />
+      <FloatingCoinWallet
+        userRole={userRole}
+        userId={currentUser?.id}
+        theme={theme}
       />
     </SafeAreaView>
   );
