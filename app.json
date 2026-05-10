@@ -80,8 +80,7 @@
       "aiModel": "llama-3.3-70b-versatile",
       "eas": {
         "projectId": "f5060bb2-af83-466d-b80a-f5604ee8ae3b"
-      },
-      "aiApiKey": "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"
+      }
     },
     "owner": "kokoshiro_dev_3"
   }
