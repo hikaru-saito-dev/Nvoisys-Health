@@ -254,6 +254,31 @@ export function doctorTierEligibleForPackageMode(tier) {
   return t === "professional" || t === "specialist";
 }
 
+/**
+ * Quick Solution / Quick Counselling queues: RMP & clinic tiers (not package-demo tier).
+ * Pass auth `user`, `doctor_profile` row, or a tier string.
+ */
+export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
+  if (
+    typeof userOrProfileOrTier === "string" ||
+    typeof userOrProfileOrTier === "number"
+  ) {
+    return !doctorTierEligibleForPackageMode(String(userOrProfileOrTier));
+  }
+  const row = userOrProfileOrTier && typeof userOrProfileOrTier === "object"
+    ? userOrProfileOrTier
+    : null;
+  const tier = String(
+    row?.practitioner_tier ||
+      row?.practitionerTier ||
+      row?.tier ||
+      row?.verification_tier ||
+      row?.doctor_class ||
+      "",
+  );
+  return !doctorTierEligibleForPackageMode(tier);
+}
+
 /** Three fixed catalogue slots - only `total_amount_inr` is doctor-editable; rest is app-defined. */
 export const DOCTOR_PACKAGE_SLOT_IDS = [1, 2, 3];
 

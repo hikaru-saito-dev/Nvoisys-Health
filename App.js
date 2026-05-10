@@ -81,6 +81,7 @@ import {
   doctorProfilePackageSetupSkipped,
   doctorSendAskPackageForDemoAppointment,
   doctorTierEligibleForPackageMode,
+  doctorTierEligibleForQuickService,
   effectiveCareMode,
   ensurePackageDemoMeetingConversation,
   getCoinBalanceForUser,
@@ -15574,6 +15575,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const { theme } = useTheme();
   const {
     currentUser,
+    patientProfile: doctorProfile,
     ensureDirectConversation,
     sendConversationMessage,
     requestOpenConversation,
@@ -15585,12 +15587,10 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const pendingWounds = (wounds || []).filter(
     (w) => w.status === "Review Pending",
   ).length;
-  const criticalPatients = (patients || []).filter(
-    (p) => p.riskLevel === "High",
-  ).length;
-  /** Doctor tier comes from the signed-in user / doctor profile fields — not patientProfile. */
-  const quickServiceDoctor =
-    doctorTierEligibleForQuickService(currentUser);
+  /** Tier lives on `doctor_profile` (same hook slot as `patientProfile` for patients). */
+  const quickServiceDoctor = doctorTierEligibleForQuickService(
+    doctorProfile || currentUser,
+  );
 
   // Doctor "Help" flow per spec:
   //   ensure conversation → send first message → record offer →
@@ -15843,137 +15843,15 @@ const DoctorDashboard = ({ wounds, patients }) => {
           style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
         >
           <PackageMeetingDoctorPanel theme={theme} />
-          <DoctorQuickRequestsPanel
-            theme={theme}
-            doctorUserId={currentUser?.id}
-            onHelpPatient={handleHelpQuickPatient}
-            onOpenHelpChat={handleOpenExistingHelpChat}
-          />
-          <CoinWalletDoctorPanel theme={theme} />
-          {/* Critical Patients */}
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(16),
-              marginBottom: RFValue(16),
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.07,
-              shadowOffset: { width: 0, height: 2 },
-              shadowRadius: 16,
-              elevation: 2,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(14),
-              }}
-            >
-              <View
-                style={{
-                  width: RFValue(36),
-                  height: RFValue(36),
-                  borderRadius: RFValue(10),
-                  backgroundColor: theme.dangerLight,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(10),
-                }}
-              >
-                <Ionicons
-                  name="warning-outline"
-                  size={RFValue(18)}
-                  color={theme.danger}
-                />
-              </View>
-              <Text
-                style={{
-                  fontSize: RFValue(16),
-                  fontWeight: "800",
-                  color: theme.textPrimary,
-                  flex: 1,
-                }}
-              >
-                Critical Patients
-              </Text>
-              <View
-                style={{
-                  backgroundColor: theme.danger,
-                  borderRadius: RFValue(10),
-                  paddingHorizontal: RFValue(8),
-                  paddingVertical: RFValue(3),
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#FFF",
-                    fontSize: RFValue(10),
-                    fontWeight: "800",
-                  }}
-                >
-                  {criticalPatients}
-                </Text>
-              </View>
-            </View>
-            {criticalPatients > 0 ? (
-              patients
-                .filter((p) => p.riskLevel === "High")
-                .map((p, idx) => (
-                  <View
-                    key={idx}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingVertical: RFValue(8),
-                      borderTopWidth: idx > 0 ? 1 : 0,
-                      borderTopColor: theme.divider,
-                    }}
-                  >
-                    <View
-                      style={{
-                        width: RFValue(10),
-                        height: RFValue(10),
-                        borderRadius: 5,
-                        backgroundColor: theme.danger,
-                        marginRight: 10,
-                      }}
-                    />
-                    <Text
-                      style={{
-                        color: theme.textPrimary,
-                        fontWeight: "600",
-                        flex: 1,
-                      }}
-                    >
-                      {p.name}
-                    </Text>
-                    <Text
-                      style={{
-                        color: theme.textSecondary,
-                        fontSize: RFValue(11),
-                      }}
-                    >
-                      Vitals Alert
-                    </Text>
-                  </View>
-                ))
-            ) : (
-              <Text
-                style={{
-                  fontSize: RFValue(13),
-                  color: theme.textSecondary,
-                  textAlign: "center",
-                  paddingVertical: RFValue(10),
-                }}
-              >
-                No patients with critical vitals.
-              </Text>
-            )}
-          </View>
+          {quickServiceDoctor ? (
+            <DoctorQuickRequestsPanel
+              theme={theme}
+              doctorUserId={currentUser?.id}
+              onHelpPatient={handleHelpQuickPatient}
+              onOpenHelpChat={handleOpenExistingHelpChat}
+            />
+          ) : null}
+          <CoinWalletDoctorPanel theme={theme} hideWithdrawSection />
 
           {/* Appointment Requests (pending approval) */}
           <DoctorAppointmentRequestsSection />
@@ -16014,67 +15892,6 @@ const DoctorDashboard = ({ wounds, patients }) => {
               }}
             >
               No recent activity to show.
-            </Text>
-          </View>
-
-          {/* Health Insights */}
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(18),
-              marginBottom: RFValue(16),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-              borderWidth: 1,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(12),
-              }}
-            >
-              <View
-                style={{
-                  width: RFValue(36),
-                  height: RFValue(36),
-                  borderRadius: RFValue(10),
-                  backgroundColor: theme.bg,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(10),
-                }}
-              >
-                <Ionicons
-                  name="sparkles"
-                  size={RFValue(18)}
-                  color={theme.accent}
-                />
-              </View>
-              <Text
-                style={{
-                  fontSize: RFValue(16),
-                  fontWeight: "800",
-                  color: theme.textPrimary,
-                }}
-              >
-                Health Insights
-              </Text>
-            </View>
-            <Text
-              style={{
-                fontSize: RFValue(13),
-                color: theme.textSecondary,
-                textAlign: "center",
-              }}
-            >
-              No new insights available.
             </Text>
           </View>
         </View>
@@ -16515,11 +16332,638 @@ const DoctorEmergencyScreen = ({ navigation }) => {
   );
 };
 
+const DoctorAccountEditScreen = ({
+  onBack,
+  currentUser,
+  doctorProfileId,
+  doctorRow,
+  onSaved,
+}) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [displayName, setDisplayName] = useState("");
+  const [specialty, setSpecialty] = useState("");
+  const [clinic, setClinic] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDisplayName(String(currentUser?.name || "").trim());
+    setSpecialty(String(doctorRow?.specialty || "").trim());
+    setClinic(String(doctorRow?.clinic_or_hospital || "").trim());
+    setError("");
+  }, [currentUser?.id, doctorRow?.id]);
+
+  const save = async () => {
+    if (!displayName.trim()) {
+      setError("Enter your display name.");
+      return;
+    }
+    if (!doctorProfileId) {
+      setError("Doctor profile is still loading. Pull to refresh in a moment.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await pb.collection("doctor_profile").update(doctorProfileId, {
+        specialty: specialty.trim(),
+        clinic_or_hospital: clinic.trim(),
+      });
+      if (currentUser?.id) {
+        await pb.collection("UsersAuth").update(currentUser.id, {
+          name: displayName.trim(),
+        });
+        try {
+          await pb.collection("UsersAuth").authRefresh();
+        } catch {
+          // ignore
+        }
+      }
+      if (typeof onSaved === "function") onSaved();
+      onBack();
+    } catch (e) {
+      setError(
+        formatPocketBaseClientError(e) ||
+          e?.message ||
+          "Could not save. Check doctor_profile update rules in PocketBase.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <KeyboardAvoidingView
+        style={{ flex: 1, minHeight: 0 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View
+          style={{
+            backgroundColor: theme.card,
+            padding: RFValue(20),
+            borderBottomWidth: 1,
+            borderBottomColor: theme.cardBorder,
+            flexDirection: "row",
+            alignItems: "center",
+          }}
+        >
+          <TouchableOpacity
+            onPress={onBack}
+            style={{
+              width: RFValue(36),
+              height: RFValue(36),
+              borderRadius: RFValue(10),
+              backgroundColor: theme.inputBg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(14),
+            }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+          <Text
+            style={{
+              fontSize: RFValue(20),
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            Edit profile
+          </Text>
+        </View>
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{
+            padding: RFValue(16),
+            paddingBottom: Math.max(insets.bottom, RFValue(20)) + RFValue(24),
+          }}
+        >
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Display name
+          </Text>
+          <TextInput
+            value={displayName}
+            onChangeText={(t) => {
+              setDisplayName(t);
+              if (error) setError("");
+            }}
+            placeholder="Name shown to patients"
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(12),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(15),
+              color: theme.textPrimary,
+              marginBottom: RFValue(14),
+              backgroundColor: theme.card,
+            }}
+          />
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Specialty
+          </Text>
+          <TextInput
+            value={specialty}
+            onChangeText={setSpecialty}
+            placeholder="e.g. Cardiology"
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(12),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(15),
+              color: theme.textPrimary,
+              marginBottom: RFValue(14),
+              backgroundColor: theme.card,
+            }}
+          />
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Clinic or hospital
+          </Text>
+          <TextInput
+            value={clinic}
+            onChangeText={setClinic}
+            placeholder="Practice name or affiliation"
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(12),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(15),
+              color: theme.textPrimary,
+              marginBottom: RFValue(14),
+              backgroundColor: theme.card,
+            }}
+          />
+          {error ? (
+            <Text
+              style={{
+                color: theme.danger,
+                fontSize: RFValue(13),
+                marginBottom: RFValue(12),
+              }}
+            >
+              {error}
+            </Text>
+          ) : null}
+          <TouchableOpacity
+            onPress={save}
+            disabled={saving}
+            style={{
+              backgroundColor: theme.accent,
+              borderRadius: RFValue(14),
+              paddingVertical: RFValue(14),
+              alignItems: "center",
+              opacity: saving ? 0.65 : 1,
+            }}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: RFValue(16) }}>
+                Save changes
+              </Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+};
+
+const DoctorAccountPrivacyScreen = ({ onBack, currentUser }) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [busy, setBusy] = useState(false);
+
+  const openPrivacy = async () => {
+    try {
+      const can = await Linking.canOpenURL(NVOISYS_PRIVACY_POLICY_URL);
+      if (can) await Linking.openURL(NVOISYS_PRIVACY_POLICY_URL);
+      else Alert.alert("Privacy", "Unable to open the privacy policy link.");
+    } catch {
+      Alert.alert("Privacy", "Unable to open the privacy policy link.");
+    }
+  };
+
+  const sendReset = async () => {
+    const email = String(currentUser?.email || "").trim();
+    if (!email) {
+      Alert.alert("Password reset", "No email on this account.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await requestPasswordReset(email);
+      Alert.alert(
+        "Check your email",
+        "If an account exists for this address, PocketBase sent reset instructions.",
+      );
+    } catch (e) {
+      Alert.alert(
+        "Password reset",
+        formatPocketBaseClientError(e) || e?.message || "Request failed.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(20),
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.inputBg,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(14),
+          }}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={RFValue(20)}
+            color={theme.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text
+          style={{
+            fontSize: RFValue(20),
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          Privacy & security
+        </Text>
+      </View>
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: Math.max(insets.bottom, RFValue(20)) + RFValue(16),
+        }}
+      >
+        <Text
+          style={{
+            fontSize: RFValue(14),
+            color: theme.textSecondary,
+            lineHeight: RFValue(20),
+            marginBottom: RFValue(16),
+          }}
+        >
+          Review how we handle health data, then use a secure password reset if
+          you need to change credentials.
+        </Text>
+        <TouchableOpacity
+          onPress={openPrivacy}
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(14),
+            padding: RFValue(16),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            marginBottom: RFValue(12),
+          }}
+        >
+          <Text style={{ fontWeight: "800", color: theme.accent }}>
+            Open privacy policy
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: theme.textSecondary,
+              marginTop: RFValue(6),
+            }}
+          >
+            {NVOISYS_PRIVACY_POLICY_URL}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={sendReset}
+          disabled={busy}
+          style={{
+            backgroundColor: theme.accent,
+            borderRadius: RFValue(14),
+            paddingVertical: RFValue(14),
+            alignItems: "center",
+            opacity: busy ? 0.65 : 1,
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Email password reset link
+            </Text>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const DoctorAccountNotificationsScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [enabled, setEnabled] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(NOTIFICATIONS_ENABLED_STORAGE_KEY);
+        if (cancelled) return;
+        const on = raw !== "false";
+        notificationDisplayPrefs.enabled = on;
+        setEnabled(on);
+      } catch {
+        if (!cancelled) setEnabled(notificationDisplayPrefs.enabled);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onToggle = async (value) => {
+    setEnabled(value);
+    notificationDisplayPrefs.enabled = value;
+    try {
+      await AsyncStorage.setItem(
+        NOTIFICATIONS_ENABLED_STORAGE_KEY,
+        value ? "true" : "false",
+      );
+    } catch {
+      // ignore
+    }
+    configureNotificationsHandler();
+    if (value) {
+      try {
+        const asked = await Notifications.requestPermissionsAsync();
+        if (!asked.granted) {
+          Alert.alert(
+            "Notifications",
+            "Allow notifications in system settings for alerts and reminders.",
+          );
+        }
+      } catch {
+        // ignore
+      }
+    } else {
+      try {
+        await Notifications.cancelAllScheduledNotificationsAsync();
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(20),
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.inputBg,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(14),
+          }}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={RFValue(20)}
+            color={theme.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text
+          style={{
+            fontSize: RFValue(20),
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          Notifications
+        </Text>
+      </View>
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: Math.max(insets.bottom, RFValue(20)) + RFValue(16),
+        }}
+      >
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(16),
+            padding: RFValue(16),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            flexDirection: "row",
+            alignItems: "center",
+          }}
+        >
+          <View style={{ flex: 1, paddingRight: RFValue(12) }}>
+            <Text
+              style={{
+                fontSize: RFValue(15),
+                fontWeight: "700",
+                color: theme.textPrimary,
+              }}
+            >
+              In-app alerts and scheduled reminders
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                color: theme.textSecondary,
+                marginTop: RFValue(6),
+                lineHeight: RFValue(18),
+              }}
+            >
+              Turn off to silence banners and cancel pending local reminders on
+              this device.
+            </Text>
+          </View>
+          <Switch
+            value={enabled}
+            onValueChange={onToggle}
+            trackColor={{
+              false: theme.inputBorder,
+              true: theme.accentLight,
+            }}
+            thumbColor={enabled ? theme.accent : theme.textTertiary}
+          />
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const DoctorAccountScheduleScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const tabNav = useMainTabNav();
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(20),
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.inputBg,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(14),
+          }}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={RFValue(20)}
+            color={theme.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text
+          style={{
+            fontSize: RFValue(20),
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          Schedule
+        </Text>
+      </View>
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: Math.max(insets.bottom, RFValue(20)) + RFValue(16),
+        }}
+      >
+        <Text
+          style={{
+            fontSize: RFValue(14),
+            color: theme.textSecondary,
+            lineHeight: RFValue(21),
+            marginBottom: RFValue(18),
+          }}
+        >
+          Appointment requests, approvals, and time proposals are managed from
+          the Appointments tab. Open it to see your queue and calendar-linked
+          visits.
+        </Text>
+        <TouchableOpacity
+          onPress={() => {
+            tabNav?.navigateTab?.("Appts");
+            onBack();
+          }}
+          style={{
+            backgroundColor: theme.accent,
+            borderRadius: RFValue(14),
+            paddingVertical: RFValue(14),
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "800", fontSize: RFValue(15) }}>
+            Go to Appointments
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
 const DoctorProfileScreen = ({ onLogout }) => {
   const { theme, followSystem, setFollowSystem } = useTheme();
   const { currentUser, refreshAllData } = useAppData();
   const [showTheme, setShowTheme] = useState(false);
   const [showPackageSetup, setShowPackageSetup] = useState(false);
+  const [doctorAccountPane, setDoctorAccountPane] = useState(null);
+  const [profileReloadNonce, setProfileReloadNonce] = useState(0);
   const [doctorProfileId, setDoctorProfileId] = useState(null);
   const [doctorRow, setDoctorRow] = useState(null);
   const [concerns, setConcerns] = useState([]);
@@ -16563,7 +17007,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
     return () => {
       active = false;
     };
-  }, [currentUser?.id]);
+  }, [currentUser?.id, profileReloadNonce]);
 
   const toggleConcernChip = (chipId) => {
     const tag = normalizeConcernTag(chipId);
@@ -16648,6 +17092,40 @@ const DoctorProfileScreen = ({ onLogout }) => {
 
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
 
+  if (doctorAccountPane === "edit") {
+    return (
+      <DoctorAccountEditScreen
+        onBack={() => setDoctorAccountPane(null)}
+        currentUser={currentUser}
+        doctorProfileId={doctorProfileId}
+        doctorRow={doctorRow}
+        onSaved={() => setProfileReloadNonce((n) => n + 1)}
+      />
+    );
+  }
+  if (doctorAccountPane === "privacy") {
+    return (
+      <DoctorAccountPrivacyScreen
+        onBack={() => setDoctorAccountPane(null)}
+        currentUser={currentUser}
+      />
+    );
+  }
+  if (doctorAccountPane === "notifications") {
+    return (
+      <DoctorAccountNotificationsScreen
+        onBack={() => setDoctorAccountPane(null)}
+      />
+    );
+  }
+  if (doctorAccountPane === "schedule") {
+    return (
+      <DoctorAccountScheduleScreen
+        onBack={() => setDoctorAccountPane(null)}
+      />
+    );
+  }
+
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
@@ -16702,7 +17180,10 @@ const DoctorProfileScreen = ({ onLogout }) => {
               marginTop: RFValue(4),
             }}
           >
-            Specialist | License: -----
+            {String(doctorRow?.specialty || "Specialist").trim() || "Specialist"}
+            {" | "}
+            {String(doctorRow?.clinic_or_hospital || "Practice").trim() ||
+              "Practice"}
           </Text>
           <View
             style={{
@@ -17146,13 +17627,22 @@ const DoctorProfileScreen = ({ onLogout }) => {
               Account
             </Text>
             {[
-              { icon: "person-outline", label: "Edit Profile" },
-              { icon: "shield-checkmark-outline", label: "Privacy & Security" },
-              { icon: "notifications-outline", label: "Notifications" },
-              { icon: "calendar-outline", label: "Schedule" },
+              { icon: "person-outline", label: "Edit Profile", pane: "edit" },
+              {
+                icon: "shield-checkmark-outline",
+                label: "Privacy & Security",
+                pane: "privacy",
+              },
+              {
+                icon: "notifications-outline",
+                label: "Notifications",
+                pane: "notifications",
+              },
+              { icon: "calendar-outline", label: "Schedule", pane: "schedule" },
             ].map((item, idx) => (
               <TouchableOpacity
-                key={idx}
+                key={item.pane}
+                onPress={() => setDoctorAccountPane(item.pane)}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",

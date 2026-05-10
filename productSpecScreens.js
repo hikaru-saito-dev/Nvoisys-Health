@@ -636,6 +636,7 @@ export function DoctorPackageSetupScreen({
 }) {
   const insets = useSafeAreaInsets();
   const keyboardInset = useKeyboardBottomInset();
+  const keyboardPad = useKeyboardBottomPad();
   const packageFeeScrollRef = useRef(null);
   const packageFeeScrollYRef = useRef(0);
   const focusedFeeSlotIndexRef = useRef(-1);
@@ -839,21 +840,23 @@ export function DoctorPackageSetupScreen({
       >
         <ScrollView
           ref={packageFeeScrollRef}
+          style={{ flex: 1 }}
           onScroll={(e) => {
             packageFeeScrollYRef.current = e.nativeEvent.contentOffset.y;
           }}
           scrollEventThrottle={16}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          nestedScrollEnabled
           contentContainerStyle={{
             padding: S.pad,
             paddingBottom:
               insets.bottom +
               32 +
               androidKeyboardPad(keyboardInset) +
-              (Platform.OS === "android" && keyboardInset.height > 0 ? 96 : 0),
+              keyboardExtraScrollPad(keyboardPad),
           }}
-          nestedScrollEnabled
         >
         <Text
           style={{ color: theme.textPrimary, fontSize: 22, fontWeight: "900" }}
@@ -5211,7 +5214,7 @@ export function PatientQuickRequestsTrackerPanel({
   );
 }
 
-export function CoinWalletDoctorPanel({ theme }) {
+export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
   const user = getAuthUser();
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
@@ -5425,45 +5428,49 @@ export function CoinWalletDoctorPanel({ theme }) {
           </View>
         );
       })}
-      <Text
-        style={{
-          color: theme.textSecondary,
-          fontSize: S.small,
-          marginBottom: 8,
-          marginTop: 6,
-        }}
-      >
-        Settled package earnings appear here. Withdraw requests are checked
-        against your available coins before they are sent.
-      </Text>
-      <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <TextInput
-          placeholder="Coins to withdraw"
-          placeholderTextColor={theme.textTertiary}
-          keyboardType="numeric"
-          value={withdraw}
-          onChangeText={setWithdraw}
-          style={{
-            flex: 1,
-            backgroundColor: theme.card,
-            borderRadius: 12,
-            padding: 10,
-            color: theme.textPrimary,
-            marginRight: 8,
-          }}
-        />
-        <TouchableOpacity
-          onPress={runWithdraw}
-          disabled={busy}
-          style={{
-            backgroundColor: theme.accent,
-            padding: 12,
-            borderRadius: 12,
-          }}
-        >
-          <Text style={{ color: "#fff", fontWeight: "800" }}>Withdraw</Text>
-        </TouchableOpacity>
-      </View>
+      {!hideWithdrawSection ? (
+        <>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginBottom: 8,
+              marginTop: 6,
+            }}
+          >
+            Settled package earnings appear here. Withdraw requests are checked
+            against your available coins before they are sent.
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <TextInput
+              placeholder="Coins to withdraw"
+              placeholderTextColor={theme.textTertiary}
+              keyboardType="numeric"
+              value={withdraw}
+              onChangeText={setWithdraw}
+              style={{
+                flex: 1,
+                backgroundColor: theme.card,
+                borderRadius: 12,
+                padding: 10,
+                color: theme.textPrimary,
+                marginRight: 8,
+              }}
+            />
+            <TouchableOpacity
+              onPress={runWithdraw}
+              disabled={busy}
+              style={{
+                backgroundColor: theme.accent,
+                padding: 12,
+                borderRadius: 12,
+              }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "800" }}>Withdraw</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : null}
       <Text
         style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 10 }}
       >
