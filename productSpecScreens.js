@@ -3607,6 +3607,12 @@ export function PackageMeetingDoctorPanel({ theme }) {
   const [modalMeetingId, setModalMeetingId] = useState(null);
   const [altSlotTimes, setAltSlotTimes] = useState([null, null, null, null]);
   const [altPicker, setAltPicker] = useState(null);
+  const [openTracks, setOpenTracks] = useState({
+    pending: true,
+    discussing: false,
+    confirmedDemo: false,
+    closed: false,
+  });
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -3878,8 +3884,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
               marginBottom: 8,
             }}
           >
-            Local test record (same device as patient) - sync requires saving to
-            PocketBase `appointments`.
+            Local-only (not synced to server).
           </Text>
         ) : null}
         <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
@@ -4039,7 +4044,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
                   marginBottom: 8,
                 }}
               >
-                Waiting for patient to pick a slot.
+                Waiting for patient.
               </Text>
               <TouchableOpacity
                 disabled={busy}
@@ -4066,19 +4071,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
             <Text
               style={{ color: theme.success, fontSize: 11, fontWeight: "700" }}
             >
-              Confirmed - reminder 30 min before.
-            </Text>
-            <Text
-              style={{
-                color: theme.textTertiary,
-                fontSize: 11,
-                marginTop: 6,
-                lineHeight: 16,
-              }}
-            >
-              After your demo call, use Home → Upcoming Appointments on this
-              patient’s card → Ask package to send a catalogue option (payment
-              is tracked there).
+              Confirmed · reminder 30 min before.
             </Text>
           </View>
         ) : null}
@@ -4086,35 +4079,95 @@ export function PackageMeetingDoctorPanel({ theme }) {
     );
   };
 
-  const sectionHeader = (title, blurb, noTopMargin) => (
-    <View style={{ marginTop: noTopMargin ? 0 : 16, marginBottom: 8 }}>
-      <Text
-        style={{ fontSize: 15, fontWeight: "800", color: theme.textPrimary }}
+  const toggleTrackSection = (key) => {
+    setOpenTracks((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const renderTrackSection = (sectionKey, title, list, readOnly) => {
+    const expanded = !!openTracks[sectionKey];
+    const count = list.length;
+    const isFirst = sectionKey === "pending";
+    return (
+      <View
+        key={sectionKey}
+        style={{
+          borderTopWidth: isFirst ? 0 : StyleSheet.hairlineWidth,
+          borderTopColor: theme.cardBorder,
+          paddingTop: isFirst ? 0 : 10,
+          marginTop: isFirst ? 0 : 10,
+        }}
       >
-        {title}
-      </Text>
-      {blurb ? (
-        <Text
+        <TouchableOpacity
+          onPress={() => toggleTrackSection(sectionKey)}
+          activeOpacity={0.75}
           style={{
-            color: theme.textTertiary,
-            fontSize: 11,
-            marginTop: 4,
-            lineHeight: 16,
+            flexDirection: "row",
+            alignItems: "center",
+            paddingVertical: 4,
           }}
         >
-          {blurb}
-        </Text>
-      ) : null}
-    </View>
-  );
-
-  const emptyLine = (text) => (
-    <Text
-      style={{ color: theme.textTertiary, fontSize: S.small, marginBottom: 6 }}
-    >
-      {text}
-    </Text>
-  );
+          <Ionicons
+            name={expanded ? "chevron-down" : "chevron-forward"}
+            size={18}
+            color={theme.textSecondary}
+            style={{ marginRight: 8 }}
+          />
+          <Text
+            style={{
+              flex: 1,
+              fontSize: 15,
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            {title}
+          </Text>
+          <View
+            style={{
+              minWidth: 28,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 10,
+              backgroundColor: theme.bg,
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 12,
+                fontWeight: "800",
+                color: theme.textSecondary,
+              }}
+            >
+              {count}
+            </Text>
+          </View>
+        </TouchableOpacity>
+        {expanded ? (
+          count === 0 ? (
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: S.small,
+                paddingVertical: 8,
+                paddingLeft: 26,
+              }}
+            >
+              None
+            </Text>
+          ) : (
+            <ScrollView
+              nestedScrollEnabled
+              style={{ maxHeight: 320, marginTop: 8 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {list.map((x) => renderMeetingCard(x, { readOnly }))}
+            </ScrollView>
+          )
+        ) : null}
+      </View>
+    );
+  };
 
   return (
     <View
@@ -4209,39 +4262,15 @@ export function PackageMeetingDoctorPanel({ theme }) {
           </Text>
         ) : (
           <>
-            {sectionHeader(
-              "Pending",
-              "Patient booked a time. Accept it or send at least three alternative slots.",
-              true,
-            )}
-            {pending.length === 0
-              ? emptyLine("None right now.")
-              : pending.map((x) => renderMeetingCard(x, { readOnly: false }))}
-            {sectionHeader(
-              "Discussing",
-              "Reschedule or alternate-slot negotiation. Package billing is only from Home → Upcoming Appointments after the demo time is confirmed.",
-            )}
-            {discussing.length === 0
-              ? emptyLine("None - nothing mid-negotiation.")
-              : discussing.map((x) =>
-                  renderMeetingCard(x, { readOnly: false }),
-                )}
-            {sectionHeader(
+            {renderTrackSection("pending", "Pending", pending, false)}
+            {renderTrackSection("discussing", "Discussing", discussing, false)}
+            {renderTrackSection(
+              "confirmedDemo",
               "Confirmed demo",
-              "Demo time is confirmed (reminder 30 minutes before). After your call, use Upcoming Appointments → Ask package so the patient can pay from Package Doctor.",
+              confirmedDemo,
+              false,
             )}
-            {confirmedDemo.length === 0
-              ? emptyLine("None yet.")
-              : confirmedDemo.map((x) =>
-                  renderMeetingCard(x, { readOnly: false }),
-                )}
-            {sectionHeader(
-              "Declined & cancelled",
-              "Terminal rows from PocketBase `appointments.status` (no further actions).",
-            )}
-            {closed.length === 0
-              ? emptyLine("None yet.")
-              : closed.map((x) => renderMeetingCard(x, { readOnly: true }))}
+            {renderTrackSection("closed", "Declined & cancelled", closed, true)}
           </>
         )}
       </ScrollView>

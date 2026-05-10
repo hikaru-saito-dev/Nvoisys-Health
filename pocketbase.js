@@ -556,6 +556,7 @@ async function createDoctorProfileRecord(userId, merged) {
   const specialty = String(merged.specialty || "").trim();
   const clinic_or_hospital = String(merged.clinic_or_hospital || "").trim();
   const language = String(merged.language || "").trim();
+  const phone = String(merged.phone || "").trim();
 
   const payload = {
     user: userId,
@@ -564,6 +565,7 @@ async function createDoctorProfileRecord(userId, merged) {
     clinic_or_hospital,
   };
   if (language) payload.language = language;
+  if (phone) payload.phone = phone;
 
   return await pb.collection("doctor_profile").create(payload);
 }

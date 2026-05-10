@@ -92,6 +92,7 @@ import {
   mergeLocalFeesOntoSlots,
   minutesUsedWithDoctorThisRollingWeek,
   needsCareOnboarding,
+  PACKAGE_MEETING_STATUS,
   normalizeDoctorPackageSlots,
   packageSlotDisplayName,
   packageTemplatesRawFromRecord,
@@ -9058,6 +9059,11 @@ const PatientEditProfileScreen = ({
       setError("Please enter your full name.");
       return;
     }
+    const phoneDigits = String(phone || "").replace(/\D/g, "");
+    if (phoneDigits.length < 10) {
+      setError("Please enter a valid phone number (at least 10 digits).");
+      return;
+    }
     const healthProfileError =
       validatePatientHealthProfileComplete(healthValues);
     if (healthProfileError) {
@@ -9069,7 +9075,7 @@ const PatientEditProfileScreen = ({
       setError("");
       await pb.collection("patient_profile").update(patientProfile.id, {
         full_name: fullName.trim(),
-        phone: phone.trim(),
+        phone: phoneDigits,
         primary_condition: condition.trim(),
         gender: gender.trim(),
         language: comfortLanguage.trim(),
@@ -13276,6 +13282,7 @@ const AuthScreen = ({ onLogin }) => {
   const [authMode, setAuthMode] = useState("signup"); // signup | login
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -13419,6 +13426,16 @@ const AuthScreen = ({ onLogin }) => {
           throw new Error("Passwords do not match.");
         }
 
+        let phoneDigits = "";
+        if (role === "patient" || role === "doctor") {
+          phoneDigits = String(profilePhone || "").replace(/\D/g, "");
+          if (phoneDigits.length < 10) {
+            throw new Error(
+              "Please enter a valid phone number (at least 10 digits).",
+            );
+          }
+        }
+
         if (role === "patient") {
           if (!patientCondition.trim()) {
             throw new Error("Please enter your condition or disease name");
@@ -13452,6 +13469,7 @@ const AuthScreen = ({ onLogin }) => {
           profileFields:
             role === "patient"
               ? {
+                  phone: phoneDigits,
                   primary_condition: patientCondition.trim(),
                   gender: patientGender,
                   avatarAsset: patientRegAvatar,
@@ -13462,6 +13480,7 @@ const AuthScreen = ({ onLogin }) => {
                 }
               : role === "doctor"
                 ? {
+                    phone: phoneDigits,
                     specialty: doctorSpecialtyField.trim(),
                     clinic_or_hospital: doctorClinic.trim(),
                     ...(registrationLanguage.trim()
@@ -13807,55 +13826,6 @@ const AuthScreen = ({ onLogin }) => {
               </Text>
             </View>
 
-            {role === "patient" ? (
-              <View
-                style={{
-                  marginBottom: RFValue(16),
-                  padding: RFValue(14),
-                  backgroundColor: theme.accentLight,
-                  borderRadius: RFValue(14),
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    marginBottom: RFValue(6),
-                  }}
-                >
-                  <Ionicons
-                    name="document-text-outline"
-                    size={RFValue(22)}
-                    color={theme.accent}
-                    style={{ marginRight: RFValue(8) }}
-                  />
-                  <Text
-                    style={{
-                      fontSize: RFValue(16),
-                      fontWeight: "800",
-                      color: theme.textPrimary,
-                      flex: 1,
-                    }}
-                  >
-                    Medical records
-                  </Text>
-                </View>
-                <Text
-                  style={{
-                    fontSize: RFValue(13),
-                    color: theme.textSecondary,
-                    lineHeight: 20,
-                  }}
-                >
-                  After you sign in, open Medical records from Home to upload
-                  prescriptions, lab reports, and images. They stay on your
-                  profile for demo calls, package sessions, and Quick consults.
-                </Text>
-              </View>
-            ) : null}
-
             {authMode === "signup" && (
               <TextInput
                 placeholder="Full name"
@@ -13903,6 +13873,31 @@ const AuthScreen = ({ onLogin }) => {
               }}
               placeholderTextColor={theme.textTertiary}
             />
+
+            {authMode === "signup" ? (
+              <TextInput
+                placeholder="Phone number"
+                value={profilePhone}
+                onChangeText={(value) => {
+                  setProfilePhone(value);
+                  if (authError) setAuthError("");
+                  if (authSuccess) setAuthSuccess("");
+                }}
+                keyboardType="phone-pad"
+                style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(14),
+                  paddingHorizontal: RFValue(16),
+                  paddingVertical: RFValue(16),
+                  marginBottom: RFValue(14),
+                  borderWidth: 1,
+                  borderColor: theme.inputBorder,
+                  fontSize: RFValue(15),
+                  color: theme.textPrimary,
+                }}
+                placeholderTextColor={theme.textTertiary}
+              />
+            ) : null}
 
             <View
               style={{
@@ -14288,45 +14283,6 @@ const AuthScreen = ({ onLogin }) => {
               </Text>
             )}
 
-            {role === "patient" && (
-              <View
-                style={{
-                  backgroundColor: theme.accentLight,
-                  borderRadius: RFValue(14),
-                  padding: RFValue(14),
-                  marginBottom: RFValue(12),
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                }}
-              >
-                <Text
-                  style={{
-                    fontWeight: "800",
-                    color: theme.accent,
-                    marginBottom: RFValue(6),
-                    fontSize: RFValue(14),
-                  }}
-                >
-                  Medical records
-                </Text>
-                <Text
-                  style={{
-                    fontSize: RFValue(12),
-                    color: theme.textSecondary,
-                    lineHeight: 18,
-                  }}
-                >
-                  After you{" "}
-                  {authMode === "signup"
-                    ? "create your account and log in"
-                    : "log in"}
-                  , add prescriptions, labs, and images from Profile or Home →
-                  Medical records. They are stored on your profile and easy to
-                  share during video calls or quick consults.
-                </Text>
-              </View>
-            )}
-
             <TouchableOpacity
               onPress={handlePocketBaseAuth}
               disabled={authLoading}
@@ -14417,6 +14373,7 @@ const AuthScreen = ({ onLogin }) => {
                 setPatientRegAvatar(null);
                 setDoctorSpecialtyField("");
                 setDoctorClinic("");
+                setProfilePhone("");
               }}
               style={{ alignItems: "center", marginTop: RFValue(18) }}
             >
@@ -15614,9 +15571,6 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const pendingWounds = (wounds || []).filter(
     (w) => w.status === "Review Pending",
   ).length;
-  const criticalPatients = (patients || []).filter(
-    (p) => p.riskLevel === "High",
-  ).length;
   /** Tier lives on `doctor_profile` (same hook slot as `patientProfile` for patients). */
   const quickServiceDoctor = doctorTierEligibleForQuickService(
     doctorProfile || currentUser,
@@ -15853,130 +15807,6 @@ const DoctorDashboard = ({ wounds, patients }) => {
             />
           ) : null}
 
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(16),
-              marginBottom: RFValue(16),
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.07,
-              shadowOffset: { width: 0, height: 2 },
-              shadowRadius: 16,
-              elevation: 2,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(14),
-              }}
-            >
-              <View
-                style={{
-                  width: RFValue(36),
-                  height: RFValue(36),
-                  borderRadius: RFValue(10),
-                  backgroundColor: theme.dangerLight,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(10),
-                }}
-              >
-                <Ionicons
-                  name="warning-outline"
-                  size={RFValue(18)}
-                  color={theme.danger}
-                />
-              </View>
-              <Text
-                style={{
-                  fontSize: RFValue(16),
-                  fontWeight: "800",
-                  color: theme.textPrimary,
-                  flex: 1,
-                }}
-              >
-                Critical Patients
-              </Text>
-              <View
-                style={{
-                  backgroundColor: theme.danger,
-                  borderRadius: RFValue(10),
-                  paddingHorizontal: RFValue(8),
-                  paddingVertical: RFValue(3),
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#FFF",
-                    fontSize: RFValue(10),
-                    fontWeight: "800",
-                  }}
-                >
-                  {criticalPatients}
-                </Text>
-              </View>
-            </View>
-            {criticalPatients > 0 ? (
-              patients
-                .filter((p) => p.riskLevel === "High")
-                .map((p, idx) => (
-                  <View
-                    key={idx}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingVertical: RFValue(8),
-                      borderTopWidth: idx > 0 ? 1 : 0,
-                      borderTopColor: theme.divider,
-                    }}
-                  >
-                    <View
-                      style={{
-                        width: RFValue(10),
-                        height: RFValue(10),
-                        borderRadius: 5,
-                        backgroundColor: theme.danger,
-                        marginRight: 10,
-                      }}
-                    />
-                    <Text
-                      style={{
-                        color: theme.textPrimary,
-                        fontWeight: "600",
-                        flex: 1,
-                      }}
-                    >
-                      {p.name}
-                    </Text>
-                    <Text
-                      style={{
-                        color: theme.textSecondary,
-                        fontSize: RFValue(11),
-                      }}
-                    >
-                      Vitals Alert
-                    </Text>
-                  </View>
-                ))
-            ) : (
-              <Text
-                style={{
-                  fontSize: RFValue(13),
-                  color: theme.textSecondary,
-                  textAlign: "center",
-                  paddingVertical: RFValue(10),
-                }}
-              >
-                No patients with critical vitals.
-              </Text>
-            )}
-          </View>
-
           <DoctorUpcomingAppointmentsSection />
 
           <View
@@ -16035,66 +15865,6 @@ const DoctorDashboard = ({ wounds, patients }) => {
               }}
             >
               No recent activity to show.
-            </Text>
-          </View>
-
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(18),
-              marginBottom: RFValue(16),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-              borderWidth: 1,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(12),
-              }}
-            >
-              <View
-                style={{
-                  width: RFValue(36),
-                  height: RFValue(36),
-                  borderRadius: RFValue(10),
-                  backgroundColor: theme.bg,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(10),
-                }}
-              >
-                <Ionicons
-                  name="sparkles"
-                  size={RFValue(18)}
-                  color={theme.accent}
-                />
-              </View>
-              <Text
-                style={{
-                  fontSize: RFValue(16),
-                  fontWeight: "800",
-                  color: theme.textPrimary,
-                }}
-              >
-                Health Insights
-              </Text>
-            </View>
-            <Text
-              style={{
-                fontSize: RFValue(13),
-                color: theme.textSecondary,
-                textAlign: "center",
-              }}
-            >
-              No new insights available.
             </Text>
           </View>
         </View>
@@ -16545,6 +16315,7 @@ const DoctorAccountEditScreen = ({
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const [displayName, setDisplayName] = useState("");
+  const [phone, setPhone] = useState("");
   const [specialty, setSpecialty] = useState("");
   const [clinic, setClinic] = useState("");
   const [saving, setSaving] = useState(false);
@@ -16552,6 +16323,14 @@ const DoctorAccountEditScreen = ({
 
   useEffect(() => {
     setDisplayName(String(currentUser?.name || "").trim());
+    setPhone(
+      String(
+        doctorRow?.phone ||
+          doctorRow?.phone_number ||
+          doctorRow?.contact_phone ||
+          "",
+      ).trim(),
+    );
     setSpecialty(String(doctorRow?.specialty || "").trim());
     setClinic(String(doctorRow?.clinic_or_hospital || "").trim());
     setError("");
@@ -16569,10 +16348,20 @@ const DoctorAccountEditScreen = ({
     setSaving(true);
     setError("");
     try {
-      await pb.collection("doctor_profile").update(doctorProfileId, {
+      const phoneDigits = String(phone || "").replace(/\D/g, "");
+      if (phoneDigits.length > 0 && phoneDigits.length < 10) {
+        setError("Enter a valid phone number (at least 10 digits), or leave blank.");
+        setSaving(false);
+        return;
+      }
+      const doctorUpdate = {
         specialty: specialty.trim(),
         clinic_or_hospital: clinic.trim(),
-      });
+      };
+      if (phoneDigits.length >= 10) {
+        doctorUpdate.phone = phoneDigits;
+      }
+      await pb.collection("doctor_profile").update(doctorProfileId, doctorUpdate);
       if (currentUser?.id) {
         await pb.collection("UsersAuth").update(currentUser.id, {
           name: displayName.trim(),
@@ -16668,6 +16457,37 @@ const DoctorAccountEditScreen = ({
               if (error) setError("");
             }}
             placeholder="Name shown to patients"
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(12),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(15),
+              color: theme.textPrimary,
+              marginBottom: RFValue(14),
+              backgroundColor: theme.card,
+            }}
+          />
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Phone number
+          </Text>
+          <TextInput
+            value={phone}
+            onChangeText={(t) => {
+              setPhone(t);
+              if (error) setError("");
+            }}
+            placeholder="e.g. +91 98765 43210"
+            keyboardType="phone-pad"
             placeholderTextColor={theme.textTertiary}
             style={{
               borderWidth: 1,
@@ -30272,6 +30092,7 @@ export default function App() {
     };
 
     const paidPackageNotifyAt = Object.create(null);
+    const packageMeetingDoctorNotifyAt = Object.create(null);
 
     const subscribe = async () => {
       const doctorOfferOwnerIds = new Set([
@@ -30309,8 +30130,67 @@ export default function App() {
         console.log("App subscription error:", error);
       }
       try {
-        await pb.collection(PB_APPOINTMENTS_COLLECTION).subscribe("*", () => {
+        await pb.collection(PB_APPOINTMENTS_COLLECTION).subscribe("*", (evt) => {
           scheduleDataRefresh();
+          if (userRole !== "doctor" || evt?.action !== "create") return;
+          const record = evt?.record;
+          if (!record?.id) return;
+          const reason = String(record.reason || "");
+          if (!reason.includes("NVHS_MEETING_WORKFLOW")) return;
+          let workflow;
+          try {
+            workflow = decodeMeetingWorkflowFromAppointmentRow(record);
+          } catch {
+            return;
+          }
+          if (
+            String(workflow?.status || "").trim() !==
+            PACKAGE_MEETING_STATUS.AWAITING_DOCTOR
+          ) {
+            return;
+          }
+          void (async () => {
+            try {
+              const docKey = String(record.doctor || "").trim();
+              if (!docKey || !currentUser?.id) return;
+              let profileId = "";
+              try {
+                profileId = String(
+                  (await resolveDoctorProfileIdForUser(currentUser.id)) || "",
+                ).trim();
+              } catch {
+                profileId = "";
+              }
+              const myKeys = new Set(
+                [String(currentUser.id).trim(), profileId].filter(Boolean),
+              );
+              if (!myKeys.has(docKey)) return;
+              const now = Date.now();
+              if (
+                packageMeetingDoctorNotifyAt[record.id] &&
+                now - packageMeetingDoctorNotifyAt[record.id] < 4000
+              ) {
+                return;
+              }
+              packageMeetingDoctorNotifyAt[record.id] = now;
+              configureNotificationsHandler();
+              const existing = await Notifications.getPermissionsAsync();
+              if (!existing.granted) {
+                const asked = await Notifications.requestPermissionsAsync();
+                if (!asked.granted) return;
+              }
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: "New package meeting request",
+                  body: "A patient proposed a demo time. Open Booking Tracks on Home to accept or suggest slots.",
+                  sound: "default",
+                },
+                trigger: null,
+              });
+            } catch (error) {
+              console.log("package meeting doctor notify:", error?.message);
+            }
+          })();
         });
       } catch (error) {
         console.log("appointments subscribe skipped:", error?.message);
