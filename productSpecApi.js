@@ -985,7 +985,7 @@ function appointmentsColl() {
   return getPbAppointmentsCollection();
 }
 
-async function resolveDoctorProfileIdForUser(doctorUserId) {
+export async function resolveDoctorProfileIdForUser(doctorUserId) {
   if (!doctorUserId) return null;
   try {
     const p = await pb

@@ -107,6 +107,7 @@ import {
   readLocalPackageSetupSkip,
   recordQuickHelpOffer,
   recordPatientDoctorInteraction,
+  resolveDoctorProfileIdForUser,
   settlePackageCoinsForCompletedAppointment,
   writeLocalCareMode,
 } from "./productSpecApi";
@@ -19893,6 +19894,8 @@ const PrescriptionScreen = ({
   const cardOffsetsRef = React.useRef({});
   const [rxSideWarnings, setRxSideWarnings] = useState({});
   const [rxSideLoading, setRxSideLoading] = useState(false);
+  const [rxScrollViewportH, setRxScrollViewportH] = useState(0);
+  const [rxScrollContentH, setRxScrollContentH] = useState(0);
 
   const cards = React.useMemo(() => {
     const list = [...(prescriptionRecords || [])].sort(
@@ -20039,10 +20042,19 @@ const PrescriptionScreen = ({
     }
   }, [highlightPrescriptionId, cards]);
 
+  React.useEffect(() => {
+    setRxScrollContentH(0);
+  }, [cards]);
+
+  const rxScrollContentShort =
+    rxScrollViewportH > 0 &&
+    rxScrollContentH > 0 &&
+    rxScrollContentH < rxScrollViewportH - 2;
+
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["bottom", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar
         barStyle={theme.statusBarStyle}
@@ -20094,15 +20106,26 @@ const PrescriptionScreen = ({
         </View>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          padding: RFValue(16),
-          paddingTop: RFValue(8),
-          paddingBottom: tabScrollBottomPadding(),
+      <View
+        style={{ flex: 1, minHeight: 0 }}
+        onLayout={(e) => {
+          const h = e?.nativeEvent?.layout?.height;
+          if (typeof h === "number" && h > 0) setRxScrollViewportH(h);
         }}
       >
+        <ScrollView
+          ref={scrollRef}
+          style={rxScrollContentShort ? undefined : { flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={(_, h) => {
+            if (typeof h === "number" && h > 0) setRxScrollContentH(h);
+          }}
+          contentContainerStyle={{
+            padding: RFValue(16),
+            paddingTop: RFValue(8),
+            paddingBottom: Math.max(RFValue(12), tabScrollBottomPadding()),
+          }}
+        >
         {cards.length === 0 ? (
           <View style={{ alignItems: "center", paddingVertical: RFValue(40) }}>
             <Ionicons
@@ -20490,7 +20513,8 @@ const PrescriptionScreen = ({
             </View>
           ))
         )}
-      </ScrollView>
+        </ScrollView>
+      </View>
     </SafeAreaView>
   );
 };
@@ -22884,10 +22908,17 @@ const MedicationTrackerScreen = ({ onBack }) => {
 
 const FamilyHealthScreen = ({ onBack }) => {
   const { theme } = useTheme();
+  const [fhScrollViewportH, setFhScrollViewportH] = useState(0);
+  const [fhScrollContentH, setFhScrollContentH] = useState(0);
+  const fhScrollContentShort =
+    fhScrollViewportH > 0 &&
+    fhScrollContentH > 0 &&
+    fhScrollContentH < fhScrollViewportH - 2;
+
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["bottom", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar
         barStyle={theme.statusBarStyle}
@@ -22933,15 +22964,26 @@ const FamilyHealthScreen = ({ onBack }) => {
         </View>
       </View>
 
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          alignItems: "center",
-          padding: RFValue(24),
-          paddingTop: RFValue(12),
-          paddingBottom: tabScrollBottomPadding(),
+      <View
+        style={{ flex: 1, minHeight: 0 }}
+        onLayout={(e) => {
+          const h = e?.nativeEvent?.layout?.height;
+          if (typeof h === "number" && h > 0) setFhScrollViewportH(h);
         }}
       >
+        <ScrollView
+          style={fhScrollContentShort ? undefined : { flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={(_, h) => {
+            if (typeof h === "number" && h > 0) setFhScrollContentH(h);
+          }}
+          contentContainerStyle={{
+            alignItems: "center",
+            padding: RFValue(24),
+            paddingTop: RFValue(12),
+            paddingBottom: Math.max(RFValue(12), tabScrollBottomPadding()),
+          }}
+        >
         <GlowView glowColor={theme.accent} size={RFValue(120)}>
           <View
             style={{
@@ -23101,7 +23143,8 @@ const FamilyHealthScreen = ({ onBack }) => {
             Notify Me When Ready
           </Text>
         </TouchableOpacity>
-      </ScrollView>
+        </ScrollView>
+      </View>
     </SafeAreaView>
   );
 };
@@ -29746,6 +29789,28 @@ export default function App() {
     };
   }, [currentUser?.id, userRole]);
 
+  // Doctors: same deferred permission so package-sale realtime alerts can show.
+  useEffect(() => {
+    if (!currentUser?.id || userRole !== "doctor") return;
+    if (
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const delayMs = Platform.OS === "android" ? 2000 : 0;
+    const t = setTimeout(() => {
+      InteractionManager.runAfterInteractions(() => {
+        if (cancelled) return;
+        ensureReminderPermissions().catch(() => {});
+      });
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [currentUser?.id, userRole, patientProfile?.status]);
+
   // Step 9: give every patient a pinned "Health Assistant" conversation the
   // first time they sign in. The call is best-effort - if PocketBase doesn't
   // have the `kind` field or blocks the create, login still proceeds.
@@ -29786,7 +29851,23 @@ export default function App() {
       }, 800);
     };
 
+    const paidPackageNotifyAt = Object.create(null);
+
     const subscribe = async () => {
+      const doctorOfferOwnerIds = new Set([
+        String(currentUser.id || "").trim(),
+      ].filter(Boolean));
+      if (userRole === "doctor") {
+        try {
+          const profileId = await resolveDoctorProfileIdForUser(
+            currentUser.id,
+          );
+          if (profileId) doctorOfferOwnerIds.add(String(profileId).trim());
+        } catch {
+          // ignore
+        }
+      }
+
       try {
         await pb.collection("wounds").subscribe("*", () => {
           scheduleDataRefresh();
@@ -29814,6 +29895,49 @@ export default function App() {
       } catch (error) {
         console.log("appointments subscribe skipped:", error?.message);
       }
+      try {
+        await pb.collection("package_offers").subscribe("*", async (evt) => {
+          scheduleDataRefresh();
+          if (userRole !== "doctor" || evt?.action === "delete") return;
+          const record = evt?.record;
+          if (!record?.id) return;
+          const st = String(record.status || "")
+            .trim()
+            .toLowerCase();
+          if (!["paid", "active", "started"].includes(st)) return;
+          const docId = String(record.doctor || "").trim();
+          if (!docId || !doctorOfferOwnerIds.has(docId)) return;
+          const now = Date.now();
+          if (
+            paidPackageNotifyAt[record.id] &&
+            now - paidPackageNotifyAt[record.id] < 5000
+          ) {
+            return;
+          }
+          paidPackageNotifyAt[record.id] = now;
+          try {
+            configureNotificationsHandler();
+            const existing = await Notifications.getPermissionsAsync();
+            if (!existing.granted) {
+              const asked = await Notifications.requestPermissionsAsync();
+              if (!asked.granted) return;
+            }
+            const title = "Package payment received";
+            const pkgTitle = String(record.title || "Care package").trim();
+            const body = pkgTitle
+              ? `${pkgTitle} was paid. The deal is active — check Package offers.`
+              : "A package was paid. The deal is active — check Package offers.";
+            await Notifications.scheduleNotificationAsync({
+              content: { title, body, sound: "default" },
+              trigger: null,
+            });
+          } catch (error) {
+            console.log("package_offers doctor notify:", error?.message);
+          }
+        });
+      } catch (error) {
+        console.log("package_offers subscribe skipped:", error?.message);
+      }
     };
 
     subscribe();
@@ -29830,6 +29954,11 @@ export default function App() {
       pb.collection("conversations").unsubscribe("*");
       try {
         pb.collection(PB_APPOINTMENTS_COLLECTION).unsubscribe("*");
+      } catch {
+        // Collection may not exist in every workspace.
+      }
+      try {
+        pb.collection("package_offers").unsubscribe("*");
       } catch {
         // Collection may not exist in every workspace.
       }
