@@ -44,6 +44,15 @@ export function consumerPlanDisplayName(plan) {
   return "Basic";
 }
 
+/** Doctor package slot index (1–3) → tier label shown to doctors and patients. */
+export function packageSlotDisplayName(slot) {
+  const n = Number(slot);
+  if (n === 2) return "Gold";
+  if (n === 3) return "Premium";
+  if (Number.isFinite(n) && n > 3) return `Tier ${n}`;
+  return "Basic";
+}
+
 /** Entitlements for product-spec Basic / Gold / Premium (aligned to package slots 1–3). */
 export function entitlementsForConsumerPlan(plan) {
   const p = String(plan || CONSUMER_PLAN.BASIC).toLowerCase();
@@ -226,7 +235,7 @@ export function packageSlotUsesDefaultAmount(slot) {
 export const FIXED_PACKAGE_DEFINITIONS = [
   {
     slot: 1,
-    name: "Package 1 - Essential Care",
+    name: "Basic — Essential Care",
     total_period: "90 days",
     treatment_type: "Structured follow-up & remote support",
     description:
@@ -240,13 +249,13 @@ export const FIXED_PACKAGE_DEFINITIONS = [
   },
   {
     slot: 2,
-    name: "Package 2 - Active Care",
+    name: "Gold — Active Care",
     total_period: "120 days",
     treatment_type: "Ongoing condition management",
     description:
       "Step-up support for patients who need closer follow-up between visits, with richer monitoring and AI-assisted reviews.",
     features: [
-      "Everything in Package 1",
+      "Everything in Basic",
       "More frequent touchpoints with your care team",
       "Enhanced 24/7 monitoring workflows",
       "Expanded AI med checks & adherence insights",
@@ -255,13 +264,13 @@ export const FIXED_PACKAGE_DEFINITIONS = [
   },
   {
     slot: 3,
-    name: "Package 3 - Comprehensive Care",
+    name: "Premium — Comprehensive Care",
     total_period: "180 days",
     treatment_type: "High-touch / complex care paths",
     description:
       "Full-feature packaged programme for complex or high-risk journeys. Feature set is defined by the app and updated centrally.",
     features: [
-      "Everything in Package 2",
+      "Everything in Gold",
       "Maximum tier 24/7 monitoring pathways",
       "Full AI-assisted medication & symptom reviews",
       "Care coordination summaries for your records",
@@ -415,7 +424,7 @@ export function normalizeDoctorPackageSlots(raw) {
   return DOCTOR_PACKAGE_SLOT_IDS.map((slotNum) => {
     const fixed = FIXED_PACKAGE_DEFINITIONS[slotNum - 1] || {
       slot: slotNum,
-      name: `Package ${slotNum}`,
+      name: `${packageSlotDisplayName(slotNum)} — Care package`,
       description: "",
       total_period: "",
       treatment_type: "",
@@ -1345,7 +1354,7 @@ export async function doctorSendAskPackageForDemoAppointment({
     slot,
     packageSlotIndex: idx,
   });
-  const label = String(slot?.name || `Package ${idx + 1}`).trim();
+  const label = String(slot?.name || packageSlotDisplayName(idx + 1)).trim();
   await attachPackageOfferToDemoAppointmentRow(
     appointmentId,
     offerRecord,
@@ -1961,7 +1970,11 @@ export async function doctorSendPackageOfferFromSlot({
   const amountInr = resolvePackageSlotAmountInr(slot);
   if (!amountInr) throw new Error("Package amount must be greater than zero.");
   const { platformFeeInr, doctorCoins } = splitPackagePayment(amountInr);
-  const title = String(slot?.name || `Package ${packageSlotIndex}`).trim();
+  const tierSlot = Number(slot?.slot);
+  const title = String(
+    slot?.name ||
+      `${packageSlotDisplayName(Number.isFinite(tierSlot) ? tierSlot : packageSlotIndex)} — Care package`,
+  ).trim();
   const desc = String(slot?.description || "").trim();
   const treatment = String(slot?.treatment_type || "").trim();
   const period = String(slot?.total_period || "").trim();
@@ -2001,7 +2014,9 @@ export async function createPatientSelectedPackageOffer({
   const amountInr = resolvePackageSlotAmountInr(slot);
   const { platformFeeInr, doctorCoins } = splitPackagePayment(amountInr);
   const slotNum = Number(slot?.slot || packageSlotIndex || 1) || 1;
-  const title = String(slot?.name || `Package ${slotNum}`).trim();
+  const title = String(
+    slot?.name || `${packageSlotDisplayName(slotNum)} — Care package`,
+  ).trim();
   const desc = String(slot?.description || "").trim();
   const treatment = String(slot?.treatment_type || "").trim();
   const period = String(slot?.total_period || "").trim();

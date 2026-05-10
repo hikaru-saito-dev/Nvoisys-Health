@@ -95,6 +95,7 @@ import {
   minutesUsedWithDoctorThisRollingWeek,
   needsCareOnboarding,
   normalizeDoctorPackageSlots,
+  packageSlotDisplayName,
   packageTemplatesRawFromRecord,
   persistPatientCareMode,
   readLocalCareMode,
@@ -3123,6 +3124,13 @@ const ri = (size) => {
 const tabScrollBottomPadding = () => RFValue(8);
 
 /**
+ * Full-screen patient flows (Quick Solve, Diet, Medical records, Quick Counselling)
+ * replace the tab bar — do not pass floating-tab height here or you get a permanent
+ * bottom gap. Safe-area bottom is applied inside each screen.
+ */
+const patientFullScreenScrollBottomInset = () => tabScrollBottomPadding();
+
+/**
  * Android IME draws a suggestion/toolbar row above the keys that
  * `adjustResize` + `KeyboardAvoidingView` often still overlap slightly.
  * Derive a small composer-only margin from the reported keyboard height
@@ -4244,6 +4252,7 @@ const PatientHomeScreen = () => {
         onBack={() => setShowDietMonitoring(false)}
         patientUserId={currentUser?.id}
         doctorName={patientQuickCareBinding?.doctorName || ""}
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   }
@@ -4253,6 +4262,7 @@ const PatientHomeScreen = () => {
         theme={theme}
         onBack={() => setShowMedical(false)}
         patientUserId={currentUser?.id}
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   if (showQuickSol)
@@ -4276,6 +4286,7 @@ const PatientHomeScreen = () => {
         consultMinutesLimit={
           patientQuickCareBinding?.consultMinutesLimit ?? 0
         }
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   if (showQuickCounselling)
@@ -4298,6 +4309,7 @@ const PatientHomeScreen = () => {
         consultMinutesLimit={
           patientQuickCareBinding?.consultMinutesLimit ?? 0
         }
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   if (showPackageJourney)
@@ -9982,6 +9994,7 @@ const PatientProfileScreen = ({
         theme={theme}
         onBack={() => setShowMedicalRecords(false)}
         patientUserId={currentUser?.id}
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
@@ -19188,7 +19201,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                           color: theme.textPrimary,
                         }}
                       >
-                        {pkg.name || `Package ${pkg.slot}`}
+                        {pkg.name || packageSlotDisplayName(pkg.slot)}
                       </Text>
                       <Text
                         style={{
@@ -20075,6 +20088,7 @@ const PrescriptionScreen = ({
 
       <ScrollView
         ref={scrollRef}
+        style={{ flex: 1 }}
         contentContainerStyle={{
           padding: RFValue(16),
           paddingTop: RFValue(8),
@@ -20374,7 +20388,6 @@ const PrescriptionScreen = ({
                           fontSize: RFValue(10),
                           fontWeight: "700",
                         }}
-                        numberOfLines={3}
                       >
                         {med.dosage}
                       </Text>
@@ -22913,8 +22926,8 @@ const FamilyHealthScreen = ({ onBack }) => {
       </View>
 
       <ScrollView
+        style={{ flex: 1 }}
         contentContainerStyle={{
-          flexGrow: 1,
           alignItems: "center",
           padding: RFValue(24),
           paddingTop: RFValue(12),
@@ -23100,7 +23113,7 @@ const EmergencySOScreen = ({ onBack }) => {
     if (patientQuickCareBinding?.consumerPlan !== CONSUMER_PLAN.PREMIUM) {
       Alert.alert(
         "Premium feature",
-        "Emergency personal assistant coordination is included with the Premium package (doctor package slot 3). Complete that package to enable this option.",
+        "Emergency personal assistant coordination is included with the Premium package. Complete that package to enable this option.",
       );
       return;
     }
@@ -24576,6 +24589,7 @@ const PatientWoundScreen = () => {
         consultMinutesLimit={
           patientQuickCareBinding?.consultMinutesLimit ?? 0
         }
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   }
