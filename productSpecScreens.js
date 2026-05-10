@@ -1,18 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   AppState,
-  KeyboardAvoidingView,
+  Keyboard,
   Modal,
   Platform,
   RefreshControl,
@@ -41,6 +35,7 @@ import {
   createQuickSolutionRequest,
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
+  doctorPackageFeeErrors,
   doctorPackagesSetupComplete,
   doctorProposePackageMeetingReschedule,
   doctorSendPackageOfferFromSlot,
@@ -63,6 +58,8 @@ import {
   listPackageReferralsForDoctor,
   mergeLocalFeesOntoSlots,
   normalizeDoctorPackageSlots,
+  packageSlotDisplayName,
+  packageSlotMinimumFeeInr,
   PACKAGE_MEETING_STATUS,
   packageMeetingClosedLabel,
   packageMeetingDoctorListBucket,
@@ -89,6 +86,53 @@ const S = {
   small: 12,
   pad: 16,
 };
+
+/** Extra bottom padding while the keyboard is open so ScrollView can scroll past it. */
+function useKeyboardBottomPad() {
+  const [pad, setPad] = useState(0);
+  useEffect(() => {
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = (e) => {
+      const raw = Number(e?.endCoordinates?.height);
+      setPad(Number.isFinite(raw) && raw > 0 ? Math.round(raw) : 0);
+    };
+    const onHide = () => setPad(0);
+    const subA = Keyboard.addListener(showEvt, onShow);
+    const subB = Keyboard.addListener(hideEvt, onHide);
+    return () => {
+      subA.remove();
+      subB.remove();
+    };
+  }, []);
+  return pad;
+}
+
+/**
+ * Extra ScrollView content paddingBottom while the keyboard is open (additive to base inset).
+ * iOS: 0 — use ScrollView.automaticallyAdjustKeyboardInsets (avoids stacking with manual height).
+ * Android + softwareKeyboardLayoutMode resize: window already shrinks; add bounded slack for
+ * IME strip + scrollToEnd so the focused field clears the keyboard without a huge empty band.
+ */
+function keyboardExtraScrollPad(keyboardPad) {
+  if (!keyboardPad || keyboardPad <= 0) return 0;
+  if (Platform.OS === "ios") return 0;
+  // Android (incl. API 28): IME + resize timing often needs a larger scroll tail than a tiny strip.
+  return Math.min(380, Math.round(keyboardPad * 0.62) + 40);
+}
+
+function scrollToEndAfterKeyboard(scrollRef, animated = true) {
+  requestAnimationFrame(() => {
+    scrollRef.current?.scrollToEnd({ animated });
+    if (Platform.OS === "android") {
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated }), 200);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated }), 420);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated }), 700);
+    }
+  });
+}
 
 /** Turn ledger reason keys (snake_case) into readable sentence-style labels. */
 function formatCoinLedgerReasonForDisplay(reason) {
@@ -350,7 +394,7 @@ export function CareModeOnboardingScreen({
                     <Text
                       style={{ color: theme.textPrimary, fontWeight: "800" }}
                     >
-                      {slot.name || `Package ${slot.slot}`}
+                      {slot.name || packageSlotDisplayName(slot.slot)}
                     </Text>
                     <Text
                       style={{
@@ -676,9 +720,12 @@ export function DoctorPackageSetupScreen({
       return;
     }
     if (!doctorPackagesSetupComplete(slots)) {
+      const lines = doctorPackageFeeErrors(slots);
       Alert.alert(
-        "Set all 3 fees",
-        "Enter a service fee greater than zero (INR) for Package 1, 2, and 3.",
+        "Package fees",
+        lines.length
+          ? lines.join("\n")
+          : "Enter fees for Basic, Gold, and Premium (minimums apply; no maximum).",
       );
       return;
     }
@@ -821,10 +868,8 @@ export function DoctorPackageSetupScreen({
             marginBottom: 20,
           }}
         >
-          Package names, periods, descriptions, and included features are fixed
-          by the app and are the same for every doctor. You only set your
-          service fee (INR) for each of the three tiers. Use Skip if you want to
-          finish this later from your profile; you can return any time.
+          Enter your INR fee for Basic, Gold, and Premium. Skip and finish later
+          from Profile.
         </Text>
 
         {slots.map((slot, index) => (
@@ -846,16 +891,18 @@ export function DoctorPackageSetupScreen({
                 marginBottom: 6,
               }}
             >
-              {slot.name}
+              {slot.name || packageSlotDisplayName(slot.slot)}
             </Text>
             <Text
               style={{
                 color: theme.textSecondary,
-                fontSize: S.small,
-                marginBottom: 4,
+                fontSize: 11,
+                marginBottom: 6,
               }}
             >
-              {slot.total_period} · {slot.treatment_type}
+              Minimum ₹
+              {packageSlotMinimumFeeInr(slot.slot).toLocaleString("en-IN")} · no
+              maximum
             </Text>
             <Text
               style={{
@@ -894,10 +941,7 @@ export function DoctorPackageSetupScreen({
               Your service fee (INR)
             </Text>
             <TextInput
-              ref={(el) => {
-                feeInputRefs.current[index] = el;
-              }}
-              placeholder="e.g. 8000"
+              placeholder={`e.g. ${packageSlotMinimumFeeInr(slot.slot)}`}
               placeholderTextColor={theme.textTertiary}
               keyboardType="numeric"
               value={String(slot.total_amount_inr ?? "")}
@@ -940,13 +984,13 @@ export function DoctorPackageSetupScreen({
 
         <TouchableOpacity
           onPress={save}
-          disabled={busy}
+          disabled={busy || !doctorPackagesSetupComplete(slots)}
           style={{
             backgroundColor: theme.accent,
             padding: 16,
             borderRadius: 16,
             alignItems: "center",
-            opacity: busy ? 0.85 : 1,
+            opacity: busy || !doctorPackagesSetupComplete(slots) ? 0.55 : 1,
           }}
         >
           {busy ? (
@@ -963,12 +1007,23 @@ export function DoctorPackageSetupScreen({
   );
 }
 
-export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
+export function MedicalRecordsScreen({
+  theme,
+  onBack,
+  patientUserId,
+  scrollContentBottomInset = 100,
+}) {
   const insets = useSafeAreaInsets();
+  const keyboardPad = useKeyboardBottomPad();
+  const scrollRef = useRef(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
+  const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
+  const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1055,33 +1110,48 @@ export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
           Medical records
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.pad }}>
-        <Text
-          style={{
-            color: theme.textSecondary,
-            fontSize: S.small,
-            marginBottom: 12,
-          }}
-        >
-          Upload prescriptions, lab reports, or images. They stay on your
-          profile and can be shared during demo calls, package sessions, or
-          quick consults.
-        </Text>
-        <TextInput
-          placeholder="Title (e.g. Lab report Dec 2025)"
-          placeholderTextColor={theme.textTertiary}
-          value={title}
-          onChangeText={setTitle}
-          style={{
-            backgroundColor: theme.card,
-            borderRadius: 14,
-            padding: 14,
-            color: theme.textPrimary,
-            borderWidth: 1,
-            borderColor: theme.cardBorder,
-            marginBottom: 12,
-          }}
-        />
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: scrollBottomPad,
+        }}
+      >
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginBottom: 12,
+            }}
+          >
+            Upload prescriptions, lab reports, or images. They stay on your
+            profile and can be shared during demo calls, package sessions, or
+            quick consults.
+          </Text>
+          <TextInput
+            placeholder="Title (e.g. Lab report Dec 2025)"
+            placeholderTextColor={theme.textTertiary}
+            value={title}
+            onChangeText={setTitle}
+            onFocus={() => {
+              requestAnimationFrame(() =>
+                scrollRef.current?.scrollTo({ y: 0, animated: true }),
+              );
+            }}
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: 14,
+              padding: 14,
+              color: theme.textPrimary,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+              marginBottom: 12,
+            }}
+          />
         <TouchableOpacity
           onPress={pickAndUpload}
           disabled={busy}
@@ -1151,8 +1221,183 @@ export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
   );
 }
 
-export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
+/** Premium: daily diet / meal log as medical_records with `[Diet log]` title prefix. */
+export function DietMonitoringScreen({
+  theme,
+  onBack,
+  patientUserId,
+  doctorName = "",
+  /** Bottom inset above tab bar (see App.js tab bar height). */
+  scrollContentBottomInset = 100,
+}) {
   const insets = useSafeAreaInsets();
+  const keyboardPad = useKeyboardBottomPad();
+  const scrollRef = useRef(null);
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const pickAndUpload = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission", "Photo access is needed to upload a meal photo.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (res.canceled) return;
+      const asset = res.assets?.[0];
+      if (!asset?.uri) return;
+      const uri = asset.uri;
+      const ext = String(uri.split(".").pop() || "jpg")
+        .split("?")[0]
+        .toLowerCase();
+      const mime =
+        ext === "png"
+          ? "image/png"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/jpeg";
+      const part = {
+        uri: Platform.OS === "ios" ? uri.replace("file://", "") : uri,
+        name: asset.fileName || `diet_${Date.now()}.jpg`,
+        type: mime,
+      };
+      const day = new Date().toISOString().slice(0, 10);
+      const note = String(description || "").trim();
+      const title = `[Diet log] ${day}${note ? ` — ${note.slice(0, 80)}` : ""}`;
+      setBusy(true);
+      await uploadMedicalRecord({
+        patientUserId,
+        title,
+        filePart: part,
+      });
+      setDescription("");
+      Alert.alert(
+        "Uploaded",
+        doctorName
+          ? `${doctorName} can review diet-tagged uploads under Medical records and in chat.`
+          : "Your doctor can review diet-tagged uploads under Medical records.",
+      );
+      onBack?.();
+    } catch (e) {
+      Alert.alert("Diet log", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
+  const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
+  const bottomPad = S.pad + tabAndSafe + keyboardScrollPad;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: S.pad,
+          paddingBottom: S.pad,
+          paddingTop: (insets.top || 0) + 12,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: theme.cardBorder,
+        }}
+      >
+        <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+          <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+        </TouchableOpacity>
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontSize: S.title,
+            fontWeight: "800",
+          }}
+        >
+          Diet monitoring
+        </Text>
+      </View>
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: bottomPad,
+        }}
+      >
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginBottom: 12,
+              lineHeight: 20,
+            }}
+          >
+            Premium: upload today’s meals or diet plan as a photo. Entries are
+            stored like other medical files so your package doctor can review and
+            warn you in follow-up or chat.
+          </Text>
+          <TextInput
+            placeholder="Short note (optional), e.g. Lunch — rice, dal, salad"
+            placeholderTextColor={theme.textTertiary}
+            value={description}
+            onChangeText={setDescription}
+            onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: 14,
+              padding: 14,
+              color: theme.textPrimary,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+              marginBottom: 12,
+            }}
+          />
+          <TouchableOpacity
+            onPress={pickAndUpload}
+            disabled={busy}
+            style={{
+              backgroundColor: theme.accent,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+              opacity: busy ? 0.75 : 1,
+            }}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "800" }}>
+                Upload meal / diet photo
+              </Text>
+            )}
+          </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
+}
+
+export function QuickSolutionScreen({
+  theme,
+  onBack,
+  patientUserId,
+  /** Active paid package binding; Quick Solve is disabled without it. */
+  quickCareBinding = null,
+  onOpenPackageJourney,
+  /** async (question: string) => reply text */
+  onAskAi,
+  consultMinutesUsed = 0,
+  consultMinutesLimit = 0,
+  scrollContentBottomInset = 100,
+}) {
+  const insets = useSafeAreaInsets();
+  const keyboardPad = useKeyboardBottomPad();
+  const scrollRef = useRef(null);
   const [notes, setNotes] = useState("");
   const [privateMode, setPrivateMode] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1180,6 +1425,81 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
     }
   };
 
+  const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
+  const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
+  const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
+
+  if (!quickCareBinding?.doctorUserId) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: S.pad,
+            paddingBottom: S.pad,
+            paddingTop: (insets.top || 0) + 12,
+          }}
+        >
+          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: S.title,
+              fontWeight: "800",
+            }}
+          >
+            Quick Solve
+          </Text>
+        </View>
+        <ScrollView
+          style={{ flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: scrollBottomPad,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              lineHeight: 22,
+              marginBottom: 16,
+            }}
+          >
+            Choose a doctor and complete a paid package (Basic, Gold, or Premium)
+            first. Quick Solve and Quick Counselling then work automatically with
+            that doctor — you will not pick a doctor again here.
+          </Text>
+          <TouchableOpacity
+            onPress={() => onOpenPackageJourney?.()}
+            style={{
+              backgroundColor: theme.accent,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Open package journey
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
+  const consultHint =
+    ent && consultMinutesLimit > 0
+      ? `Consultation time this week with ${quickCareBinding.doctorName || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
+      : "";
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <View
@@ -1204,7 +1524,142 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
           Quick Solution
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.pad }}>
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: scrollBottomPad,
+        }}
+      >
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 10,
+            fontSize: S.small,
+          }}
+        >
+          Package: {planLabel} · Routed to{" "}
+          {quickCareBinding.doctorName || "your doctor"} (no doctor picker
+          here).
+        </Text>
+        {consultHint ? (
+          <Text
+            style={{
+              color: theme.textTertiary,
+              marginBottom: 14,
+              fontSize: 11,
+              lineHeight: 16,
+            }}
+          >
+            {consultHint}
+          </Text>
+        ) : null}
+
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+            fontSize: S.body,
+          }}
+        >
+          Instant AI guidance
+        </Text>
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 10,
+            fontSize: S.small,
+          }}
+        >
+          AI-assisted answers for common concerns. This does not replace your
+          doctor; urgent issues need emergency care.
+        </Text>
+        <TextInput
+          placeholder="Ask anything (symptoms, medicines, lifestyle)…"
+          placeholderTextColor={theme.textTertiary}
+          multiline
+          value={aiQuestion}
+          onChangeText={setAiQuestion}
+          onFocus={() => {
+            if (Platform.OS === "ios") {
+              requestAnimationFrame(() =>
+                scrollRef.current?.scrollTo({ y: 0, animated: true }),
+              );
+            }
+          }}
+          style={{
+            minHeight: 100,
+            backgroundColor: theme.card,
+            borderRadius: 14,
+            padding: 14,
+            color: theme.textPrimary,
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            textAlignVertical: "top",
+            marginBottom: 10,
+          }}
+        />
+        <TouchableOpacity
+          onPress={runAi}
+          disabled={aiBusy}
+          style={{
+            backgroundColor: theme.accent,
+            padding: 14,
+            borderRadius: 14,
+            alignItems: "center",
+            marginBottom: 16,
+          }}
+        >
+          {aiBusy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Get AI answer
+            </Text>
+          )}
+        </TouchableOpacity>
+        {aiReply ? (
+          <View
+            style={{
+              backgroundColor: theme.card,
+              padding: 14,
+              borderRadius: 14,
+              marginBottom: 20,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: 11,
+                fontWeight: "700",
+                marginBottom: 6,
+              }}
+            >
+              AI REPLY
+            </Text>
+            <Text style={{ color: theme.textPrimary, lineHeight: 22 }}>
+              {aiReply}
+            </Text>
+          </View>
+        ) : null}
+
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+            fontSize: S.body,
+          }}
+        >
+          Doctor review (10 coins)
+        </Text>
         <Text
           style={{
             color: theme.textSecondary,
@@ -1223,7 +1678,7 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
             backgroundColor: privateMode ? theme.accentLight : theme.card,
             padding: 14,
             borderRadius: 14,
-            marginBottom: 16,
+            marginBottom: 8,
             borderWidth: 2,
             borderColor: privateMode ? theme.accent : theme.cardBorder,
           }}
@@ -1256,8 +1711,9 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
           multiline
           value={notes}
           onChangeText={setNotes}
+          onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
           style={{
-            minHeight: 120,
+            minHeight: 72,
             backgroundColor: theme.card,
             borderRadius: 14,
             padding: 14,
@@ -1271,8 +1727,8 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
           onPress={submit}
           disabled={busy}
           style={{
-            marginTop: 20,
-            backgroundColor: theme.accent,
+            marginTop: 12,
+            backgroundColor: theme.success || "#059669",
             padding: 16,
             borderRadius: 16,
             alignItems: "center",
@@ -1297,8 +1753,18 @@ export function QuickCounsellingScreen({
   patientUserId,
   /** When true, show copy tuned for Wound tab entry (same API, no image). */
   fromWoundTracker = false,
+  quickCareBinding = null,
+  onOpenPackageJourney,
+  consultMinutesUsed = 0,
+  consultMinutesLimit = 0,
+  scrollContentBottomInset = 100,
 }) {
   const insets = useSafeAreaInsets();
+  const keyboardPad = useKeyboardBottomPad();
+  const scrollRef = useRef(null);
+  const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
+  const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
+  const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -1318,6 +1784,74 @@ export function QuickCounsellingScreen({
       setBusy(false);
     }
   };
+
+  if (!quickCareBinding?.doctorUserId) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: S.pad,
+            paddingBottom: S.pad,
+            paddingTop: (insets.top || 0) + 12,
+          }}
+        >
+          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: S.title,
+              fontWeight: "800",
+            }}
+          >
+            Quick Counselling
+          </Text>
+        </View>
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: scrollBottomPad,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              lineHeight: 22,
+              marginBottom: 16,
+            }}
+          >
+            Activate a paid doctor package first. Quick Counselling then queues
+            directly with that doctor — no separate doctor selection here.
+          </Text>
+          <TouchableOpacity
+            onPress={() => onOpenPackageJourney?.()}
+            style={{
+              backgroundColor: theme.success,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Open package journey
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <View
@@ -1342,70 +1876,92 @@ export function QuickCounsellingScreen({
           Quick Counselling
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.pad }}>
-        <Text
-          style={{
-            color: theme.textSecondary,
-            marginBottom: 12,
-            fontSize: S.small,
-          }}
-        >
-          {fromWoundTracker
-            ? "₹25 (25 coins) — video call with a verified RMP/clinic doctor. Platform 10 coins, doctor/clinic 15 coins. No wound photo; describe your concerns below."
-            : "₹25 (25 coins) - platform 10 coins, doctor/clinic 15 coins."}
-        </Text>
-        {fromWoundTracker ? (
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: scrollBottomPad,
+        }}
+      >
           <Text
             style={{
-              color: theme.textTertiary,
+              color: theme.textSecondary,
               marginBottom: 12,
               fontSize: S.small,
             }}
           >
-            Separate from Quick Solution (₹10 wound snap). Use this for a full
-            consultation by video call instead of uploading a wound image.
+            {planLabel} plan · ₹25 (25 coins) — queued for{" "}
+            {quickCareBinding.doctorName || "your package doctor"}.
           </Text>
-        ) : null}
-        <TextInput
-          placeholder={
-            fromWoundTracker
-              ? "Describe symptoms, pain, or questions for your video consultation…"
-              : "What would you like to talk about?"
-          }
-          placeholderTextColor={theme.textTertiary}
-          value={topic}
-          onChangeText={setTopic}
-          multiline
-          textAlignVertical="top"
-          style={{
-            minHeight: fromWoundTracker ? 140 : 88,
-            backgroundColor: theme.card,
-            borderRadius: 14,
-            padding: 14,
-            color: theme.textPrimary,
-            borderWidth: 1,
-            borderColor: theme.cardBorder,
-          }}
-        />
-        <TouchableOpacity
-          onPress={submit}
-          disabled={busy}
-          style={{
-            marginTop: 20,
-            backgroundColor: theme.success,
-            padding: 16,
-            borderRadius: 16,
-            alignItems: "center",
-          }}
-        >
-          {busy ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Start request (25 coins)
+          {consultMinutesLimit > 0 ? (
+            <Text
+              style={{
+                color: theme.textTertiary,
+                marginBottom: 12,
+                fontSize: 11,
+                lineHeight: 16,
+              }}
+            >
+              Consultation minutes this week (completed visits, estimate):{" "}
+              {consultMinutesUsed} / {consultMinutesLimit}.
             </Text>
-          )}
-        </TouchableOpacity>
+          ) : null}
+          {fromWoundTracker ? (
+            <Text
+              style={{
+                color: theme.textTertiary,
+                marginBottom: 12,
+                fontSize: S.small,
+              }}
+            >
+              Describe wound-related concerns for your doctor’s video follow-up.
+            </Text>
+          ) : null}
+          <TextInput
+            placeholder={
+              fromWoundTracker
+                ? "Describe symptoms, pain, or questions for your video consultation…"
+                : "What would you like to talk about?"
+            }
+            placeholderTextColor={theme.textTertiary}
+            value={topic}
+            onChangeText={setTopic}
+            onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
+            multiline
+            textAlignVertical="top"
+            style={{
+              minHeight: fromWoundTracker ? 140 : 88,
+              backgroundColor: theme.card,
+              borderRadius: 14,
+              padding: 14,
+              color: theme.textPrimary,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          />
+          <TouchableOpacity
+            onPress={submit}
+            disabled={busy}
+            style={{
+              marginTop: 20,
+              backgroundColor: theme.success,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+            }}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "800" }}>
+                Start request (25 coins)
+              </Text>
+            )}
+          </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -2460,7 +3016,7 @@ export function PackageDoctorJourneyScreen({
                   }}
                 >
                   <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
-                    {slot.name || `Package ${slot.slot}`}
+                    {slot.name || packageSlotDisplayName(slot.slot)}
                   </Text>
                   <Text
                     style={{
@@ -2737,6 +3293,19 @@ function PackageSuggestAfterMeetingInline({
     }
     if (!draftSlot) return;
     const slotNum = Number(draftSlot.slot) || activeSlotIndex + 1;
+    const minFee = packageSlotMinimumFeeInr(slotNum);
+    const draftAmt = Number(
+      String(draftSlot.total_amount_inr || "")
+        .replace(/,/g, "")
+        .trim() || 0,
+    );
+    if (!Number.isFinite(draftAmt) || draftAmt < minFee) {
+      Alert.alert(
+        "Minimum fee",
+        `${packageSlotDisplayName(slotNum)} requires at least ₹${minFee.toLocaleString("en-IN")} (no maximum).`,
+      );
+      return;
+    }
     try {
       setBusy(true);
       await doctorSendPackageOfferFromSlot({
@@ -2791,14 +3360,14 @@ function PackageSuggestAfterMeetingInline({
           lineHeight: 16,
         }}
       >
-        Pick Package 1, 2, or 3 (fees from your profile). The patient gets the
+        Pick Basic, Gold, or Premium (fees from your profile). The patient gets the
         breakdown and Pay now. Company receives payment first; your share is
         credited as coins after service delivery.
       </Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
         {[0, 1, 2].map((i) => {
           const s = catalogSlots[i];
-          const label = s?.name || `Package ${i + 1}`;
+          const label = s?.name || packageSlotDisplayName(i + 1);
           return (
             <TouchableOpacity
               key={i}
@@ -2909,7 +3478,10 @@ function PackageSuggestAfterMeetingInline({
                 </View>
               ) : null}
               <Text style={{ color: theme.textTertiary, fontSize: 11 }}>
-                Your service fee (INR)
+                Your service fee (INR) · minimum ₹
+                {packageSlotMinimumFeeInr(
+                  Number(draftSlot?.slot) || 1,
+                ).toLocaleString("en-IN")}
               </Text>
               <TextInput
                 keyboardType="numeric"
@@ -2918,6 +3490,7 @@ function PackageSuggestAfterMeetingInline({
                   setDraftSlot((d) => ({ ...d, total_amount_inr: t }))
                 }
                 style={slotInput(theme)}
+                placeholder={`e.g. ${packageSlotMinimumFeeInr(Number(draftSlot?.slot) || 1)}`}
                 placeholderTextColor={theme.textTertiary}
               />
             </ScrollView>
