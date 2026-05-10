@@ -22,6 +22,7 @@ import {
   cancelQuickRequest,
   CARE_MODE,
   closeQuickRequest,
+  consumerPlanDisplayName,
   createPatientSelectedPackageOffer,
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
@@ -33,6 +34,7 @@ import {
   doctorSendPackageOfferFromSlot,
   doctorTierEligibleForPackageMode,
   doctorWithdrawCoinsStub,
+  entitlementsForConsumerPlan,
   fetchMedicalRecordsForPatient,
   getCoinBalanceForUser,
   getDoctorCoinBalance,
@@ -67,6 +69,7 @@ import {
   resolvePackageSlotAmountInr,
   saveDoctorPackageTemplates,
   settleDueReferralMonthlyCommissions,
+  parseQuickRequestDoctorTag,
   uploadMedicalRecord,
 } from "./productSpecApi";
 
@@ -992,7 +995,7 @@ export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
               }}
             >
               <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                {r.title || "Record"}
+                {String(r.title || "Record").replace(/^\[Diet log\]\s*/i, "")}
               </Text>
               <Text
                 style={{
@@ -1011,26 +1014,215 @@ export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
   );
 }
 
-export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
+/** Premium: daily diet / meal log as medical_records with `[Diet log]` title prefix. */
+export function DietMonitoringScreen({
+  theme,
+  onBack,
+  patientUserId,
+  doctorName = "",
+}) {
   const insets = useSafeAreaInsets();
-  const [notes, setNotes] = useState("");
-  const [privateMode, setPrivateMode] = useState(false);
+  const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const submit = async () => {
+  const pickAndUpload = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission", "Photo access is needed to upload a meal photo.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (res.canceled) return;
+      const asset = res.assets?.[0];
+      if (!asset?.uri) return;
+      const uri = asset.uri;
+      const ext = String(uri.split(".").pop() || "jpg")
+        .split("?")[0]
+        .toLowerCase();
+      const mime =
+        ext === "png"
+          ? "image/png"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/jpeg";
+      const part = {
+        uri: Platform.OS === "ios" ? uri.replace("file://", "") : uri,
+        name: asset.fileName || `diet_${Date.now()}.jpg`,
+        type: mime,
+      };
+      const day = new Date().toISOString().slice(0, 10);
+      const note = String(description || "").trim();
+      const title = `[Diet log] ${day}${note ? ` — ${note.slice(0, 80)}` : ""}`;
+      setBusy(true);
+      await uploadMedicalRecord({
+        patientUserId,
+        title,
+        filePart: part,
+      });
+      setDescription("");
+      Alert.alert(
+        "Uploaded",
+        doctorName
+          ? `${doctorName} can review diet-tagged uploads under Medical records and in chat.`
+          : "Your doctor can review diet-tagged uploads under Medical records.",
+      );
+      onBack?.();
+    } catch (e) {
+      Alert.alert("Diet log", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: S.pad,
+          paddingBottom: S.pad,
+          paddingTop: (insets.top || 0) + 12,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: theme.cardBorder,
+        }}
+      >
+        <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+          <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+        </TouchableOpacity>
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontSize: S.title,
+            fontWeight: "800",
+          }}
+        >
+          Diet monitoring
+        </Text>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: S.pad }}>
+        <Text
+          style={{
+            color: theme.textSecondary,
+            fontSize: S.small,
+            marginBottom: 12,
+            lineHeight: 20,
+          }}
+        >
+          Premium: upload today’s meals or diet plan as a photo. Entries are
+          stored like other medical files so your package doctor can review and
+          warn you in follow-up or chat.
+        </Text>
+        <TextInput
+          placeholder="Short note (optional), e.g. Lunch — rice, dal, salad"
+          placeholderTextColor={theme.textTertiary}
+          value={description}
+          onChangeText={setDescription}
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: 14,
+            padding: 14,
+            color: theme.textPrimary,
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            marginBottom: 12,
+          }}
+        />
+        <TouchableOpacity
+          onPress={pickAndUpload}
+          disabled={busy}
+          style={{
+            backgroundColor: theme.accent,
+            padding: 16,
+            borderRadius: 16,
+            alignItems: "center",
+            opacity: busy ? 0.75 : 1,
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Upload meal / diet photo
+            </Text>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
+}
+
+export function QuickSolutionScreen({
+  theme,
+  onBack,
+  patientUserId,
+  /** Active paid package binding; Quick Solve is disabled without it. */
+  quickCareBinding = null,
+  onOpenPackageJourney,
+  /** async (question: string) => reply text */
+  onAskAi,
+  consultMinutesUsed = 0,
+  consultMinutesLimit = 0,
+}) {
+  const insets = useSafeAreaInsets();
+  const [notes, setNotes] = useState("");
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiReply, setAiReply] = useState("");
+  const [privateMode, setPrivateMode] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+
+  const ent = quickCareBinding
+    ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
+    : null;
+
+  const runAi = async () => {
+    const q = String(aiQuestion || "").trim();
+    if (!q) {
+      Alert.alert("Quick Solve", "Type a question for instant AI guidance.");
+      return;
+    }
+    if (!onAskAi) {
+      Alert.alert("Quick Solve", "AI is not available in this build.");
+      return;
+    }
+    try {
+      setAiBusy(true);
+      setAiReply("");
+      const reply = await onAskAi(q);
+      setAiReply(String(reply || "").trim() || "(No reply)");
+    } catch (e) {
+      Alert.alert("Quick Solve", e?.message || "AI failed");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const submitDoctorReview = async () => {
+    if (!quickCareBinding?.doctorUserId) return;
+    const body = String(notes || "").trim();
+    if (!body) {
+      Alert.alert("Quick Solve", "Describe what you want your doctor to review.");
+      return;
+    }
     try {
       setBusy(true);
       await createQuickSolutionRequest({
         patientUserId,
-        notes,
+        notes: `[Doctor review]\n${body}`,
         privateMode,
         imagePart: null,
+        assignedDoctorUserId: quickCareBinding.doctorUserId,
       });
       Alert.alert(
-        "Submitted",
+        "Sent to your doctor",
         privateMode
-          ? "Private mode is on: your name, photo, and contact details are hidden from the clinic side."
-          : "Your query is queued for a verified clinic (10 coins / ₹10).",
+          ? "Private mode is on. Your package doctor will review in the app."
+          : "Your package doctor was notified (10 coins).",
       );
       onBack?.();
     } catch (e) {
@@ -1039,6 +1231,68 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
       setBusy(false);
     }
   };
+
+  if (!quickCareBinding?.doctorUserId) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: S.pad,
+            paddingBottom: S.pad,
+            paddingTop: (insets.top || 0) + 12,
+          }}
+        >
+          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: S.title,
+              fontWeight: "800",
+            }}
+          >
+            Quick Solve
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={{ padding: S.pad }}>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              lineHeight: 22,
+              marginBottom: 16,
+            }}
+          >
+            Choose a doctor and complete a paid package (Basic, Gold, or Premium)
+            first. Quick Solve and Quick Counselling then work automatically with
+            that doctor — you will not pick a doctor again here.
+          </Text>
+          <TouchableOpacity
+            onPress={() => onOpenPackageJourney?.()}
+            style={{
+              backgroundColor: theme.accent,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Open package journey
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
+  const consultHint =
+    ent && consultMinutesLimit > 0
+      ? `Consultation time this week with ${quickCareBinding.doctorName || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
+      : "";
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -1061,10 +1315,128 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
             fontWeight: "800",
           }}
         >
-          Quick Solution
+          Quick Solve
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.pad }}>
+      <ScrollView contentContainerStyle={{ padding: S.pad, paddingBottom: 32 }}>
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 10,
+            fontSize: S.small,
+          }}
+        >
+          Package: {planLabel} · Routed to{" "}
+          {quickCareBinding.doctorName || "your doctor"} (no doctor picker
+          here).
+        </Text>
+        {consultHint ? (
+          <Text
+            style={{
+              color: theme.textTertiary,
+              marginBottom: 14,
+              fontSize: 11,
+              lineHeight: 16,
+            }}
+          >
+            {consultHint}
+          </Text>
+        ) : null}
+
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+            fontSize: S.body,
+          }}
+        >
+          Instant AI guidance
+        </Text>
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 10,
+            fontSize: S.small,
+          }}
+        >
+          AI-assisted answers for common concerns. This does not replace your
+          doctor; urgent issues need emergency care.
+        </Text>
+        <TextInput
+          placeholder="Ask anything (symptoms, medicines, lifestyle)…"
+          placeholderTextColor={theme.textTertiary}
+          multiline
+          value={aiQuestion}
+          onChangeText={setAiQuestion}
+          style={{
+            minHeight: 100,
+            backgroundColor: theme.card,
+            borderRadius: 14,
+            padding: 14,
+            color: theme.textPrimary,
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            textAlignVertical: "top",
+            marginBottom: 10,
+          }}
+        />
+        <TouchableOpacity
+          onPress={runAi}
+          disabled={aiBusy}
+          style={{
+            backgroundColor: theme.accent,
+            padding: 14,
+            borderRadius: 14,
+            alignItems: "center",
+            marginBottom: 16,
+          }}
+        >
+          {aiBusy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Get AI answer
+            </Text>
+          )}
+        </TouchableOpacity>
+        {aiReply ? (
+          <View
+            style={{
+              backgroundColor: theme.card,
+              padding: 14,
+              borderRadius: 14,
+              marginBottom: 20,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: 11,
+                fontWeight: "700",
+                marginBottom: 6,
+              }}
+            >
+              AI REPLY
+            </Text>
+            <Text style={{ color: theme.textPrimary, lineHeight: 22 }}>
+              {aiReply}
+            </Text>
+          </View>
+        ) : null}
+
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+            fontSize: S.body,
+          }}
+        >
+          Doctor review (10 coins)
+        </Text>
         <Text
           style={{
             color: theme.textSecondary,
@@ -1072,8 +1444,8 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
             fontSize: S.small,
           }}
         >
-          ₹10 (10 coins) per snap or query - platform 5 coins, clinic 5 coins.
-          Verified clinics and RMP doctors only.
+          Optional: send a written query to your package doctor’s Quick queue
+          (same doctor as above).
         </Text>
         <TouchableOpacity
           onPress={() => setPrivateMode((v) => !v)}
@@ -1105,13 +1477,12 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
                 marginTop: 4,
               }}
             >
-              Hide your name, photo, and contact info from the clinic for
-              sensitive issues. You still see the provider details.
+              Hide your name, photo, and contact info from the clinic side.
             </Text>
           </View>
         </TouchableOpacity>
         <TextInput
-          placeholder="Describe your question or symptom…"
+          placeholder="Message for your doctor…"
           placeholderTextColor={theme.textTertiary}
           multiline
           value={notes}
@@ -1128,11 +1499,11 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
           }}
         />
         <TouchableOpacity
-          onPress={submit}
+          onPress={submitDoctorReview}
           disabled={busy}
           style={{
             marginTop: 20,
-            backgroundColor: theme.accent,
+            backgroundColor: theme.success || "#059669",
             padding: 16,
             borderRadius: 16,
             alignItems: "center",
@@ -1142,7 +1513,7 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Submit (10 coins)
+              Submit to doctor (10 coins)
             </Text>
           )}
         </TouchableOpacity>
@@ -1157,19 +1528,43 @@ export function QuickCounsellingScreen({
   patientUserId,
   /** When true, show copy tuned for Wound tab entry (same API, no image). */
   fromWoundTracker = false,
+  quickCareBinding = null,
+  onOpenPackageJourney,
+  consultMinutesUsed = 0,
+  consultMinutesLimit = 0,
 }) {
   const insets = useSafeAreaInsets();
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
+  const ent = quickCareBinding
+    ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
+    : null;
+
   const submit = async () => {
+    if (!quickCareBinding?.doctorUserId) return;
+    if (
+      ent &&
+      consultMinutesLimit > 0 &&
+      consultMinutesUsed >= consultMinutesLimit
+    ) {
+      Alert.alert(
+        "Consultation limit",
+        "You have reached the included consultation time for your plan this week (estimated from completed visits). Message your doctor in Chat, or consider Premium for wider access.",
+      );
+      return;
+    }
     try {
       setBusy(true);
-      await createQuickCounsellingRequest({ patientUserId, topic });
+      await createQuickCounsellingRequest({
+        patientUserId,
+        topic,
+        assignedDoctorUserId: quickCareBinding.doctorUserId,
+      });
       Alert.alert(
-        "Queued",
+        "Queued for your doctor",
         fromWoundTracker
-          ? "Quick Counselling (25 coins). An RMP/clinic doctor will reach out for a video call. Platform 10, doctor/clinic 15 coins."
-          : "Quick Counselling (25 coins). Platform 10, doctor/clinic 15.",
+          ? "Quick Counselling (25 coins) — routed to your package doctor for a video call."
+          : `Quick Counselling (25 coins) — ${quickCareBinding.doctorName || "Your package doctor"} will follow up.`,
       );
       onBack?.();
     } catch (e) {
@@ -1178,6 +1573,64 @@ export function QuickCounsellingScreen({
       setBusy(false);
     }
   };
+
+  if (!quickCareBinding?.doctorUserId) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: S.pad,
+            paddingBottom: S.pad,
+            paddingTop: (insets.top || 0) + 12,
+          }}
+        >
+          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: S.title,
+              fontWeight: "800",
+            }}
+          >
+            Quick Counselling
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={{ padding: S.pad }}>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              lineHeight: 22,
+              marginBottom: 16,
+            }}
+          >
+            Activate a paid doctor package first. Quick Counselling then queues
+            directly with that doctor — no separate doctor selection here.
+          </Text>
+          <TouchableOpacity
+            onPress={() => onOpenPackageJourney?.()}
+            style={{
+              backgroundColor: theme.success,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Open package journey
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <View
@@ -1210,10 +1663,22 @@ export function QuickCounsellingScreen({
             fontSize: S.small,
           }}
         >
-          {fromWoundTracker
-            ? "₹25 (25 coins) — video call with a verified RMP/clinic doctor. Platform 10 coins, doctor/clinic 15 coins. No wound photo; describe your concerns below."
-            : "₹25 (25 coins) - platform 10 coins, doctor/clinic 15 coins."}
+          {planLabel} plan · ₹25 (25 coins) — queued for{" "}
+          {quickCareBinding.doctorName || "your package doctor"}.
         </Text>
+        {consultMinutesLimit > 0 ? (
+          <Text
+            style={{
+              color: theme.textTertiary,
+              marginBottom: 12,
+              fontSize: 11,
+              lineHeight: 16,
+            }}
+          >
+            Consultation minutes this week (completed visits, estimate):{" "}
+            {consultMinutesUsed} / {consultMinutesLimit}.
+          </Text>
+        ) : null}
         {fromWoundTracker ? (
           <Text
             style={{
@@ -1222,8 +1687,7 @@ export function QuickCounsellingScreen({
               fontSize: S.small,
             }}
           >
-            Separate from Quick Solution (₹10 wound snap). Use this for a full
-            consultation by video call instead of uploading a wound image.
+            Describe wound-related concerns for your doctor’s video follow-up.
           </Text>
         ) : null}
         <TextInput
@@ -3830,12 +4294,16 @@ export function DoctorQuickRequestsPanel({
     let sol = [];
     let cou = [];
     try {
-      sol = await listQueuedQuickSolutionRequestsForProvider();
+      sol = await listQueuedQuickSolutionRequestsForProvider(
+        effectiveDoctorId,
+      );
     } catch (e) {
       parts.push(`Quick Solution: ${e?.message || "list failed"}`);
     }
     try {
-      cou = await listQueuedQuickCounsellingRequestsForProvider();
+      cou = await listQueuedQuickCounsellingRequestsForProvider(
+        effectiveDoctorId,
+      );
     } catch (e) {
       parts.push(`Quick Counselling: ${e?.message || "list failed"}`);
     }
@@ -4554,10 +5022,13 @@ export function PatientQuickRequestsTrackerPanel({
   const renderCard = (row) => {
     const kindLabel =
       row.kind === "counselling" ? "Quick Counselling" : "Quick Solution";
+    const rawCounselling = String(row.topic || "");
+    const rawSolution = String(row.notes || "");
     const summary =
       row.kind === "counselling"
-        ? `Topic: ${truncateOneLine(row.topic, 140) || "General"}`
-        : truncateOneLine(row.notes, 200) || "-";
+        ? `Topic: ${truncateOneLine(parseQuickRequestDoctorTag(rawCounselling).body, 140) || "General"}`
+        : truncateOneLine(parseQuickRequestDoctorTag(rawSolution).body, 200) ||
+          "-";
     const isBusy = busyRowId === `${row.kind}::${row.id}`;
     const offers = Array.isArray(row.offers) ? row.offers : [];
     const hasOffers = offers.length > 0;

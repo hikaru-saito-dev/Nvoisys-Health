@@ -478,6 +478,7 @@ function compactProfileFields(fields) {
  *                            language (text — comfortable consultation language)
  *   Product spec: care_mode (text/select: package_doctor | casual | not_planning),
  *                  preferred_quick_doctor / preferred_quick_provider (relation → UsersAuth, optional)
+ *                  registration_document or id_document (file, optional) — ID / insurance photo at signup.
  * Avatar is uploaded after create in signUpWithEmail (file field).
  */
 async function createPatientProfileRecord(userId, merged) {
@@ -724,7 +725,8 @@ export async function signUpWithEmail({
     passwordConfirm == null ? normalizedPassword : passwordConfirm,
   );
 
-  const { avatarAsset, ...rawProfile } = profileFields || {};
+  const { avatarAsset, registrationDocAsset, ...rawProfile } =
+    profileFields || {};
   const profilePayload = compactProfileFields(rawProfile);
 
   const authPayload = {
@@ -754,15 +756,38 @@ export async function signUpWithEmail({
 
     let profile = await ensureRoleProfile(role, profilePayload);
 
-    if (role === "patient" && avatarAsset?.uri && profile?.id) {
-      const part = uploadPartFromImageAsset(avatarAsset);
-      if (part) {
-        try {
-          const formData = new FormData();
-          formData.append("avatar", part);
-          await pb.collection("patient_profile").update(profile.id, formData);
-        } catch (avatarError) {
-          console.log("Patient profile avatar upload skipped:", avatarError);
+    if (role === "patient" && profile?.id) {
+      if (avatarAsset?.uri) {
+        const part = uploadPartFromImageAsset(avatarAsset);
+        if (part) {
+          try {
+            const formData = new FormData();
+            formData.append("avatar", part);
+            await pb.collection("patient_profile").update(profile.id, formData);
+          } catch (avatarError) {
+            console.log("Patient profile avatar upload skipped:", avatarError);
+          }
+        }
+      }
+      if (registrationDocAsset?.uri) {
+        const docPart = uploadPartFromImageAsset(registrationDocAsset);
+        if (docPart) {
+          try {
+            const fd = new FormData();
+            fd.append("registration_document", docPart);
+            await pb.collection("patient_profile").update(profile.id, fd);
+          } catch (docErr) {
+            try {
+              const fd2 = new FormData();
+              fd2.append("id_document", docPart);
+              await pb.collection("patient_profile").update(profile.id, fd2);
+            } catch (docErr2) {
+              console.log(
+                "Patient registration document upload skipped:",
+                docErr2?.message || docErr,
+              );
+            }
+          }
         }
       }
     }

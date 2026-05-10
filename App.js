@@ -75,6 +75,7 @@ import {
   clearPatientCareMode,
   combineDateAndTimeToIso,
   completePackageOfferPayment,
+  CONSUMER_PLAN,
   createPackageMeetingRequest,
   decodeMeetingWorkflowFromAppointmentRow,
   doctorPackagesSetupComplete,
@@ -84,8 +85,14 @@ import {
   doctorTierEligibleForPackageMode,
   effectiveCareMode,
   ensurePackageDemoMeetingConversation,
+  entitlementsForConsumerPlan,
+  getAiAssistantUsageToday,
+  createEmergencyAssistantRequest,
+  getPatientActiveQuickCareBinding,
+  incrementAiAssistantUsageToday,
   listPackageOffersForDoctor,
   mergeLocalFeesOntoSlots,
+  minutesUsedWithDoctorThisRollingWeek,
   needsCareOnboarding,
   normalizeDoctorPackageSlots,
   packageTemplatesRawFromRecord,
@@ -105,6 +112,7 @@ import {
   DoctorCoinPaymentHistoryPanel,
   DoctorPackageSetupScreen,
   DoctorQuickRequestsPanel,
+  DietMonitoringScreen,
   MedicalRecordsScreen,
   PackageDoctorJourneyScreen,
   PackageMeetingDoctorPanel,
@@ -3928,6 +3936,9 @@ const PatientHomeScreen = () => {
     loadConversationMessages,
     payForPackageOffer,
     registerPatientPharmacyDirectoryOpener,
+    patientQuickCareBinding,
+    ensureAssistantConversation,
+    sendAssistantMessage,
   } = useAppData();
   const patientFirstName =
     String(patientProfile?.full_name || currentUser?.name || "")
@@ -3935,6 +3946,19 @@ const PatientHomeScreen = () => {
       .split(/\s+/)[0] || "Patient";
   const tabNav = useMainTabNav();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
+  const [showDietMonitoring, setShowDietMonitoring] = useState(false);
+
+  const runQuickSolveAi = useCallback(
+    async (question) => {
+      const conv = await ensureAssistantConversation?.();
+      if (!conv?.id) throw new Error("Could not start AI session.");
+      const out = await sendAssistantMessage?.(conv.id, question);
+      const reply = out?.replyMessage?.text || "";
+      if (!reply) throw new Error("No AI reply.");
+      return reply;
+    },
+    [ensureAssistantConversation, sendAssistantMessage],
+  );
 
   const handleOpenOfferConversation = useCallback(
     (conversationId, peerUserId) => {
@@ -4111,6 +4135,7 @@ const PatientHomeScreen = () => {
       setShowQuickSol(false);
       setShowQuickCounselling(false);
       setShowPackageJourney(false);
+      setShowDietMonitoring(false);
       tabNav?.navigateTab?.("Home");
       setShowPharmacy(true);
     });
@@ -4172,6 +4197,10 @@ const PatientHomeScreen = () => {
         setShowMedical(false);
         return true;
       }
+      if (showDietMonitoring) {
+        setShowDietMonitoring(false);
+        return true;
+      }
       if (showQuickSol) {
         setShowQuickSol(false);
         return true;
@@ -4202,11 +4231,22 @@ const PatientHomeScreen = () => {
     showPharmacy,
     showAppointments,
     showMedical,
+    showDietMonitoring,
     showQuickSol,
     showQuickCounselling,
     showPackageJourney,
   ]);
 
+  if (showDietMonitoring) {
+    return (
+      <DietMonitoringScreen
+        theme={theme}
+        onBack={() => setShowDietMonitoring(false)}
+        patientUserId={currentUser?.id}
+        doctorName={patientQuickCareBinding?.doctorName || ""}
+      />
+    );
+  }
   if (showMedical)
     return (
       <MedicalRecordsScreen
@@ -4224,6 +4264,18 @@ const PatientHomeScreen = () => {
           setQuickRequestsRefreshKey((k) => k + 1);
         }}
         patientUserId={currentUser?.id}
+        quickCareBinding={patientQuickCareBinding}
+        onOpenPackageJourney={() => {
+          setShowQuickSol(false);
+          setShowPackageJourney(true);
+        }}
+        onAskAi={runQuickSolveAi}
+        consultMinutesUsed={
+          patientQuickCareBinding?.consultMinutesUsed ?? 0
+        }
+        consultMinutesLimit={
+          patientQuickCareBinding?.consultMinutesLimit ?? 0
+        }
       />
     );
   if (showQuickCounselling)
@@ -4235,6 +4287,17 @@ const PatientHomeScreen = () => {
           setQuickRequestsRefreshKey((k) => k + 1);
         }}
         patientUserId={currentUser?.id}
+        quickCareBinding={patientQuickCareBinding}
+        onOpenPackageJourney={() => {
+          setShowQuickCounselling(false);
+          setShowPackageJourney(true);
+        }}
+        consultMinutesUsed={
+          patientQuickCareBinding?.consultMinutesUsed ?? 0
+        }
+        consultMinutesLimit={
+          patientQuickCareBinding?.consultMinutesLimit ?? 0
+        }
       />
     );
   if (showPackageJourney)
@@ -4725,8 +4788,7 @@ const PatientHomeScreen = () => {
                     ? "Demos and paid packages with your doctor."
                     : "Quick consults or browse — change anytime in Profile."}
                 </Text>
-                {(patientCareMode === CARE_MODE.CASUAL ||
-                  patientCareMode === CARE_MODE.SKIP) && (
+                {patientQuickCareBinding?.doctorUserId ? (
                   <View
                     style={{
                       flexDirection: "row",
@@ -4768,16 +4830,17 @@ const PatientHomeScreen = () => {
                           fontSize: RFValue(12),
                         }}
                       >
-                        Quick Solution
+                        Quick Solve
                       </Text>
                       <Text
                         style={{
                           fontSize: RFValue(10),
                           color: theme.textSecondary,
                           marginTop: 2,
+                          textAlign: "center",
                         }}
                       >
-                        ₹10
+                        AI + doctor
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -4822,12 +4885,90 @@ const PatientHomeScreen = () => {
                           fontSize: RFValue(10),
                           color: theme.textSecondary,
                           marginTop: 2,
+                          textAlign: "center",
                         }}
                       >
-                        ₹25
+                        Your doctor
                       </Text>
                     </TouchableOpacity>
                   </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => setShowPackageJourney(true)}
+                    style={{
+                      marginBottom: RFValue(10),
+                      padding: RFValue(14),
+                      borderRadius: RFValue(14),
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                      backgroundColor: theme.bg,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontWeight: "800",
+                        color: theme.textPrimary,
+                        fontSize: RFValue(12),
+                        marginBottom: 4,
+                      }}
+                    >
+                      Quick Solve & Counselling locked
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textSecondary,
+                        lineHeight: RFValue(16),
+                      }}
+                    >
+                      Select a doctor and activate a paid package (Basic, Gold,
+                      or Premium). They then run automatically with that doctor —
+                      no extra doctor picker.
+                    </Text>
+                    <Text
+                      style={{
+                        marginTop: RFValue(8),
+                        fontSize: RFValue(11),
+                        fontWeight: "800",
+                        color: theme.accent,
+                      }}
+                    >
+                      Open package journey →
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {patientQuickCareBinding?.consumerPlan ===
+                  CONSUMER_PLAN.PREMIUM && (
+                  <TouchableOpacity
+                    onPress={() => setShowDietMonitoring(true)}
+                    style={{
+                      marginBottom: RFValue(10),
+                      padding: RFValue(12),
+                      borderRadius: RFValue(14),
+                      backgroundColor: theme.card,
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontWeight: "800",
+                        color: theme.textPrimary,
+                        fontSize: RFValue(12),
+                      }}
+                    >
+                      Diet monitoring (Premium)
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(10),
+                        color: theme.textSecondary,
+                        marginTop: 2,
+                      }}
+                    >
+                      Upload meals for your doctor to review
+                    </Text>
+                  </TouchableOpacity>
                 )}
                 {patientCareMode === CARE_MODE.PACKAGE && (
                   <View
@@ -13087,6 +13228,7 @@ const AuthScreen = ({ onLogin }) => {
   const [patientCondition, setPatientCondition] = useState("");
   const [patientGender, setPatientGender] = useState("");
   const [patientRegAvatar, setPatientRegAvatar] = useState(null);
+  const [patientRegIdDoc, setPatientRegIdDoc] = useState(null);
   const [patientHealthValues, setPatientHealthValues] = useState(
     emptyPatientHealthValues,
   );
@@ -13138,6 +13280,30 @@ const AuthScreen = ({ onLogin }) => {
     } catch (error) {
       console.log("pickRegistrationAvatar error:", error);
       Alert.alert("Photo", error?.message || "Could not add photo.");
+    }
+  };
+
+  const pickRegistrationIdDocument = async () => {
+    try {
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission?.granted) {
+        Alert.alert(
+          "Permission needed",
+          "Please allow photo library access to upload an ID or insurance document.",
+        );
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (!result || result.canceled) return;
+      const asset = result.assets?.[0];
+      if (asset?.uri) setPatientRegIdDoc(asset);
+    } catch (error) {
+      console.log("pickRegistrationIdDocument error:", error);
+      Alert.alert("Document", error?.message || "Could not add document.");
     }
   };
 
@@ -13256,6 +13422,7 @@ const AuthScreen = ({ onLogin }) => {
                   primary_condition: patientCondition.trim(),
                   gender: patientGender,
                   avatarAsset: patientRegAvatar,
+                  registrationDocAsset: patientRegIdDoc,
                   ...buildPatientHealthPayload(patientHealthValues),
                   ...(registrationLanguage.trim()
                     ? { language: registrationLanguage.trim() }
@@ -13947,6 +14114,83 @@ const AuthScreen = ({ onLogin }) => {
                       }}
                     >
                       Remove photo
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    fontWeight: "700",
+                    color: theme.textSecondary,
+                    marginBottom: RFValue(8),
+                  }}
+                >
+                  ID / insurance (recommended)
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    color: theme.textTertiary,
+                    marginBottom: RFValue(8),
+                    lineHeight: RFValue(18),
+                  }}
+                >
+                  Upload a clear photo of a government ID or insurance card so
+                  your care team can verify your account.
+                </Text>
+                <TouchableOpacity
+                  onPress={pickRegistrationIdDocument}
+                  style={{
+                    height: RFValue(100),
+                    borderRadius: RFValue(14),
+                    backgroundColor: theme.card,
+                    borderWidth: 2,
+                    borderColor: theme.inputBorder,
+                    borderStyle: "dashed",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginBottom: RFValue(8),
+                    overflow: "hidden",
+                  }}
+                >
+                  {patientRegIdDoc?.uri ? (
+                    <Image
+                      source={{ uri: patientRegIdDoc.uri }}
+                      style={{ width: "100%", height: "100%" }}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={{ alignItems: "center" }}>
+                      <Ionicons
+                        name="document-text"
+                        size={RFValue(28)}
+                        color={theme.textTertiary}
+                      />
+                      <Text
+                        style={{
+                          color: theme.textTertiary,
+                          marginTop: RFValue(6),
+                          fontSize: RFValue(13),
+                        }}
+                      >
+                        Tap to upload document
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+                {patientRegIdDoc?.uri ? (
+                  <TouchableOpacity
+                    onPress={() => setPatientRegIdDoc(null)}
+                    style={{ marginBottom: RFValue(14) }}
+                  >
+                    <Text
+                      style={{
+                        color: "#DC2626",
+                        fontWeight: "600",
+                        fontSize: RFValue(13),
+                      }}
+                    >
+                      Remove document
                     </Text>
                   </TouchableOpacity>
                 ) : null}
@@ -22843,8 +23087,41 @@ const FamilyHealthScreen = ({ onBack }) => {
 
 const EmergencySOScreen = ({ onBack }) => {
   const { theme } = useTheme();
+  const { patientQuickCareBinding, currentUser } = useAppData();
   const [sosActive, setSosActive] = useState(false);
   const [countdown, setCountdown] = useState(null);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+
+  const requestPersonalAssistant = async () => {
+    if (!currentUser?.id) {
+      Alert.alert("Sign in", "Please log in to request assistance.");
+      return;
+    }
+    if (patientQuickCareBinding?.consumerPlan !== CONSUMER_PLAN.PREMIUM) {
+      Alert.alert(
+        "Premium feature",
+        "Emergency personal assistant coordination is included with the Premium package (doctor package slot 3). Complete that package to enable this option.",
+      );
+      return;
+    }
+    try {
+      setAssistantBusy(true);
+      await createEmergencyAssistantRequest({
+        patientUserId: currentUser.id,
+        doctorUserId: patientQuickCareBinding?.doctorUserId || "",
+        notes:
+          "Emergency SOS — request company personal assistant (hospital / ambulance / ICU coordination).",
+      });
+      Alert.alert(
+        "Request logged",
+        "Your emergency assistant request was submitted. The care desk will coordinate with you and your package doctor. If this is life-threatening, call 108 immediately.",
+      );
+    } catch (e) {
+      Alert.alert("Assistant request", e?.message || "Could not submit.");
+    } finally {
+      setAssistantBusy(false);
+    }
+  };
 
   const triggerSOS = () => {
     setSosActive(true);
@@ -23045,6 +23322,43 @@ const EmergencySOScreen = ({ onBack }) => {
               Tap the button to send an emergency alert to your contacts and
               nearby hospitals
             </Text>
+            {patientQuickCareBinding?.consumerPlan ===
+            CONSUMER_PLAN.PREMIUM ? (
+              <TouchableOpacity
+                onPress={requestPersonalAssistant}
+                disabled={assistantBusy}
+                style={{
+                  marginTop: RFValue(12),
+                  width: "100%",
+                  paddingVertical: RFValue(14),
+                  paddingHorizontal: RFValue(16),
+                  borderRadius: RFValue(14),
+                  backgroundColor: theme.accent,
+                  alignItems: "center",
+                  opacity: assistantBusy ? 0.75 : 1,
+                }}
+              >
+                <Text
+                  style={{
+                    color: "#FFF",
+                    fontWeight: "800",
+                    fontSize: RFValue(14),
+                  }}
+                >
+                  Request personal assistant (Premium)
+                </Text>
+                <Text
+                  style={{
+                    color: "rgba(255,255,255,0.9)",
+                    fontSize: RFValue(11),
+                    marginTop: 4,
+                    textAlign: "center",
+                  }}
+                >
+                  Company coordinator: hospitals, ambulance, ICU support
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </>
         )}
 
@@ -23122,6 +23436,7 @@ const EmergencySOScreen = ({ onBack }) => {
                   </Text>
                 </View>
                 <TouchableOpacity
+                  onPress={() => Linking.openURL(`tel:${contact.phone}`)}
                   style={{
                     width: RFValue(36),
                     height: RFValue(36),
@@ -24218,6 +24533,7 @@ const PatientWoundScreen = () => {
     currentUser,
     refreshAllData,
     requestOpenConversation,
+    patientQuickCareBinding,
   } = useAppData();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
   const handleOpenOfferConversation = useCallback(
@@ -24249,6 +24565,17 @@ const PatientWoundScreen = () => {
           void refreshAllData?.().catch(() => {});
         }}
         patientUserId={currentUser?.id}
+        quickCareBinding={patientQuickCareBinding}
+        onOpenPackageJourney={() => {
+          setShowWoundTabQuickCounselling(false);
+          tabNav?.navigateTab?.("Home");
+        }}
+        consultMinutesUsed={
+          patientQuickCareBinding?.consultMinutesUsed ?? 0
+        }
+        consultMinutesLimit={
+          patientQuickCareBinding?.consultMinutesLimit ?? 0
+        }
       />
     );
   }
@@ -26776,6 +27103,8 @@ export default function App() {
   const [medOrders, setMedOrders] = useState([]);
   const [prescriptions, setPrescriptions] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  /** Paid package doctor + consumer tier (Basic/Gold/Premium) for Quick flows & entitlements. */
+  const [patientQuickCareBinding, setPatientQuickCareBinding] = useState(null);
   const [conversations, setConversations] = useState([]);
   // Cross-screen request to open a specific chat. Set by callers (e.g. doctor
   // "Help" modal, patient quick-request offer arrow); consumed by
@@ -27208,6 +27537,7 @@ export default function App() {
       setPrescriptions([]);
       setConversations([]);
       setAppointments([]);
+      setPatientQuickCareBinding(null);
       return;
     }
 
@@ -27349,12 +27679,48 @@ export default function App() {
             (record) => record.patientId === activeUser.id,
           ),
         );
-        setAppointments(
-          appointmentRecords
-            .filter((record) => record.patient === activeUser.id)
-            .map(mapAppointmentRecord),
-        );
+        const mappedPatientAppts = appointmentRecords
+          .filter((record) => record.patient === activeUser.id)
+          .map(mapAppointmentRecord);
+        setAppointments(mappedPatientAppts);
+        let quickBinding = null;
+        try {
+          const b = await getPatientActiveQuickCareBinding(
+            activeUser.id,
+            patientProfile?.id || null,
+          );
+          if (b?.doctorUserId) {
+            let doctorName = "Your doctor";
+            try {
+              const du = await pb.collection("UsersAuth").getOne(
+                b.doctorUserId,
+                { requestKey: null },
+              );
+              doctorName = String(
+                du?.name || du?.full_name || doctorName,
+              ).trim();
+            } catch (_) {
+              /* ignore */
+            }
+            const ent = entitlementsForConsumerPlan(b.consumerPlan);
+            const consultUsed = minutesUsedWithDoctorThisRollingWeek(
+              mappedPatientAppts,
+              activeUser.id,
+              b.doctorUserId,
+            );
+            quickBinding = {
+              ...b,
+              doctorName,
+              consultMinutesUsed: consultUsed,
+              consultMinutesLimit: ent.consultationMinutesPerWeek,
+            };
+          }
+        } catch (e) {
+          console.log("patientQuickCareBinding:", e?.message);
+        }
+        setPatientQuickCareBinding(quickBinding);
       } else if (activeRole === "doctor") {
+        setPatientQuickCareBinding(null);
         setWounds(allWounds);
         setMedOrders(allOrders);
         setPrescriptions(
@@ -27368,6 +27734,7 @@ export default function App() {
             .map(mapAppointmentRecord),
         );
       } else if (activeRole === "pharmacy") {
+        setPatientQuickCareBinding(null);
         setWounds(allWounds.filter((record) => record.hasPharmacy));
         // Step 6: pharmacies only see orders addressed to them, OR legacy
         // doctor-prescribed orders (which have no `pharmacy` field set yet).
@@ -27390,6 +27757,7 @@ export default function App() {
       setPrescriptions([]);
       setConversations([]);
       setAppointments([]);
+      setPatientQuickCareBinding(null);
     } finally {
       setDataLoading(false);
     }
@@ -29034,6 +29402,62 @@ export default function App() {
     if (!conversationId || !currentUser?.id) return null;
     const trimmed = String(text || "").trim();
     if (!trimmed) return null;
+
+    const gateReply = async (body) => {
+      let userRecord = null;
+      try {
+        userRecord = await createEncryptedMessage(
+          {
+            conversation: conversationId,
+            sender: currentUser.id,
+            kind: ASSISTANT_USER_MESSAGE_KIND,
+          },
+          trimmed,
+        );
+      } catch (error) {
+        console.log("sendAssistantMessage user write error:", error?.message);
+        return null;
+      }
+      let replyRecord = null;
+      try {
+        replyRecord = await createEncryptedMessage(
+          {
+            conversation: conversationId,
+            kind: ASSISTANT_REPLY_MESSAGE_KIND,
+          },
+          body,
+        );
+        await pb.collection("conversations").update(conversationId, {
+          lastMessageAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.log("sendAssistantMessage reply error:", error?.message);
+      }
+      return {
+        userMessage: mapMessageRecord(userRecord),
+        replyMessage: replyRecord ? mapMessageRecord(replyRecord) : null,
+      };
+    };
+
+    if (userRole === "patient") {
+      if (!patientQuickCareBinding?.doctorUserId) {
+        return gateReply(
+          "To use the Health Assistant, first choose a doctor and complete a paid package (Basic, Gold, or Premium) from Home → Package journey. Quick Solve uses the same doctor automatically once enrolled.",
+        );
+      }
+      const ent = entitlementsForConsumerPlan(
+        patientQuickCareBinding.consumerPlan,
+      );
+      if (ent.aiChatDailyLimit != null) {
+        const used = await getAiAssistantUsageToday(currentUser.id);
+        if (used >= ent.aiChatDailyLimit) {
+          return gateReply(
+            `You have reached today's AI message limit for the ${patientQuickCareBinding.consumerPlan === CONSUMER_PLAN.BASIC ? "Basic" : ""} plan (${ent.aiChatDailyLimit} messages). Gold or Premium packages include unlimited AI chat.`,
+          );
+        }
+      }
+    }
+
     // 1. Post the user's question as an encrypted assistant_user message.
     let userRecord = null;
     try {
@@ -29079,6 +29503,14 @@ export default function App() {
     } catch (error) {
       console.log("sendAssistantMessage reply error:", error?.message);
     }
+    if (userRole === "patient" && patientQuickCareBinding?.doctorUserId) {
+      const ent = entitlementsForConsumerPlan(
+        patientQuickCareBinding.consumerPlan,
+      );
+      if (ent.aiChatDailyLimit != null) {
+        void incrementAiAssistantUsageToday(currentUser.id);
+      }
+    }
     return {
       userMessage: mapMessageRecord(userRecord),
       replyMessage: replyRecord ? mapMessageRecord(replyRecord) : null,
@@ -29092,6 +29524,14 @@ export default function App() {
   // -------------------------------------------------------------------------
   const runSideEffectCheck = async ({ items, patient } = {}) => {
     const patientFields = patient || patientProfile || {};
+    if (userRole === "patient") {
+      if (
+        !patientQuickCareBinding?.doctorUserId ||
+        patientQuickCareBinding.consumerPlan !== CONSUMER_PLAN.PREMIUM
+      ) {
+        return mergeSideEffectCheckWarnings(items, patientFields, []);
+      }
+    }
     const payload = {
       kind: "side_effect_check",
       items,
@@ -29508,6 +29948,7 @@ export default function App() {
     fetchPharmacies,
     savePharmacyProfile,
     setPatientProfile,
+    patientQuickCareBinding,
     patientCareMode:
       userRole === "patient"
         ? effectiveCareMode(patientProfile, localCareMode)

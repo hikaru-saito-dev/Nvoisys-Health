@@ -20,6 +20,170 @@ export const CARE_MODE = {
   SKIP: "not_planning",
 };
 
+/**
+ * Consumer plans (Basic / Gold / Premium) map from the doctor's **package slot**
+ * the patient paid for: slot 1 → Basic, 2 → Gold, 3 → Premium.
+ */
+export const CONSUMER_PLAN = {
+  BASIC: "basic",
+  GOLD: "gold",
+  PREMIUM: "premium",
+};
+
+export function packageSlotToConsumerPlan(slot) {
+  const n = Number(slot);
+  if (n === 2) return CONSUMER_PLAN.GOLD;
+  if (n === 3) return CONSUMER_PLAN.PREMIUM;
+  return CONSUMER_PLAN.BASIC;
+}
+
+export function consumerPlanDisplayName(plan) {
+  const p = String(plan || "").toLowerCase();
+  if (p === CONSUMER_PLAN.GOLD) return "Gold";
+  if (p === CONSUMER_PLAN.PREMIUM) return "Premium";
+  return "Basic";
+}
+
+/** Entitlements for product-spec Basic / Gold / Premium (aligned to package slots 1–3). */
+export function entitlementsForConsumerPlan(plan) {
+  const p = String(plan || CONSUMER_PLAN.BASIC).toLowerCase();
+  const isBasic = p === CONSUMER_PLAN.BASIC;
+  const isGold = p === CONSUMER_PLAN.GOLD;
+  const isPremium = p === CONSUMER_PLAN.PREMIUM;
+  return {
+    plan: p,
+    /** null = unlimited daily AI assistant messages */
+    aiChatDailyLimit: isBasic ? 25 : null,
+    /** Rolling 7-day cap on doctor consultation time (minutes) with the package doctor. */
+    consultationMinutesPerWeek: isBasic ? 180 : isGold ? 300 : 10080,
+    sideEffectAi: isPremium,
+    emergencyAssistant: isPremium,
+    dietDoctorReview: isPremium,
+    doctorAccess247: isPremium,
+  };
+}
+
+const NVHS_DOCTOR_TAG_RE = /^\[NVHS_DOCTOR:([^\]]+)\]\s*/;
+
+/** Prefix notes/topic so Quick requests route to the patient's package doctor without a picker. */
+export function prefixQuickRequestTextWithDoctor(doctorUserId, text) {
+  const d = String(doctorUserId || "").trim();
+  const body = String(text || "");
+  if (!d) return body;
+  return `[NVHS_DOCTOR:${d}]\n${body}`;
+}
+
+export function parseQuickRequestDoctorTag(text) {
+  const s = String(text || "");
+  const m = s.match(NVHS_DOCTOR_TAG_RE);
+  if (!m) return { doctorUserId: null, body: s };
+  return { doctorUserId: m[1], body: s.replace(NVHS_DOCTOR_TAG_RE, "") };
+}
+
+function filterQuickRowsForDoctor(rows, doctorUserId) {
+  const id = String(doctorUserId || "").trim();
+  if (!id) return rows || [];
+  return (rows || []).filter((row) => {
+    const raw =
+      row.notes ??
+      row.topic ??
+      row.description ??
+      row.message ??
+      "";
+    const tagged = parseQuickRequestDoctorTag(String(raw || "")).doctorUserId;
+    if (!tagged) return true;
+    return tagged === id;
+  });
+}
+
+export async function getPatientActiveQuickCareBinding(
+  patientAuthUserId,
+  patientProfileIdHint = null,
+) {
+  const uid = String(patientAuthUserId || "").trim();
+  if (!uid) return null;
+  const pairs = await listActivePackagePairsForPatient(
+    uid,
+    patientProfileIdHint,
+  );
+  if (!pairs.length) return null;
+  const sorted = [...pairs].sort((a, b) =>
+    String(b.created || "").localeCompare(String(a.created || "")),
+  );
+  const top = sorted[0];
+  const doctorUserId = String(top.doctor_user_id || "").trim();
+  if (!doctorUserId) return null;
+  const packageSlot =
+    top.package_slot != null && top.package_slot !== ""
+      ? Number(top.package_slot)
+      : 1;
+  const consumerPlan = packageSlotToConsumerPlan(
+    Number.isFinite(packageSlot) ? packageSlot : 1,
+  );
+  return {
+    doctorUserId,
+    packageSlot: Number.isFinite(packageSlot) ? packageSlot : 1,
+    consumerPlan,
+    offerId: top.offerId || top.id || null,
+    title: top.title || "Care package",
+    created: top.created || "",
+  };
+}
+
+const aiUsageDayKey = () => new Date().toISOString().slice(0, 10);
+
+export async function getAiAssistantUsageToday(patientUserId) {
+  const uid = String(patientUserId || "").trim();
+  if (!uid) return 0;
+  const key = `nvhs_ai_usage_${uid}_${aiUsageDayKey()}`;
+  try {
+    const v = await AsyncStorage.getItem(key);
+    return Math.max(0, Number(v) || 0);
+  } catch {
+    return 0;
+  }
+}
+
+export async function incrementAiAssistantUsageToday(patientUserId) {
+  const uid = String(patientUserId || "").trim();
+  if (!uid) return 0;
+  const key = `nvhs_ai_usage_${uid}_${aiUsageDayKey()}`;
+  const next = (await getAiAssistantUsageToday(uid)) + 1;
+  try {
+    await AsyncStorage.setItem(key, String(next));
+  } catch {
+    // ignore
+  }
+  return next;
+}
+
+/**
+ * Approximate consultation minutes used in the last 7 days with a given doctor
+ * (completed appointments only; 45 min each if schema has no duration).
+ */
+export function minutesUsedWithDoctorThisRollingWeek(
+  appointments,
+  patientUserId,
+  doctorUserId,
+) {
+  const pid = String(patientUserId || "").trim();
+  const did = String(doctorUserId || "").trim();
+  if (!pid || !did) return 0;
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  let sum = 0;
+  for (const a of appointments || []) {
+    if (String(a.patientId || a.patient || "") !== pid) continue;
+    if (String(a.doctorUserId || "") !== did) continue;
+    const st = String(a.statusKey || a.status || "").toLowerCase();
+    if (st !== "completed") continue;
+    const t = new Date(a.scheduledAt || 0).getTime();
+    if (!Number.isFinite(t) || t < weekAgo) continue;
+    const explicit = Number(a.raw?.duration_minutes ?? a.durationMinutes);
+    sum += Number.isFinite(explicit) && explicit > 0 ? explicit : 45;
+  }
+  return sum;
+}
+
 /** Package Doctor demos: professional or specialist tier only (RMP/clinic reserved for quick services). */
 export function doctorTierEligibleForPackageMode(tier) {
   const t = String(tier || "").toLowerCase();
@@ -456,6 +620,38 @@ async function notifyLocal(title, body) {
     });
   } catch {
     // ignore
+  }
+}
+
+/** Premium: log a concierge hand-off request (optional PocketBase collection). */
+export async function createEmergencyAssistantRequest({
+  patientUserId,
+  doctorUserId = "",
+  notes = "",
+} = {}) {
+  const patient = String(patientUserId || "").trim();
+  if (!patient) throw new Error("Not signed in.");
+  const payload = {
+    patient,
+    notes: String(notes || "").trim() || "SOS — request personal assistant",
+    status: "pending",
+    requested_at: new Date().toISOString(),
+  };
+  if (String(doctorUserId || "").trim()) {
+    payload.package_doctor = String(doctorUserId).trim();
+  }
+  try {
+    return await pb.collection("emergency_assistant_requests").create(payload);
+  } catch (error) {
+    console.log(
+      "createEmergencyAssistantRequest skipped:",
+      formatPocketBaseClientError(error) || error?.message,
+    );
+    await notifyLocal(
+      "Emergency assistant",
+      "Request noted on device. Add collection `emergency_assistant_requests` in PocketBase to sync. Call 108 if urgent.",
+    );
+    return { localOnly: true, error: formatPocketBaseClientError(error) };
   }
 }
 
@@ -2152,6 +2348,14 @@ async function persistActivePackagePair({
   startedAt,
 }) {
   if (!offerId || !patientUserId || !doctorUserId) return null;
+  try {
+    const profileId = await resolvePatientProfileIdForAuthUser(patientUserId);
+    if (profileId) {
+      await persistPreferredQuickProvider(profileId, doctorUserId);
+    }
+  } catch (e) {
+    console.log("persistActivePackagePair preferred doctor:", e?.message);
+  }
   const base = {
     patient: patientUserId,
     doctor: doctorUserId,
@@ -2878,11 +3082,16 @@ export async function createQuickSolutionRequest({
   notes,
   privateMode,
   imagePart,
+  assignedDoctorUserId = "",
 }) {
   await assertUserHasCoins(patientUserId, 10);
+  const mergedNotes = prefixQuickRequestTextWithDoctor(
+    assignedDoctorUserId,
+    notes,
+  );
   const base = {
     patient: patientUserId,
-    notes: String(notes || ""),
+    notes: String(mergedNotes || ""),
     private_mode: Boolean(privateMode),
     patient_cost_coins: 10,
     platform_fee_coins: 5,
@@ -2894,7 +3103,7 @@ export async function createQuickSolutionRequest({
     if (imagePart?.uri) {
       const form = new FormData();
       form.append("patient", patientUserId);
-      form.append("notes", base.notes);
+      form.append("notes", mergedNotes);
       form.append("private_mode", privateMode ? "true" : "false");
       form.append("patient_cost_coins", "10");
       form.append("platform_fee_coins", "5");
@@ -2929,12 +3138,20 @@ export async function createQuickSolutionRequest({
   }
 }
 
-export async function createQuickCounsellingRequest({ patientUserId, topic }) {
+export async function createQuickCounsellingRequest({
+  patientUserId,
+  topic,
+  assignedDoctorUserId = "",
+}) {
   await assertUserHasCoins(patientUserId, 25);
+  const mergedTopic = prefixQuickRequestTextWithDoctor(
+    assignedDoctorUserId,
+    String(topic || "").trim() || "General",
+  );
   try {
     const row = await pb.collection("quick_counselling_requests").create({
       patient: patientUserId,
-      topic: String(topic || "").trim() || "General",
+      topic: mergedTopic,
       patient_cost_coins: 25,
       platform_fee_coins: 10,
       provider_coins: 15,
@@ -2993,21 +3210,25 @@ export async function listQuickCounsellingRequests(patientUserId) {
  * PocketBase: allow authenticated staff/doctors to list `status="queued"` (and expand `patient` if you want names).
  * Errors propagate so the UI can show 403 / rule failures instead of looking like an empty queue.
  */
-export async function listQueuedQuickSolutionRequestsForProvider() {
+export async function listQueuedQuickSolutionRequestsForProvider(
+  doctorFilterUserId = "",
+) {
   try {
-    return await pb.collection("quick_solution_requests").getFullList({
+    const rows = await pb.collection("quick_solution_requests").getFullList({
       requestKey: null,
       sort: "-created",
       filter: `status="queued"`,
       expand: "patient",
     });
+    return filterQuickRowsForDoctor(rows, doctorFilterUserId);
   } catch (e1) {
     try {
-      return await pb.collection("quick_solution_requests").getFullList({
+      const rows = await pb.collection("quick_solution_requests").getFullList({
         requestKey: null,
         sort: "-created",
         filter: `status="queued"`,
       });
+      return filterQuickRowsForDoctor(rows, doctorFilterUserId);
     } catch (e2) {
       const msg =
         formatPocketBaseClientError(e2) ||
@@ -3024,21 +3245,25 @@ export async function listQueuedQuickSolutionRequestsForProvider() {
  * Queued Quick Counselling rows for RMP dashboards.
  * PocketBase: same list rules as quick_solution_requests for your role.
  */
-export async function listQueuedQuickCounsellingRequestsForProvider() {
+export async function listQueuedQuickCounsellingRequestsForProvider(
+  doctorFilterUserId = "",
+) {
   try {
-    return await pb.collection("quick_counselling_requests").getFullList({
+    const rows = await pb.collection("quick_counselling_requests").getFullList({
       requestKey: null,
       sort: "-created",
       filter: `status="queued"`,
       expand: "patient",
     });
+    return filterQuickRowsForDoctor(rows, doctorFilterUserId);
   } catch (e1) {
     try {
-      return await pb.collection("quick_counselling_requests").getFullList({
+      const rows = await pb.collection("quick_counselling_requests").getFullList({
         requestKey: null,
         sort: "-created",
         filter: `status="queued"`,
       });
+      return filterQuickRowsForDoctor(rows, doctorFilterUserId);
     } catch (e2) {
       const msg =
         formatPocketBaseClientError(e2) ||
