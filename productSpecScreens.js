@@ -1,17 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   AppState,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -39,6 +34,7 @@ import {
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
   createQuickSolutionRequest,
+  entitlementsForConsumerPlan,
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
   doctorPackageFeeErrors,
@@ -48,7 +44,9 @@ import {
   doctorTierEligibleForPackageMode,
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
+  getAiAssistantUsageToday,
   getCoinBalanceForUser,
+  incrementAiAssistantUsageToday,
   getDoctorCoinBalance,
   listActivePackagePairsForDoctor,
   listActivePackagePairsForPatient,
@@ -642,6 +640,7 @@ export function DoctorPackageSetupScreen({
 }) {
   const insets = useSafeAreaInsets();
   const keyboardInset = useKeyboardBottomInset();
+  const keyboardPad = useKeyboardBottomPad();
   const packageFeeScrollRef = useRef(null);
   const packageFeeScrollYRef = useRef(0);
   const focusedFeeSlotIndexRef = useRef(-1);
@@ -845,21 +844,23 @@ export function DoctorPackageSetupScreen({
       >
         <ScrollView
           ref={packageFeeScrollRef}
+          style={{ flex: 1 }}
           onScroll={(e) => {
             packageFeeScrollYRef.current = e.nativeEvent.contentOffset.y;
           }}
           scrollEventThrottle={16}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          nestedScrollEnabled
           contentContainerStyle={{
             padding: S.pad,
             paddingBottom:
               insets.bottom +
               32 +
               androidKeyboardPad(keyboardInset) +
-              (Platform.OS === "android" && keyboardInset.height > 0 ? 96 : 0),
+              keyboardExtraScrollPad(keyboardPad),
           }}
-          nestedScrollEnabled
         >
         <Text
           style={{ color: theme.textPrimary, fontSize: 22, fontWeight: "900" }}
@@ -874,10 +875,8 @@ export function DoctorPackageSetupScreen({
             marginBottom: 20,
           }}
         >
-          Package names, periods, descriptions, and included features are fixed
-          by the app and are the same for every doctor. You only set your
-          service fee (INR) for each of the three tiers. Use Skip if you want to
-          finish this later from your profile; you can return any time.
+          Enter your INR fee for Basic, Gold, and Premium. Skip and finish later
+          from Profile.
         </Text>
 
         {slots.map((slot, index) => (
@@ -904,8 +903,8 @@ export function DoctorPackageSetupScreen({
             <Text
               style={{
                 color: theme.textSecondary,
-                fontSize: S.small,
-                marginBottom: 4,
+                fontSize: 11,
+                marginBottom: 6,
               }}
             >
               Minimum ₹
@@ -949,10 +948,7 @@ export function DoctorPackageSetupScreen({
               Your service fee (INR)
             </Text>
             <TextInput
-              ref={(el) => {
-                feeInputRefs.current[index] = el;
-              }}
-              placeholder="e.g. 8000"
+              placeholder={`e.g. ${packageSlotMinimumFeeInr(slot.slot)}`}
               placeholderTextColor={theme.textTertiary}
               keyboardType="numeric"
               value={String(slot.total_amount_inr ?? "")}
@@ -1232,13 +1228,241 @@ export function MedicalRecordsScreen({
   );
 }
 
-export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
+/** Premium: daily diet / meal log as medical_records with `[Diet log]` title prefix. */
+export function DietMonitoringScreen({
+  theme,
+  onBack,
+  patientUserId,
+  doctorName = "",
+  /** Bottom inset above tab bar (see App.js tab bar height). */
+  scrollContentBottomInset = 100,
+}) {
+  const insets = useSafeAreaInsets();
+  const keyboardPad = useKeyboardBottomPad();
+  const scrollRef = useRef(null);
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const pickAndUpload = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission", "Photo access is needed to upload a meal photo.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (res.canceled) return;
+      const asset = res.assets?.[0];
+      if (!asset?.uri) return;
+      const uri = asset.uri;
+      const ext = String(uri.split(".").pop() || "jpg")
+        .split("?")[0]
+        .toLowerCase();
+      const mime =
+        ext === "png"
+          ? "image/png"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/jpeg";
+      const part = {
+        uri: Platform.OS === "ios" ? uri.replace("file://", "") : uri,
+        name: asset.fileName || `diet_${Date.now()}.jpg`,
+        type: mime,
+      };
+      const day = new Date().toISOString().slice(0, 10);
+      const note = String(description || "").trim();
+      const title = `[Diet log] ${day}${note ? ` — ${note.slice(0, 80)}` : ""}`;
+      setBusy(true);
+      await uploadMedicalRecord({
+        patientUserId,
+        title,
+        filePart: part,
+      });
+      setDescription("");
+      Alert.alert(
+        "Uploaded",
+        doctorName
+          ? `${doctorName} can review diet-tagged uploads under Medical records and in chat.`
+          : "Your doctor can review diet-tagged uploads under Medical records.",
+      );
+      onBack?.();
+    } catch (e) {
+      Alert.alert("Diet log", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
+  const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
+  const bottomPad = S.pad + tabAndSafe + keyboardScrollPad;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: S.pad,
+          paddingBottom: S.pad,
+          paddingTop: (insets.top || 0) + 12,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: theme.cardBorder,
+        }}
+      >
+        <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+          <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+        </TouchableOpacity>
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontSize: S.title,
+            fontWeight: "800",
+          }}
+        >
+          Diet monitoring
+        </Text>
+      </View>
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: bottomPad,
+        }}
+      >
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginBottom: 12,
+              lineHeight: 20,
+            }}
+          >
+            Premium: upload today’s meals or diet plan as a photo. Entries are
+            stored like other medical files so your package doctor can review and
+            warn you in follow-up or chat.
+          </Text>
+          <TextInput
+            placeholder="Short note (optional), e.g. Lunch — rice, dal, salad"
+            placeholderTextColor={theme.textTertiary}
+            value={description}
+            onChangeText={setDescription}
+            onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: 14,
+              padding: 14,
+              color: theme.textPrimary,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+              marginBottom: 12,
+            }}
+          />
+          <TouchableOpacity
+            onPress={pickAndUpload}
+            disabled={busy}
+            style={{
+              backgroundColor: theme.accent,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+              opacity: busy ? 0.75 : 1,
+            }}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "800" }}>
+                Upload meal / diet photo
+              </Text>
+            )}
+          </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
+}
+
+export function QuickSolutionScreen({
+  theme,
+  onBack,
+  patientUserId,
+  /** Active paid package binding; Quick Solve is disabled without it. */
+  quickCareBinding = null,
+  onOpenPackageJourney,
+  /** async (question: string) => reply text */
+  onAskAi,
+  consultMinutesUsed = 0,
+  consultMinutesLimit = 0,
+  scrollContentBottomInset = 100,
+}) {
   const insets = useSafeAreaInsets();
   const keyboardPad = useKeyboardBottomPad();
   const scrollRef = useRef(null);
   const [notes, setNotes] = useState("");
   const [privateMode, setPrivateMode] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiReply, setAiReply] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+
+  const ent = useMemo(
+    () =>
+      quickCareBinding?.consumerPlan != null
+        ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
+        : null,
+    [quickCareBinding?.consumerPlan],
+  );
+
+  const runAi = async () => {
+    const q = String(aiQuestion || "").trim();
+    if (!q) {
+      Alert.alert("AI", "Type a question first.");
+      return;
+    }
+    if (!onAskAi) {
+      Alert.alert("AI", "Assistant is not configured on this build.");
+      return;
+    }
+    const limit = ent?.aiChatDailyLimit;
+    if (typeof limit === "number" && limit > 0) {
+      try {
+        const used = await getAiAssistantUsageToday(patientUserId);
+        if (used >= limit) {
+          Alert.alert(
+            "Daily limit",
+            "You have reached today's AI message limit for your plan.",
+          );
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    setAiBusy(true);
+    try {
+      const reply = await onAskAi(q);
+      const text = String(reply || "").trim();
+      setAiReply(text || "(empty reply)");
+      if (typeof limit === "number" && limit > 0) {
+        try {
+          await incrementAiAssistantUsageToday(patientUserId);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (e) {
+      setAiReply(e?.message || "Could not get AI answer.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const submit = async () => {
     try {
@@ -1267,6 +1491,77 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
   const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
   const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
 
+  if (!quickCareBinding?.doctorUserId) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: S.pad,
+            paddingBottom: S.pad,
+            paddingTop: (insets.top || 0) + 12,
+          }}
+        >
+          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: S.title,
+              fontWeight: "800",
+            }}
+          >
+            Quick Solve
+          </Text>
+        </View>
+        <ScrollView
+          style={{ flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: scrollBottomPad,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              lineHeight: 22,
+              marginBottom: 16,
+            }}
+          >
+            Choose a doctor and complete a paid package (Basic, Gold, or Premium)
+            first. Quick Solve and Quick Counselling then work automatically with
+            that doctor — you will not pick a doctor again here.
+          </Text>
+          <TouchableOpacity
+            onPress={() => onOpenPackageJourney?.()}
+            style={{
+              backgroundColor: theme.accent,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Open package journey
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
+  const consultHint =
+    ent && consultMinutesLimit > 0
+      ? `Consultation time this week with ${quickCareBinding.doctorName || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
+      : "";
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <View
@@ -1291,7 +1586,142 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
           Quick Solution
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.pad }}>
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: scrollBottomPad,
+        }}
+      >
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 10,
+            fontSize: S.small,
+          }}
+        >
+          Package: {planLabel} · Routed to{" "}
+          {quickCareBinding.doctorName || "your doctor"} (no doctor picker
+          here).
+        </Text>
+        {consultHint ? (
+          <Text
+            style={{
+              color: theme.textTertiary,
+              marginBottom: 14,
+              fontSize: 11,
+              lineHeight: 16,
+            }}
+          >
+            {consultHint}
+          </Text>
+        ) : null}
+
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+            fontSize: S.body,
+          }}
+        >
+          Instant AI guidance
+        </Text>
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 10,
+            fontSize: S.small,
+          }}
+        >
+          AI-assisted answers for common concerns. This does not replace your
+          doctor; urgent issues need emergency care.
+        </Text>
+        <TextInput
+          placeholder="Ask anything (symptoms, medicines, lifestyle)…"
+          placeholderTextColor={theme.textTertiary}
+          multiline
+          value={aiQuestion}
+          onChangeText={setAiQuestion}
+          onFocus={() => {
+            if (Platform.OS === "ios") {
+              requestAnimationFrame(() =>
+                scrollRef.current?.scrollTo({ y: 0, animated: true }),
+              );
+            }
+          }}
+          style={{
+            minHeight: 100,
+            backgroundColor: theme.card,
+            borderRadius: 14,
+            padding: 14,
+            color: theme.textPrimary,
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            textAlignVertical: "top",
+            marginBottom: 10,
+          }}
+        />
+        <TouchableOpacity
+          onPress={runAi}
+          disabled={aiBusy}
+          style={{
+            backgroundColor: theme.accent,
+            padding: 14,
+            borderRadius: 14,
+            alignItems: "center",
+            marginBottom: 16,
+          }}
+        >
+          {aiBusy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Get AI answer
+            </Text>
+          )}
+        </TouchableOpacity>
+        {aiReply ? (
+          <View
+            style={{
+              backgroundColor: theme.card,
+              padding: 14,
+              borderRadius: 14,
+              marginBottom: 20,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: 11,
+                fontWeight: "700",
+                marginBottom: 6,
+              }}
+            >
+              AI REPLY
+            </Text>
+            <Text style={{ color: theme.textPrimary, lineHeight: 22 }}>
+              {aiReply}
+            </Text>
+          </View>
+        ) : null}
+
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+            fontSize: S.body,
+          }}
+        >
+          Doctor review (10 coins)
+        </Text>
         <Text
           style={{
             color: theme.textSecondary,
@@ -1359,8 +1789,8 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
           onPress={submit}
           disabled={busy}
           style={{
-            marginTop: 20,
-            backgroundColor: theme.accent,
+            marginTop: 12,
+            backgroundColor: theme.success || "#059669",
             padding: 16,
             borderRadius: 16,
             alignItems: "center",
@@ -1385,6 +1815,11 @@ export function QuickCounsellingScreen({
   patientUserId,
   /** When true, show copy tuned for Wound tab entry (same API, no image). */
   fromWoundTracker = false,
+  quickCareBinding = null,
+  onOpenPackageJourney,
+  consultMinutesUsed = 0,
+  consultMinutesLimit = 0,
+  scrollContentBottomInset = 100,
 }) {
   const insets = useSafeAreaInsets();
   const keyboardPad = useKeyboardBottomPad();
@@ -1411,6 +1846,74 @@ export function QuickCounsellingScreen({
       setBusy(false);
     }
   };
+
+  if (!quickCareBinding?.doctorUserId) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: S.pad,
+            paddingBottom: S.pad,
+            paddingTop: (insets.top || 0) + 12,
+          }}
+        >
+          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
+            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: S.title,
+              fontWeight: "800",
+            }}
+          >
+            Quick Counselling
+          </Text>
+        </View>
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: scrollBottomPad,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              lineHeight: 22,
+              marginBottom: 16,
+            }}
+          >
+            Activate a paid doctor package first. Quick Counselling then queues
+            directly with that doctor — no separate doctor selection here.
+          </Text>
+          <TouchableOpacity
+            onPress={() => onOpenPackageJourney?.()}
+            style={{
+              backgroundColor: theme.success,
+              padding: 16,
+              borderRadius: 16,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Open package journey
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <View
@@ -1435,30 +1938,28 @@ export function QuickCounsellingScreen({
           Quick Counselling
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.pad }}>
-        <Text
-          style={{
-            color: theme.textSecondary,
-            marginBottom: 12,
-            fontSize: S.small,
-          }}
-        >
-          {fromWoundTracker
-            ? "₹25 (25 coins) — video call with a verified RMP/clinic doctor. Platform 10 coins, doctor/clinic 15 coins. No wound photo; describe your concerns below."
-            : "₹25 (25 coins) - platform 10 coins, doctor/clinic 15 coins."}
-        </Text>
-        {fromWoundTracker ? (
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: scrollBottomPad,
+        }}
+      >
           <Text
             style={{
-              color: theme.textTertiary,
+              color: theme.textSecondary,
               marginBottom: 12,
               fontSize: S.small,
             }}
           >
-            Separate from Quick Solution (₹10 wound snap). Use this for a full
-            consultation by video call instead of uploading a wound image.
+            {planLabel} plan · ₹25 (25 coins) — queued for{" "}
+            {quickCareBinding.doctorName || "your package doctor"}.
           </Text>
-        ) : null}
+        
         <TextInput
           placeholder={
             fromWoundTracker
@@ -3082,6 +3583,12 @@ export function PackageMeetingDoctorPanel({ theme }) {
   const [modalMeetingId, setModalMeetingId] = useState(null);
   const [altSlotTimes, setAltSlotTimes] = useState([null, null, null, null]);
   const [altPicker, setAltPicker] = useState(null);
+  const [openTracks, setOpenTracks] = useState({
+    pending: true,
+    discussing: false,
+    confirmedDemo: false,
+    closed: false,
+  });
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -3353,8 +3860,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
               marginBottom: 8,
             }}
           >
-            Local test record (same device as patient) - sync requires saving to
-            PocketBase `appointments`.
+            Local-only (not synced to server).
           </Text>
         ) : null}
         <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
@@ -3514,7 +4020,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
                   marginBottom: 8,
                 }}
               >
-                Waiting for patient to pick a slot.
+                Waiting for patient.
               </Text>
               <TouchableOpacity
                 disabled={busy}
@@ -3541,19 +4047,7 @@ export function PackageMeetingDoctorPanel({ theme }) {
             <Text
               style={{ color: theme.success, fontSize: 11, fontWeight: "700" }}
             >
-              Confirmed - reminder 30 min before.
-            </Text>
-            <Text
-              style={{
-                color: theme.textTertiary,
-                fontSize: 11,
-                marginTop: 6,
-                lineHeight: 16,
-              }}
-            >
-              After your demo call, use Home → Upcoming Appointments on this
-              patient’s card → Ask package to send a catalogue option (payment
-              is tracked there).
+              Confirmed · reminder 30 min before.
             </Text>
           </View>
         ) : null}
@@ -3561,58 +4055,165 @@ export function PackageMeetingDoctorPanel({ theme }) {
     );
   };
 
-  const sectionHeader = (title, blurb, noTopMargin) => (
-    <View style={{ marginTop: noTopMargin ? 0 : 16, marginBottom: 8 }}>
-      <Text
-        style={{ fontSize: 15, fontWeight: "800", color: theme.textPrimary }}
+  const toggleTrackSection = (key) => {
+    setOpenTracks((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const renderTrackSection = (sectionKey, title, list, readOnly) => {
+    const expanded = !!openTracks[sectionKey];
+    const count = list.length;
+    const isFirst = sectionKey === "pending";
+    return (
+      <View
+        key={sectionKey}
+        style={{
+          borderTopWidth: isFirst ? 0 : StyleSheet.hairlineWidth,
+          borderTopColor: theme.cardBorder,
+          paddingTop: isFirst ? 0 : 10,
+          marginTop: isFirst ? 0 : 10,
+        }}
       >
-        {title}
-      </Text>
-      {blurb ? (
-        <Text
+        <TouchableOpacity
+          onPress={() => toggleTrackSection(sectionKey)}
+          activeOpacity={0.75}
           style={{
-            color: theme.textTertiary,
-            fontSize: 11,
-            marginTop: 4,
-            lineHeight: 16,
+            flexDirection: "row",
+            alignItems: "center",
+            paddingVertical: 4,
           }}
         >
-          {blurb}
-        </Text>
-      ) : null}
-    </View>
-  );
-
-  const emptyLine = (text) => (
-    <Text
-      style={{ color: theme.textTertiary, fontSize: S.small, marginBottom: 6 }}
-    >
-      {text}
-    </Text>
-  );
+          <Ionicons
+            name={expanded ? "chevron-down" : "chevron-forward"}
+            size={18}
+            color={theme.textSecondary}
+            style={{ marginRight: 8 }}
+          />
+          <Text
+            style={{
+              flex: 1,
+              fontSize: 15,
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            {title}
+          </Text>
+          <View
+            style={{
+              minWidth: 28,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 10,
+              backgroundColor: theme.bg,
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 12,
+                fontWeight: "800",
+                color: theme.textSecondary,
+              }}
+            >
+              {count}
+            </Text>
+          </View>
+        </TouchableOpacity>
+        {expanded ? (
+          count === 0 ? (
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: S.small,
+                paddingVertical: 8,
+                paddingLeft: 26,
+              }}
+            >
+              None
+            </Text>
+          ) : (
+            <ScrollView
+              nestedScrollEnabled
+              style={{ maxHeight: 320, marginTop: 8 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {list.map((x) => renderMeetingCard(x, { readOnly }))}
+            </ScrollView>
+          )
+        ) : null}
+      </View>
+    );
+  };
 
   return (
-    <View style={{ marginBottom: 16 }}>
-      <Text
+    <View
+      style={{
+        marginBottom: 16,
+        backgroundColor: theme.card,
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.cardBorder,
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.05,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 8,
+        elevation: 2,
+      }}
+    >
+      <View
         style={{
-          fontSize: S.title,
-          fontWeight: "800",
-          color: theme.textPrimary,
-          marginBottom: 8,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: rows.length === 0 ? 10 : 12,
         }}
       >
-        Booked package meetings
-      </Text>
-      <Text
-        style={{
-          color: theme.textSecondary,
-          fontSize: S.small,
-          marginBottom: 10,
-        }}
-      >
-        Flow: pending → discussing (alternate times) → confirmed demo → package
-        offer from Upcoming Appointments → declined/cancelled history.
-      </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              backgroundColor: theme.accentLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: 10,
+            }}
+          >
+            <Ionicons name="calendar" size={22} color={theme.accent} />
+          </View>
+          <Text
+            style={{
+              fontSize: S.title,
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            Booking Tracks
+          </Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => void onRefresh()}
+          disabled={refreshing}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: theme.accentLight,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Ionicons
+            name="refresh"
+            size={22}
+            color={theme.accent}
+            style={{ opacity: refreshing ? 0.45 : 1 }}
+          />
+        </TouchableOpacity>
+      </View>
       <ScrollView
         nestedScrollEnabled
         style={{ maxHeight: 520 }}
@@ -3625,44 +4226,27 @@ export function PackageMeetingDoctorPanel({ theme }) {
         }
       >
         {rows.length === 0 ? (
-          <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
+          <Text
+            style={{
+              color: theme.textTertiary,
+              fontSize: S.small,
+              textAlign: "center",
+              paddingVertical: 6,
+            }}
+          >
             No package meetings yet.
           </Text>
         ) : (
           <>
-            {sectionHeader(
-              "Pending",
-              "Patient booked a time. Accept it or send at least three alternative slots.",
-              true,
-            )}
-            {pending.length === 0
-              ? emptyLine("None right now.")
-              : pending.map((x) => renderMeetingCard(x, { readOnly: false }))}
-            {sectionHeader(
-              "Discussing",
-              "Reschedule or alternate-slot negotiation. Package billing is only from Home → Upcoming Appointments after the demo time is confirmed.",
-            )}
-            {discussing.length === 0
-              ? emptyLine("None - nothing mid-negotiation.")
-              : discussing.map((x) =>
-                  renderMeetingCard(x, { readOnly: false }),
-                )}
-            {sectionHeader(
+            {renderTrackSection("pending", "Pending", pending, false)}
+            {renderTrackSection("discussing", "Discussing", discussing, false)}
+            {renderTrackSection(
+              "confirmedDemo",
               "Confirmed demo",
-              "Demo time is confirmed (reminder 30 minutes before). After your call, use Upcoming Appointments → Ask package so the patient can pay from Package Doctor.",
+              confirmedDemo,
+              false,
             )}
-            {confirmedDemo.length === 0
-              ? emptyLine("None yet.")
-              : confirmedDemo.map((x) =>
-                  renderMeetingCard(x, { readOnly: false }),
-                )}
-            {sectionHeader(
-              "Declined & cancelled",
-              "Terminal rows from PocketBase `appointments.status` (no further actions).",
-            )}
-            {closed.length === 0
-              ? emptyLine("None yet.")
-              : closed.map((x) => renderMeetingCard(x, { readOnly: true }))}
+            {renderTrackSection("closed", "Declined & cancelled", closed, true)}
           </>
         )}
       </ScrollView>
@@ -4174,44 +4758,66 @@ export function DoctorQuickRequestsPanel({
   );
 
   return (
-    <View style={{ marginTop: 12 }}>
+    <View
+      style={{
+        marginTop: 12,
+        backgroundColor: theme.card,
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.cardBorder,
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.05,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 8,
+        elevation: 2,
+      }}
+    >
       <View
-        style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 10,
+        }}
       >
-        <Text style={{ color: theme.textPrimary, fontWeight: "800", flex: 1 }}>
-          Quick queues (clinic / RMP)
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              backgroundColor: theme.warningLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: 10,
+            }}
+          >
+            <Ionicons name="flash" size={22} color={theme.warning} />
+          </View>
+          <Text
+            style={{ color: theme.textPrimary, fontWeight: "800", fontSize: 16 }}
+          >
+            Quick Queues
+          </Text>
+        </View>
         <TouchableOpacity
           onPress={() => void load()}
           disabled={loading}
           style={{
-            paddingHorizontal: 12,
+            paddingHorizontal: 14,
             paddingVertical: 8,
-            borderRadius: 10,
+            borderRadius: 12,
             backgroundColor: theme.accentLight,
           }}
         >
           <Text
-            style={{ color: theme.accent, fontWeight: "700", fontSize: 12 }}
+            style={{ color: theme.accent, fontWeight: "800", fontSize: 12 }}
           >
             {loading ? "…" : "Refresh"}
           </Text>
         </TouchableOpacity>
       </View>
-      <Text
-        style={{
-          color: theme.textSecondary,
-          fontSize: S.small,
-          marginBottom: 10,
-        }}
-      >
-        The app only loads rows with{" "}
-        <Text style={{ fontWeight: "700" }}>status = queued</Text>. Tap{" "}
-        <Text style={{ fontWeight: "700" }}>Help</Text> on a card to open a chat
-        with the patient - your first message starts the thread and they will
-        see “you want to help” on their tracking list. The patient can close or
-        cancel the request anytime.
-      </Text>
       {err ? (
         <Text
           style={{ color: theme.danger, fontSize: S.small, marginBottom: 8 }}
@@ -4748,7 +5354,7 @@ export function PatientQuickRequestsTrackerPanel({
   );
 }
 
-export function CoinWalletDoctorPanel({ theme }) {
+export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
   const user = getAuthUser();
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
@@ -4962,45 +5568,49 @@ export function CoinWalletDoctorPanel({ theme }) {
           </View>
         );
       })}
-      <Text
-        style={{
-          color: theme.textSecondary,
-          fontSize: S.small,
-          marginBottom: 8,
-          marginTop: 6,
-        }}
-      >
-        Settled package earnings appear here. Withdraw requests are checked
-        against your available coins before they are sent.
-      </Text>
-      <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <TextInput
-          placeholder="Coins to withdraw"
-          placeholderTextColor={theme.textTertiary}
-          keyboardType="numeric"
-          value={withdraw}
-          onChangeText={setWithdraw}
-          style={{
-            flex: 1,
-            backgroundColor: theme.card,
-            borderRadius: 12,
-            padding: 10,
-            color: theme.textPrimary,
-            marginRight: 8,
-          }}
-        />
-        <TouchableOpacity
-          onPress={runWithdraw}
-          disabled={busy}
-          style={{
-            backgroundColor: theme.accent,
-            padding: 12,
-            borderRadius: 12,
-          }}
-        >
-          <Text style={{ color: "#fff", fontWeight: "800" }}>Withdraw</Text>
-        </TouchableOpacity>
-      </View>
+      {!hideWithdrawSection ? (
+        <>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginBottom: 8,
+              marginTop: 6,
+            }}
+          >
+            Settled package earnings appear here. Withdraw requests are checked
+            against your available coins before they are sent.
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <TextInput
+              placeholder="Coins to withdraw"
+              placeholderTextColor={theme.textTertiary}
+              keyboardType="numeric"
+              value={withdraw}
+              onChangeText={setWithdraw}
+              style={{
+                flex: 1,
+                backgroundColor: theme.card,
+                borderRadius: 12,
+                padding: 10,
+                color: theme.textPrimary,
+                marginRight: 8,
+              }}
+            />
+            <TouchableOpacity
+              onPress={runWithdraw}
+              disabled={busy}
+              style={{
+                backgroundColor: theme.accent,
+                padding: 12,
+                borderRadius: 12,
+              }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "800" }}>Withdraw</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : null}
       <Text
         style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 10 }}
       >

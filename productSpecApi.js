@@ -254,6 +254,31 @@ export function doctorTierEligibleForPackageMode(tier) {
   return t === "professional" || t === "specialist";
 }
 
+/**
+ * Quick Solution / Quick Counselling queues: RMP & clinic tiers (not package-demo tier).
+ * Pass auth `user`, `doctor_profile` row, or a tier string.
+ */
+export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
+  if (
+    typeof userOrProfileOrTier === "string" ||
+    typeof userOrProfileOrTier === "number"
+  ) {
+    return !doctorTierEligibleForPackageMode(String(userOrProfileOrTier));
+  }
+  const row = userOrProfileOrTier && typeof userOrProfileOrTier === "object"
+    ? userOrProfileOrTier
+    : null;
+  const tier = String(
+    row?.practitioner_tier ||
+      row?.practitionerTier ||
+      row?.tier ||
+      row?.verification_tier ||
+      row?.doctor_class ||
+      "",
+  );
+  return !doctorTierEligibleForPackageMode(tier);
+}
+
 /** Three fixed catalogue slots - only `total_amount_inr` is doctor-editable; rest is app-defined. */
 export const DOCTOR_PACKAGE_SLOT_IDS = [1, 2, 3];
 
@@ -929,7 +954,7 @@ function appointmentsColl() {
   return getPbAppointmentsCollection();
 }
 
-async function resolveDoctorProfileIdForUser(doctorUserId) {
+export async function resolveDoctorProfileIdForUser(doctorUserId) {
   if (!doctorUserId) return null;
   try {
     const p = await pb
@@ -2298,7 +2323,14 @@ function isActivePaidPackageOffer(offer) {
   const status = String(offer?.status || "")
     .trim()
     .toLowerCase();
-  return status === "paid" || status === "active" || status === "started";
+  return (
+    status === "paid" ||
+    status === "active" ||
+    status === "started" ||
+    status === "completed" ||
+    status === "complete" ||
+    status === "confirmed"
+  );
 }
 
 function normalizeActivePackagePair(offer) {
@@ -3166,6 +3198,33 @@ export async function createQuickSolutionRequest({
         "Could not submit. Add `quick_solution_requests` (patient, notes, private_mode, image file, coin splits, status).",
     );
   }
+}
+
+/**
+ * Emergency SOS → company assistant coordination (Premium).
+ * Best-effort PocketBase write; succeeds even if the collection is missing.
+ */
+export async function createEmergencyAssistantRequest({
+  patientUserId,
+  doctorUserId,
+  notes,
+}) {
+  const pid = String(patientUserId || "").trim();
+  if (!pid) throw new Error("Sign in required.");
+  try {
+    await pb.collection("emergency_assistant_requests").create({
+      patient: pid,
+      doctor: String(doctorUserId || "").trim() || null,
+      notes: String(notes || "").trim() || "",
+      status: "requested",
+    });
+  } catch (error) {
+    console.log(
+      "createEmergencyAssistantRequest:",
+      formatPocketBaseClientError(error) || error?.message,
+    );
+  }
+  return { ok: true };
 }
 
 export async function createQuickCounsellingRequest({ patientUserId, topic }) {

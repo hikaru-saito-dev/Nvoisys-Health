@@ -73,7 +73,9 @@ import {
   cleanAppointmentReasonForDisplay,
   clearPatientCareMode,
   combineDateAndTimeToIso,
+  CONSUMER_PLAN,
   completePackageOfferPayment,
+  createEmergencyAssistantRequest,
   createPackageMeetingRequest,
   decodeMeetingWorkflowFromAppointmentRow,
   doctorPackagesSetupComplete,
@@ -81,12 +83,16 @@ import {
   doctorProfilePackageSetupSkipped,
   doctorSendAskPackageForDemoAppointment,
   doctorTierEligibleForPackageMode,
+  doctorTierEligibleForQuickService,
   effectiveCareMode,
   ensurePackageDemoMeetingConversation,
-  getCoinBalanceForUser,
+  entitlementsForConsumerPlan,
+  getPatientActiveQuickCareBinding,
   listPackageOffersForDoctor,
   mergeLocalFeesOntoSlots,
+  minutesUsedWithDoctorThisRollingWeek,
   needsCareOnboarding,
+  PACKAGE_MEETING_STATUS,
   normalizeDoctorPackageSlots,
   packageSlotDisplayName,
   packageTemplatesRawFromRecord,
@@ -96,13 +102,13 @@ import {
   readLocalPackageSetupSkip,
   recordQuickHelpOffer,
   recordPatientDoctorInteraction,
+  resolveDoctorProfileIdForUser,
   settlePackageCoinsForCompletedAppointment,
   writeLocalCareMode,
 } from "./productSpecApi";
 import {
   AdminConsoleAppScreen,
   CareModeOnboardingScreen,
-  CoinWalletDoctorPanel,
   DoctorCoinPaymentHistoryPanel,
   DoctorPackageSetupScreen,
   DoctorQuickRequestsPanel,
@@ -3813,42 +3819,6 @@ const SlideScreen = ({ onBack, children }) => {
   );
 };
 
-// --- PRESS CARD (scale micro-feedback) ---
-// Drop-in replacement for TouchableOpacity on any card element.
-// Applies a quick scale: 0.98 spring on press so cards feel alive.
-const PressCard = ({ onPress, style, children }) => {
-  const scale = useRef(new Animated.Value(1)).current;
-
-  const pressIn = () =>
-    Animated.spring(scale, {
-      toValue: 0.98,
-      useNativeDriver: true,
-      damping: 15,
-      stiffness: 350,
-    }).start();
-
-  const pressOut = () =>
-    Animated.spring(scale, {
-      toValue: 1,
-      useNativeDriver: true,
-      damping: 12,
-      stiffness: 200,
-    }).start();
-
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      onPressIn={pressIn}
-      onPressOut={pressOut}
-      activeOpacity={1}
-    >
-      <Animated.View style={[style, { transform: [{ scale }] }]}>
-        {children}
-      </Animated.View>
-    </TouchableOpacity>
-  );
-};
-
 // --- SKELETON SHIMMER ---
 // Pulsing placeholder block for loading states.
 const SkeletonShimmer = ({ width, height, borderRadius = 8, style }) => {
@@ -4055,6 +4025,59 @@ const WalletDepositScreen = ({
   );
 };
 
+function usePatientQuickCareBinding() {
+  const { currentUser, patientProfile, appointments, dataLoading } =
+    useAppData();
+  const [quickCareBinding, setQuickCareBinding] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const uid = currentUser?.id;
+    if (!uid) {
+      setQuickCareBinding(null);
+      return undefined;
+    }
+    if (dataLoading) {
+      return undefined;
+    }
+    (async () => {
+      try {
+        const base = await getPatientActiveQuickCareBinding(
+          uid,
+          patientProfile?.id,
+        );
+        if (cancelled) return;
+        if (!base?.doctorUserId) {
+          setQuickCareBinding(null);
+          return;
+        }
+        const match = (appointments || []).find(
+          (a) => String(a.doctorUserId || "") === String(base.doctorUserId),
+        );
+        const doctorName = match?.doctorName || "";
+        const ent = entitlementsForConsumerPlan(base.consumerPlan);
+        const consultMinutesLimit = ent?.consultationMinutesPerWeek ?? 0;
+        const consultMinutesUsed = minutesUsedWithDoctorThisRollingWeek(
+          appointments,
+          uid,
+          base.doctorUserId,
+        );
+        setQuickCareBinding({
+          ...base,
+          doctorName,
+          consultMinutesUsed,
+          consultMinutesLimit,
+        });
+      } catch {
+        if (!cancelled) setQuickCareBinding(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, patientProfile, appointments, dataLoading]);
+  return quickCareBinding;
+}
+
 const PatientHomeScreen = () => {
   const { theme } = useTheme();
   const {
@@ -4074,7 +4097,10 @@ const PatientHomeScreen = () => {
     sendConversationMessage,
     loadConversationMessages,
     payForPackageOffer,
+    ensureAssistantConversation,
+    sendAssistantMessage,
   } = useAppData();
+  const patientQuickCareBinding = usePatientQuickCareBinding();
   const patientFirstName =
     String(patientProfile?.full_name || currentUser?.name || "")
       .trim()
@@ -4225,34 +4251,11 @@ const PatientHomeScreen = () => {
   const [showQuickSol, setShowQuickSol] = useState(false);
   const [showQuickCounselling, setShowQuickCounselling] = useState(false);
   const [showPackageJourney, setShowPackageJourney] = useState(false);
-  const [showWallet, setShowWallet] = useState(false);
   const [packageDoctors, setPackageDoctors] = useState([]);
-  const [coinBalance, setCoinBalance] = useState(0);
-  const [depositAmount, setDepositAmount] = useState("");
 
   useEffect(() => {
     void fetchHospitals();
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const uid = currentUser?.id;
-    if (!uid) {
-      setCoinBalance(0);
-      return undefined;
-    }
-    (async () => {
-      try {
-        const b = await getCoinBalanceForUser(uid);
-        if (!cancelled) setCoinBalance(typeof b === "number" ? b : 0);
-      } catch {
-        if (!cancelled) setCoinBalance(0);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser?.id]);
 
   useEffect(() => {
     if (!showPackageJourney) return;
@@ -4266,28 +4269,22 @@ const PatientHomeScreen = () => {
     };
   }, [showPackageJourney, fetchApprovedDoctors]);
 
-  const openWallet = useCallback(() => {
-    setDepositAmount("");
-    setShowWallet(true);
-  }, []);
-
-  const handleDepositPress = useCallback(() => {
-    const raw = String(depositAmount || "").trim();
-    const normalized = raw.replace(/[^\d.]/g, "");
-    const amount = Number(normalized);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      Alert.alert("Deposit", "Enter a valid amount.");
-      return;
-    }
-    if (amount > 1000) {
-      Alert.alert("Deposit", "Maximum deposit is 1000 coins (₹1000).");
-      return;
-    }
-    Alert.alert(
-      "Deposit coins",
-      "Payment hookup is planned for tomorrow. This screen is ready for integration.",
-    );
-  }, [depositAmount]);
+  const runQuickSolveAi = useCallback(
+    async (question) => {
+      const text = String(question || "").trim();
+      if (!text) return "";
+      try {
+        const conv = await ensureAssistantConversation();
+        if (!conv?.id) return "Assistant is unavailable. Try again shortly.";
+        const result = await sendAssistantMessage(conv.id, text);
+        const reply = result?.replyMessage?.text;
+        return reply ? String(reply) : "No reply yet.";
+      } catch (e) {
+        return e?.message || "Could not get an AI answer.";
+      }
+    },
+    [ensureAssistantConversation, sendAssistantMessage],
+  );
 
   const upcomingAppointments = (appointments || [])
     .filter((appointment) => {
@@ -4306,10 +4303,6 @@ const PatientHomeScreen = () => {
     const handleBack = () => {
       if (startCallType) {
         setStartCallType(null);
-        return true;
-      }
-      if (showWallet) {
-        setShowWallet(false);
         return true;
       }
       if (showFindDoctor) {
@@ -4369,7 +4362,6 @@ const PatientHomeScreen = () => {
     return () => subscription.remove();
   }, [
     startCallType,
-    showWallet,
     showFindDoctor,
     showPrescription,
     showMeds,
@@ -4383,17 +4375,6 @@ const PatientHomeScreen = () => {
     showQuickCounselling,
     showPackageJourney,
   ]);
-
-  if (showWallet)
-    return (
-      <DietMonitoringScreen
-        theme={theme}
-        onBack={() => setShowDietMonitoring(false)}
-        patientUserId={currentUser?.id}
-        doctorName={patientQuickCareBinding?.doctorName || ""}
-        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
-      />
-    );
 
   if (showMedical)
     return (
@@ -4510,7 +4491,7 @@ const PatientHomeScreen = () => {
   if (showSOS)
     return (
       <SlideScreen onBack={() => setShowSOS(false)}>
-        <EmergencySOScreen onBack={null} />
+        <EmergencySOScreen onBack={() => setShowSOS(false)} />
       </SlideScreen>
     );
   if (showHospital)
@@ -4600,7 +4581,19 @@ const PatientHomeScreen = () => {
                 }}
               >
                 <TouchableOpacity
-                  onPress={() => tabNav?.navigateTab?.("Profile")}
+                  onPress={() =>
+                    Alert.alert(
+                      "Notifications",
+                      "Medication and care reminders follow your Profile → Notifications setting.",
+                      [
+                        { text: "OK", style: "cancel" },
+                        {
+                          text: "Open Profile",
+                          onPress: () => tabNav?.navigateTab?.("Profile"),
+                        },
+                      ],
+                    )
+                  }
                   activeOpacity={0.85}
                   style={{
                     width: RFValue(46),
@@ -4617,6 +4610,19 @@ const PatientHomeScreen = () => {
                     name="notifications-outline"
                     size={RFValue(23)}
                     color="#FFF"
+                  />
+                  <View
+                    style={{
+                      position: "absolute",
+                      top: RFValue(8),
+                      right: RFValue(8),
+                      width: RFValue(8),
+                      height: RFValue(8),
+                      borderRadius: RFValue(4),
+                      backgroundColor: "#EF4444",
+                      borderWidth: 1,
+                      borderColor: "rgba(255,255,255,0.9)",
+                    }}
                   />
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -4683,84 +4689,9 @@ const PatientHomeScreen = () => {
                       fontWeight: "500",
                     }}
                   >
-                    Your care hub — track how you feel and reach help quickly.
+                    Track care and reach help fast.
                   </Text>
                 </View>
-
-                <TouchableOpacity
-                  onPress={openWallet}
-                  activeOpacity={0.88}
-                  style={{
-                    marginTop: RFValue(18),
-                    flexDirection: "row",
-                    alignItems: "center",
-                    backgroundColor: "#FFFFFF",
-                    borderRadius: RFValue(16),
-                    paddingVertical: RFValue(14),
-                    paddingHorizontal: RFValue(16),
-                    shadowColor: "#000",
-                    shadowOpacity: 0.12,
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowRadius: 12,
-                    elevation: 4,
-                  }}
-                >
-                  <View
-                    style={{
-                      width: RFValue(44),
-                      height: RFValue(44),
-                      borderRadius: RFValue(14),
-                      backgroundColor: "rgba(99,102,241,0.12)",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginRight: RFValue(14),
-                    }}
-                  >
-                    <Ionicons
-                      name="wallet-outline"
-                      size={RFValue(22)}
-                      color={theme.accent}
-                    />
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text
-                      style={{
-                        fontSize: RFValue(10),
-                        fontWeight: "800",
-                        letterSpacing: 1.2,
-                        color: theme.textTertiary,
-                        textTransform: "uppercase",
-                        marginBottom: RFValue(4),
-                      }}
-                    >
-                      Wallet
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: RFValue(18),
-                        fontWeight: "800",
-                        color: theme.textPrimary,
-                        letterSpacing: -0.3,
-                      }}
-                    >
-                      {coinBalance}{" "}
-                      <Text
-                        style={{
-                          fontSize: RFValue(14),
-                          fontWeight: "700",
-                          color: theme.textSecondary,
-                        }}
-                      >
-                        coins
-                      </Text>
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={RFValue(22)}
-                    color={theme.textTertiary}
-                  />
-                </TouchableOpacity>
 
                 <View
                   style={{
@@ -4781,15 +4712,13 @@ const PatientHomeScreen = () => {
                       marginBottom: RFValue(12),
                     }}
                   >
-                    How are you feeling today?
+                    How are you feeling?
                   </Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{
+                  <View
+                    style={{
                       flexDirection: "row",
                       alignItems: "center",
-                      paddingRight: RFValue(4),
+                      justifyContent: "space-between",
                     }}
                   >
                     {[
@@ -4798,50 +4727,29 @@ const PatientHomeScreen = () => {
                       { label: "Neutral", emoji: "😐" },
                       { label: "Bad", emoji: "😟" },
                       { label: "Awful", emoji: "😣" },
-                    ].map((mood, index) => (
+                    ].map((mood) => (
                       <TouchableOpacity
                         key={mood.label}
                         onPress={() => setSelectedEmoji(mood.label)}
                         activeOpacity={0.88}
                         style={{
-                          flexDirection: "row",
+                          width: RFValue(44),
+                          height: RFValue(44),
+                          borderRadius: RFValue(22),
+                          justifyContent: "center",
                           alignItems: "center",
                           backgroundColor:
                             selectedEmoji === mood.label
                               ? "#FFF"
                               : "rgba(255,255,255,0.12)",
-                          paddingHorizontal: RFValue(14),
-                          paddingVertical: RFValue(10),
-                          borderRadius: RFValue(999),
                           borderWidth: selectedEmoji === mood.label ? 0 : 1,
                           borderColor: "rgba(255,255,255,0.22)",
-                          marginRight:
-                            index < 4 ? RFValue(8) : 0,
                         }}
                       >
-                        <Text
-                          style={{
-                            fontSize: RFValue(15),
-                            marginRight: RFValue(6),
-                          }}
-                        >
-                          {mood.emoji}
-                        </Text>
-                        <Text
-                          style={{
-                            fontSize: RFValue(13),
-                            fontWeight: "700",
-                            color:
-                              selectedEmoji === mood.label
-                                ? theme.accent
-                                : "#FFF",
-                          }}
-                        >
-                          {mood.label}
-                        </Text>
+                        <Text style={{ fontSize: RFValue(22) }}>{mood.emoji}</Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
+                  </View>
                 </View>
               </View>
             </View>
@@ -5040,89 +4948,311 @@ const PatientHomeScreen = () => {
                     marginBottom: RFValue(12),
                   }}
                 >
-                  Quick services use verified RMP/clinic doctors. Package mode
-                  uses professional doctors for demos and paid packages (1 coin
-                  = ₹1).
+                  {patientCareMode === CARE_MODE.PACKAGE
+                    ? "Demos and paid packages with your doctor."
+                    : patientCareMode === CARE_MODE.CASUAL
+                      ? "Quick Solution and Quick Counselling use RMP/clinic doctors (1 coin = ₹1)."
+                      : "Explore the app; switch care mode anytime from Profile."}
                 </Text>
-                <PatientCoinHistoryPanel
-                  theme={theme}
-                  userId={currentUser?.id}
-                  compact
-                />
-                <View
-                  style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    gap: RFValue(8),
-                  }}
-                >
-                  {(patientCareMode === CARE_MODE.CASUAL ||
-                    patientCareMode === CARE_MODE.SKIP) && (
-                    <>
-                      <TouchableOpacity
-                        onPress={() => setShowQuickSol(true)}
-                        style={{
-                          flexGrow: 1,
-                          minWidth: "45%",
-                          backgroundColor: theme.accentLight,
-                          padding: RFValue(12),
-                          borderRadius: RFValue(14),
-                        }}
-                      >
-                        <Text
-                          style={{ fontWeight: "800", color: theme.accent }}
-                        >
-                          Quick Solution
-                        </Text>
+                {patientCareMode === CARE_MODE.PACKAGE ? (
+                  <>
+                    {patientQuickCareBinding?.doctorUserId ? (
+                      <>
                         <Text
                           style={{
-                            fontSize: RFValue(10),
+                            fontSize: RFValue(11),
                             color: theme.textSecondary,
-                            marginTop: 4,
+                            marginBottom: RFValue(10),
+                            lineHeight: RFValue(16),
                           }}
                         >
-                          ₹10 · Private mode available
+                          Quick Solve & Quick Counselling use your package
+                          doctor — no separate doctor picker.
                         </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => setShowQuickCounselling(true)}
-                        style={{
-                          flexGrow: 1,
-                          minWidth: "45%",
-                          backgroundColor: theme.successLight,
-                          padding: RFValue(12),
-                          borderRadius: RFValue(14),
-                        }}
-                      >
-                        <Text
-                          style={{ fontWeight: "800", color: theme.success }}
-                        >
-                          Quick Counselling
-                        </Text>
-                        <Text
+                        <View
                           style={{
-                            fontSize: RFValue(10),
-                            color: theme.textSecondary,
-                            marginTop: 4,
+                            flexDirection: "row",
+                            flexWrap: "wrap",
+                            gap: RFValue(8),
+                            marginBottom: RFValue(10),
                           }}
                         >
-                          ₹25
-                        </Text>
-                      </TouchableOpacity>
-                    </>
-                  )}
-                  {patientCareMode === CARE_MODE.PACKAGE && (
+                          <TouchableOpacity
+                            onPress={() => setShowQuickSol(true)}
+                            style={{
+                              flexGrow: 1,
+                              minWidth: "45%",
+                              backgroundColor: theme.accentLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Text
+                              style={{ fontWeight: "800", color: theme.accent }}
+                            >
+                              Quick Solution
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              ₹10 · Private mode available
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowQuickCounselling(true)}
+                            style={{
+                              flexGrow: 1,
+                              minWidth: "45%",
+                              backgroundColor: theme.successLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontWeight: "800",
+                                color: theme.success,
+                              }}
+                            >
+                              Quick Counselling
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              ₹25
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            gap: RFValue(8),
+                            alignItems: "stretch",
+                          }}
+                        >
+                          <TouchableOpacity
+                            onPress={() => setShowPackageJourney(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              backgroundColor: theme.accentLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Ionicons
+                              name="git-branch-outline"
+                              size={RFValue(22)}
+                              color={theme.accent}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{ fontWeight: "800", color: theme.accent }}
+                            >
+                              Package journey
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Demo → pay
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowMedical(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              borderWidth: 1,
+                              borderColor: theme.cardBorder,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                              backgroundColor: theme.card,
+                            }}
+                          >
+                            <Ionicons
+                              name="document-text-outline"
+                              size={RFValue(22)}
+                              color={theme.textSecondary}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{
+                                fontWeight: "800",
+                                color: theme.textPrimary,
+                              }}
+                            >
+                              Medical records
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Uploads for consults
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          activeOpacity={0.9}
+                          onPress={() => setShowPackageJourney(true)}
+                          style={{
+                            backgroundColor: theme.accentLight,
+                            padding: RFValue(14),
+                            borderRadius: RFValue(14),
+                            marginBottom: RFValue(10),
+                            borderWidth: StyleSheet.hairlineWidth,
+                            borderColor: theme.cardBorder,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: RFValue(14),
+                              fontWeight: "800",
+                              color: theme.textPrimary,
+                              marginBottom: RFValue(6),
+                            }}
+                          >
+                            Quick Solve & Counselling locked
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: RFValue(11),
+                              color: theme.textSecondary,
+                              lineHeight: RFValue(16),
+                            }}
+                          >
+                            Select a doctor and activate a paid package (Basic,
+                            Gold, or Premium). They then run automatically with
+                            that doctor — no extra doctor picker.
+                          </Text>
+                          <Text
+                            style={{
+                              marginTop: RFValue(10),
+                              fontSize: RFValue(13),
+                              fontWeight: "800",
+                              color: theme.accent,
+                            }}
+                          >
+                            Open package journey →
+                          </Text>
+                        </TouchableOpacity>
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            gap: RFValue(8),
+                            alignItems: "stretch",
+                          }}
+                        >
+                          <TouchableOpacity
+                            onPress={() => setShowPackageJourney(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              backgroundColor: theme.accentLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Ionicons
+                              name="git-branch-outline"
+                              size={RFValue(22)}
+                              color={theme.accent}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{ fontWeight: "800", color: theme.accent }}
+                            >
+                              Package journey
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Demo → pay
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowMedical(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              borderWidth: 1,
+                              borderColor: theme.cardBorder,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                              backgroundColor: theme.card,
+                            }}
+                          >
+                            <Ionicons
+                              name="document-text-outline"
+                              size={RFValue(22)}
+                              color={theme.textSecondary}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{
+                                fontWeight: "800",
+                                color: theme.textPrimary,
+                              }}
+                            >
+                              Medical records
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Uploads for consults
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      gap: RFValue(8),
+                    }}
+                  >
                     <TouchableOpacity
-                      onPress={() => setShowPackageJourney(true)}
+                      onPress={() => setShowQuickSol(true)}
                       style={{
-                        flex: 1,
+                        flexGrow: 1,
+                        minWidth: "45%",
                         backgroundColor: theme.accentLight,
-                        padding: RFValue(14),
+                        padding: RFValue(12),
                         borderRadius: RFValue(14),
                       }}
                     >
-                      <Text style={{ fontWeight: "800", color: theme.accent }}>
-                        Package journey
+                      <Text
+                        style={{ fontWeight: "800", color: theme.accent }}
+                      >
+                        Quick Solution
                       </Text>
                       <Text
                         style={{
@@ -5131,38 +5261,64 @@ const PatientHomeScreen = () => {
                           marginTop: 4,
                         }}
                       >
-                        Demo → call → receive package → Pay now
+                        ₹10 · Private mode available
                       </Text>
                     </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    onPress={() => setShowMedical(true)}
-                    style={{
-                      flex: 1,
-                      minWidth: "100%",
-                      marginTop: RFValue(4),
-                      borderWidth: 1,
-                      borderColor: theme.cardBorder,
-                      padding: RFValue(12),
-                      borderRadius: RFValue(14),
-                    }}
-                  >
-                    <Text
-                      style={{ fontWeight: "800", color: theme.textPrimary }}
-                    >
-                      Medical records
-                    </Text>
-                    <Text
+                    <TouchableOpacity
+                      onPress={() => setShowQuickCounselling(true)}
                       style={{
-                        fontSize: RFValue(10),
-                        color: theme.textSecondary,
-                        marginTop: 4,
+                        flexGrow: 1,
+                        minWidth: "45%",
+                        backgroundColor: theme.successLight,
+                        padding: RFValue(12),
+                        borderRadius: RFValue(14),
                       }}
                     >
-                      Upload prescriptions & labs to share in consults
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                      <Text
+                        style={{ fontWeight: "800", color: theme.success }}
+                      >
+                        Quick Counselling
+                      </Text>
+                      <Text
+                        style={{
+                          fontSize: RFValue(10),
+                          color: theme.textSecondary,
+                          marginTop: 4,
+                        }}
+                      >
+                        ₹25
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowMedical(true)}
+                      style={{
+                        flexBasis: "100%",
+                        width: "100%",
+                        marginTop: RFValue(4),
+                        borderWidth: 1,
+                        borderColor: theme.cardBorder,
+                        padding: RFValue(12),
+                        borderRadius: RFValue(14),
+                        backgroundColor: theme.card,
+                      }}
+                    >
+                      <Text
+                        style={{ fontWeight: "800", color: theme.textPrimary }}
+                      >
+                        Medical records
+                      </Text>
+                      <Text
+                        style={{
+                          fontSize: RFValue(10),
+                          color: theme.textSecondary,
+                          marginTop: 4,
+                        }}
+                      >
+                        Upload prescriptions & labs to share in consults
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
 
               {(patientCareMode === CARE_MODE.CASUAL ||
@@ -5288,31 +5444,24 @@ const PatientHomeScreen = () => {
               </View>
 
               <View style={{ marginBottom: RFValue(16) }}>
-                <PressCard
-                  onPress={() => setStartCallType("video")}
+                <View
                   style={{
-                    backgroundColor: theme.card,
-                    borderRadius: RFValue(16),
-                    padding: RFValue(16),
-                    marginBottom: RFValue(10),
-                    shadowColor: theme.shadowColor,
-                    shadowOpacity: 0.06,
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowRadius: 12,
-                    elevation: 3,
                     flexDirection: "row",
-                    alignItems: "stretch",
+                    marginBottom: RFValue(10),
                   }}
                 >
                   <TouchableOpacity
                     onPress={() => setStartCallType("video")}
+                    activeOpacity={0.9}
                     style={{
                       flex: 1,
                       minWidth: 0,
-                      backgroundColor: theme.card,
+                      backgroundColor: theme.accentLight,
                       borderRadius: RFValue(16),
                       padding: RFValue(16),
                       marginRight: RFValue(10),
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: theme.cardBorder,
                       shadowColor: theme.shadowColor,
                       shadowOpacity: 0.06,
                       shadowOffset: { width: 0, height: 4 },
@@ -5326,7 +5475,7 @@ const PatientHomeScreen = () => {
                         paddingHorizontal: RFValue(10),
                         height: RFValue(36),
                         borderRadius: RFValue(14),
-                        backgroundColor: theme.bg,
+                        backgroundColor: "rgba(255,255,255,0.65)",
                         justifyContent: "center",
                         alignItems: "center",
                         marginBottom: RFValue(8),
@@ -5341,30 +5490,34 @@ const PatientHomeScreen = () => {
                     <Text
                       style={{
                         fontSize: RFValue(12),
-                        fontWeight: "700",
+                        fontWeight: "800",
                         color: theme.textPrimary,
                       }}
                     >
-                      Video Call
+                      Video
                     </Text>
                     <Text
                       style={{
                         fontSize: RFValue(10),
                         color: theme.textSecondary,
-                        marginTop: RFValue(2),
+                        marginTop: RFValue(4),
+                        fontWeight: "600",
                       }}
                     >
-                      Consult a doctor
+                      Start call
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => setStartCallType("audio")}
+                    activeOpacity={0.9}
                     style={{
                       flex: 1,
                       minWidth: 0,
-                      backgroundColor: theme.card,
+                      backgroundColor: theme.warningLight,
                       borderRadius: RFValue(16),
                       padding: RFValue(16),
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: theme.cardBorder,
                       shadowColor: theme.shadowColor,
                       shadowOpacity: 0.06,
                       shadowOffset: { width: 0, height: 4 },
@@ -5378,7 +5531,7 @@ const PatientHomeScreen = () => {
                         paddingHorizontal: RFValue(10),
                         height: RFValue(36),
                         borderRadius: RFValue(14),
-                        backgroundColor: theme.warningLight,
+                        backgroundColor: "rgba(255,255,255,0.55)",
                         justifyContent: "center",
                         alignItems: "center",
                         marginBottom: RFValue(8),
@@ -5393,27 +5546,28 @@ const PatientHomeScreen = () => {
                     <Text
                       style={{
                         fontSize: RFValue(12),
-                        fontWeight: "700",
+                        fontWeight: "800",
                         color: theme.textPrimary,
                       }}
                     >
-                      Audio Call
+                      Audio
                     </Text>
                     <Text
                       style={{
                         fontSize: RFValue(10),
                         color: theme.textSecondary,
-                        marginTop: RFValue(2),
+                        marginTop: RFValue(4),
+                        fontWeight: "600",
                       }}
                     >
-                      Talk to a doctor
+                      Start call
                     </Text>
                   </TouchableOpacity>
-                </PressCard>
+                </View>
                 <TouchableOpacity
                   onPress={() => setShowFindDoctor(true)}
+                  activeOpacity={0.9}
                   style={{
-                    flex: 1,
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
@@ -5422,7 +5576,10 @@ const PatientHomeScreen = () => {
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
+                    flexDirection: "row",
                     alignItems: "center",
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.cardBorder,
                   }}
                 >
                   <View
@@ -5433,7 +5590,7 @@ const PatientHomeScreen = () => {
                       backgroundColor: theme.successLight,
                       justifyContent: "center",
                       alignItems: "center",
-                      marginBottom: RFValue(8),
+                      marginRight: RFValue(14),
                     }}
                   >
                     <Ionicons
@@ -5442,24 +5599,31 @@ const PatientHomeScreen = () => {
                       color={theme.success}
                     />
                   </View>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      fontWeight: "700",
-                      color: theme.textPrimary,
-                    }}
-                  >
-                    Book Appt
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: RFValue(10),
-                      color: theme.textSecondary,
-                      marginTop: RFValue(2),
-                    }}
-                  >
-                    Next available
-                  </Text>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      style={{
+                        fontSize: RFValue(14),
+                        fontWeight: "700",
+                        color: theme.textPrimary,
+                      }}
+                    >
+                      Book appointment
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(12),
+                        color: theme.textSecondary,
+                        marginTop: RFValue(2),
+                      }}
+                    >
+                      Find a doctor and pick a time
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={RFValue(18)}
+                    color={theme.textTertiary}
+                  />
                 </TouchableOpacity>
               </View>
 
@@ -9054,6 +9218,11 @@ const PatientEditProfileScreen = ({
       setError("Please enter your full name.");
       return;
     }
+    const phoneDigits = String(phone || "").replace(/\D/g, "");
+    if (phoneDigits.length < 10) {
+      setError("Please enter a valid phone number (at least 10 digits).");
+      return;
+    }
     const healthProfileError =
       validatePatientHealthProfileComplete(healthValues);
     if (healthProfileError) {
@@ -9065,7 +9234,7 @@ const PatientEditProfileScreen = ({
       setError("");
       await pb.collection("patient_profile").update(patientProfile.id, {
         full_name: fullName.trim(),
-        phone: phone.trim(),
+        phone: phoneDigits,
         primary_condition: condition.trim(),
         gender: gender.trim(),
         language: comfortLanguage.trim(),
@@ -13272,6 +13441,7 @@ const AuthScreen = ({ onLogin }) => {
   const [authMode, setAuthMode] = useState("signup"); // signup | login
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -13415,6 +13585,16 @@ const AuthScreen = ({ onLogin }) => {
           throw new Error("Passwords do not match.");
         }
 
+        let phoneDigits = "";
+        if (role === "patient" || role === "doctor") {
+          phoneDigits = String(profilePhone || "").replace(/\D/g, "");
+          if (phoneDigits.length < 10) {
+            throw new Error(
+              "Please enter a valid phone number (at least 10 digits).",
+            );
+          }
+        }
+
         if (role === "patient") {
           if (!patientCondition.trim()) {
             throw new Error("Please enter your condition or disease name");
@@ -13448,6 +13628,7 @@ const AuthScreen = ({ onLogin }) => {
           profileFields:
             role === "patient"
               ? {
+                  phone: phoneDigits,
                   primary_condition: patientCondition.trim(),
                   gender: patientGender,
                   avatarAsset: patientRegAvatar,
@@ -13458,6 +13639,7 @@ const AuthScreen = ({ onLogin }) => {
                 }
               : role === "doctor"
                 ? {
+                    phone: phoneDigits,
                     specialty: doctorSpecialtyField.trim(),
                     clinic_or_hospital: doctorClinic.trim(),
                     ...(registrationLanguage.trim()
@@ -13803,55 +13985,6 @@ const AuthScreen = ({ onLogin }) => {
               </Text>
             </View>
 
-            {role === "patient" ? (
-              <View
-                style={{
-                  marginBottom: RFValue(16),
-                  padding: RFValue(14),
-                  backgroundColor: theme.accentLight,
-                  borderRadius: RFValue(14),
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    marginBottom: RFValue(6),
-                  }}
-                >
-                  <Ionicons
-                    name="document-text-outline"
-                    size={RFValue(22)}
-                    color={theme.accent}
-                    style={{ marginRight: RFValue(8) }}
-                  />
-                  <Text
-                    style={{
-                      fontSize: RFValue(16),
-                      fontWeight: "800",
-                      color: theme.textPrimary,
-                      flex: 1,
-                    }}
-                  >
-                    Medical records
-                  </Text>
-                </View>
-                <Text
-                  style={{
-                    fontSize: RFValue(13),
-                    color: theme.textSecondary,
-                    lineHeight: 20,
-                  }}
-                >
-                  After you sign in, open Medical records from Home to upload
-                  prescriptions, lab reports, and images. They stay on your
-                  profile for demo calls, package sessions, and Quick consults.
-                </Text>
-              </View>
-            ) : null}
-
             {authMode === "signup" && (
               <TextInput
                 placeholder="Full name"
@@ -13899,6 +14032,31 @@ const AuthScreen = ({ onLogin }) => {
               }}
               placeholderTextColor={theme.textTertiary}
             />
+
+            {authMode === "signup" ? (
+              <TextInput
+                placeholder="Phone number"
+                value={profilePhone}
+                onChangeText={(value) => {
+                  setProfilePhone(value);
+                  if (authError) setAuthError("");
+                  if (authSuccess) setAuthSuccess("");
+                }}
+                keyboardType="phone-pad"
+                style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(14),
+                  paddingHorizontal: RFValue(16),
+                  paddingVertical: RFValue(16),
+                  marginBottom: RFValue(14),
+                  borderWidth: 1,
+                  borderColor: theme.inputBorder,
+                  fontSize: RFValue(15),
+                  color: theme.textPrimary,
+                }}
+                placeholderTextColor={theme.textTertiary}
+              />
+            ) : null}
 
             <View
               style={{
@@ -14284,45 +14442,6 @@ const AuthScreen = ({ onLogin }) => {
               </Text>
             )}
 
-            {role === "patient" && (
-              <View
-                style={{
-                  backgroundColor: theme.accentLight,
-                  borderRadius: RFValue(14),
-                  padding: RFValue(14),
-                  marginBottom: RFValue(12),
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                }}
-              >
-                <Text
-                  style={{
-                    fontWeight: "800",
-                    color: theme.accent,
-                    marginBottom: RFValue(6),
-                    fontSize: RFValue(14),
-                  }}
-                >
-                  Medical records
-                </Text>
-                <Text
-                  style={{
-                    fontSize: RFValue(12),
-                    color: theme.textSecondary,
-                    lineHeight: 18,
-                  }}
-                >
-                  After you{" "}
-                  {authMode === "signup"
-                    ? "create your account and log in"
-                    : "log in"}
-                  , add prescriptions, labs, and images from Profile or Home →
-                  Medical records. They are stored on your profile and easy to
-                  share during video calls or quick consults.
-                </Text>
-              </View>
-            )}
-
             <TouchableOpacity
               onPress={handlePocketBaseAuth}
               disabled={authLoading}
@@ -14413,6 +14532,7 @@ const AuthScreen = ({ onLogin }) => {
                 setPatientRegAvatar(null);
                 setDoctorSpecialtyField("");
                 setDoctorClinic("");
+                setProfilePhone("");
               }}
               style={{ alignItems: "center", marginTop: RFValue(18) }}
             >
@@ -15190,16 +15310,41 @@ const DoctorUpcomingAppointmentsSection = () => {
         elevation: 3,
       }}
     >
-      <Text
+      <View
         style={{
-          fontSize: RFValue(16),
-          fontWeight: "800",
-          color: theme.textPrimary,
+          flexDirection: "row",
+          alignItems: "center",
           marginBottom: RFValue(12),
         }}
       >
-        Upcoming Appointments
-      </Text>
+        <View
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.accentLight,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(10),
+          }}
+        >
+          <Ionicons
+            name="calendar-outline"
+            size={RFValue(18)}
+            color={theme.accent}
+          />
+        </View>
+        <Text
+          style={{
+            fontSize: RFValue(16),
+            fontWeight: "800",
+            color: theme.textPrimary,
+            flex: 1,
+          }}
+        >
+          Appointments
+        </Text>
+      </View>
 
       {localError ? (
         <Text
@@ -15223,7 +15368,7 @@ const DoctorUpcomingAppointmentsSection = () => {
             paddingVertical: RFValue(10),
           }}
         >
-          No approved appointments yet.
+          No appointments yet.
         </Text>
       ) : (
         upcoming.map((appointment) => {
@@ -15573,6 +15718,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const { theme } = useTheme();
   const {
     currentUser,
+    patientProfile: doctorProfile,
     ensureDirectConversation,
     sendConversationMessage,
     requestOpenConversation,
@@ -15745,96 +15891,67 @@ const DoctorDashboard = ({ wounds, patients }) => {
             </View>
           </View>
 
-          <View
-            style={{ flexDirection: "row", justifyContent: "space-between" }}
-          >
             <View
-              style={{
-                flex: 1,
-                backgroundColor: "rgba(255,255,255,0.15)",
-                borderRadius: RFValue(16),
-                padding: RFValue(14),
-                marginRight: RFValue(8),
-              }}
+              style={{ flexDirection: "row", justifyContent: "space-between" }}
             >
-              <Text
+              <View
                 style={{
-                  color: "#FFF",
-                  fontSize: RFValue(18),
-                  fontWeight: "800",
-                  marginBottom: RFValue(4),
+                  flex: 1,
+                  backgroundColor: "rgba(255,255,255,0.15)",
+                  borderRadius: RFValue(16),
+                  padding: RFValue(14),
+                  marginRight: RFValue(8),
                 }}
               >
-                {patients.length}
-              </Text>
-              <Text
+                <Text
+                  style={{
+                    color: "#FFF",
+                    fontSize: RFValue(18),
+                    fontWeight: "800",
+                    marginBottom: RFValue(4),
+                  }}
+                >
+                  {patients.length}
+                </Text>
+                <Text
+                  style={{
+                    color: "rgba(255,255,255,0.8)",
+                    fontSize: RFValue(11),
+                    fontWeight: "600",
+                  }}
+                >
+                  Active Patients
+                </Text>
+              </View>
+              <View
                 style={{
-                  color: "rgba(255,255,255,0.8)",
-                  fontSize: RFValue(11),
-                  fontWeight: "600",
+                  flex: 1,
+                  backgroundColor: "rgba(255,255,255,0.15)",
+                  borderRadius: RFValue(16),
+                  padding: RFValue(14),
                 }}
               >
-                Active Patients
-              </Text>
+                <Text
+                  style={{
+                    color: "#FFF",
+                    fontSize: RFValue(18),
+                    fontWeight: "800",
+                    marginBottom: RFValue(4),
+                  }}
+                >
+                  {pendingWounds}
+                </Text>
+                <Text
+                  style={{
+                    color: "rgba(255,255,255,0.8)",
+                    fontSize: RFValue(11),
+                    fontWeight: "600",
+                  }}
+                >
+                  Pending Wounds
+                </Text>
+              </View>
             </View>
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: "rgba(255,255,255,0.15)",
-                borderRadius: RFValue(16),
-                padding: RFValue(14),
-                marginRight: RFValue(8),
-              }}
-            >
-              <Text
-                style={{
-                  color: "#FFF",
-                  fontSize: RFValue(18),
-                  fontWeight: "800",
-                  marginBottom: RFValue(4),
-                }}
-              >
-                {pendingWounds}
-              </Text>
-              <Text
-                style={{
-                  color: "rgba(255,255,255,0.8)",
-                  fontSize: RFValue(11),
-                  fontWeight: "600",
-                }}
-              >
-                Pending Wounds
-              </Text>
-            </View>
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: "rgba(255,255,255,0.15)",
-                borderRadius: RFValue(16),
-                padding: RFValue(14),
-              }}
-            >
-              <Text
-                style={{
-                  color: "#FFF",
-                  fontSize: RFValue(18),
-                  fontWeight: "800",
-                  marginBottom: RFValue(4),
-                }}
-              >
-                12%
-              </Text>
-              <Text
-                style={{
-                  color: "rgba(255,255,255,0.8)",
-                  fontSize: RFValue(11),
-                  fontWeight: "600",
-                }}
-              >
-                Efficiency Rate
-              </Text>
-            </View>
-          </View>
         </View>
 
         {/* Content */}
@@ -15842,145 +15959,17 @@ const DoctorDashboard = ({ wounds, patients }) => {
           style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
         >
           <PackageMeetingDoctorPanel theme={theme} />
-          <DoctorQuickRequestsPanel
-            theme={theme}
-            doctorUserId={currentUser?.id}
-            onHelpPatient={handleHelpQuickPatient}
-            onOpenHelpChat={handleOpenExistingHelpChat}
-          />
-          <CoinWalletDoctorPanel theme={theme} />
-          {/* Critical Patients */}
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(16),
-              marginBottom: RFValue(16),
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.07,
-              shadowOffset: { width: 0, height: 2 },
-              shadowRadius: 16,
-              elevation: 2,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(14),
-              }}
-            >
-              <View
-                style={{
-                  width: RFValue(36),
-                  height: RFValue(36),
-                  borderRadius: RFValue(10),
-                  backgroundColor: theme.dangerLight,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(10),
-                }}
-              >
-                <Ionicons
-                  name="warning-outline"
-                  size={RFValue(18)}
-                  color={theme.danger}
-                />
-              </View>
-              <Text
-                style={{
-                  fontSize: RFValue(16),
-                  fontWeight: "800",
-                  color: theme.textPrimary,
-                  flex: 1,
-                }}
-              >
-                Critical Patients
-              </Text>
-              <View
-                style={{
-                  backgroundColor: theme.danger,
-                  borderRadius: RFValue(10),
-                  paddingHorizontal: RFValue(8),
-                  paddingVertical: RFValue(3),
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#FFF",
-                    fontSize: RFValue(10),
-                    fontWeight: "800",
-                  }}
-                >
-                  {criticalPatients}
-                </Text>
-              </View>
-            </View>
-            {criticalPatients > 0 ? (
-              patients
-                .filter((p) => p.riskLevel === "High")
-                .map((p, idx) => (
-                  <View
-                    key={idx}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingVertical: RFValue(8),
-                      borderTopWidth: idx > 0 ? 1 : 0,
-                      borderTopColor: theme.divider,
-                    }}
-                  >
-                    <View
-                      style={{
-                        width: RFValue(10),
-                        height: RFValue(10),
-                        borderRadius: 5,
-                        backgroundColor: theme.danger,
-                        marginRight: 10,
-                      }}
-                    />
-                    <Text
-                      style={{
-                        color: theme.textPrimary,
-                        fontWeight: "600",
-                        flex: 1,
-                      }}
-                    >
-                      {p.name}
-                    </Text>
-                    <Text
-                      style={{
-                        color: theme.textSecondary,
-                        fontSize: RFValue(11),
-                      }}
-                    >
-                      Vitals Alert
-                    </Text>
-                  </View>
-                ))
-            ) : (
-              <Text
-                style={{
-                  fontSize: RFValue(13),
-                  color: theme.textSecondary,
-                  textAlign: "center",
-                  paddingVertical: RFValue(10),
-                }}
-              >
-                No patients with critical vitals.
-              </Text>
-            )}
-          </View>
+          {quickServiceDoctor ? (
+            <DoctorQuickRequestsPanel
+              theme={theme}
+              doctorUserId={currentUser?.id}
+              onHelpPatient={handleHelpQuickPatient}
+              onOpenHelpChat={handleOpenExistingHelpChat}
+            />
+          ) : null}
 
-          {/* Appointment Requests (pending approval) */}
-          <DoctorAppointmentRequestsSection />
-
-          {/* Upcoming / approved appointments */}
           <DoctorUpcomingAppointmentsSection />
 
-          {/* Recent Activity */}
           <View
             style={{
               backgroundColor: theme.card,
@@ -15992,51 +15981,13 @@ const DoctorDashboard = ({ wounds, patients }) => {
               shadowOffset: { width: 0, height: 4 },
               shadowRadius: 12,
               elevation: 3,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: RFValue(16),
-                fontWeight: "800",
-                color: theme.textPrimary,
-                marginBottom: RFValue(14),
-              }}
-            >
-              Recent Activity
-            </Text>
-            <Text
-              style={{
-                fontSize: RFValue(13),
-                color: theme.textSecondary,
-                textAlign: "center",
-                paddingVertical: RFValue(10),
-              }}
-            >
-              No recent activity to show.
-            </Text>
-          </View>
-
-          {/* Health Insights */}
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(18),
-              marginBottom: RFValue(16),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-              borderWidth: 1,
-              borderColor: theme.cardBorder,
             }}
           >
             <View
               style={{
                 flexDirection: "row",
                 alignItems: "center",
-                marginBottom: RFValue(12),
+                marginBottom: RFValue(14),
               }}
             >
               <View
@@ -16051,7 +16002,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
                 }}
               >
                 <Ionicons
-                  name="sparkles"
+                  name="time-outline"
                   size={RFValue(18)}
                   color={theme.accent}
                 />
@@ -16063,7 +16014,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
                   color: theme.textPrimary,
                 }}
               >
-                Health Insights
+                Recent Activity
               </Text>
             </View>
             <Text
@@ -16071,9 +16022,10 @@ const DoctorDashboard = ({ wounds, patients }) => {
                 fontSize: RFValue(13),
                 color: theme.textSecondary,
                 textAlign: "center",
+                paddingVertical: RFValue(10),
               }}
             >
-              No new insights available.
+              No recent activity to show.
             </Text>
           </View>
         </View>
@@ -16514,11 +16466,688 @@ const DoctorEmergencyScreen = ({ navigation }) => {
   );
 };
 
+const DoctorAccountEditScreen = ({
+  onBack,
+  currentUser,
+  doctorProfileId,
+  doctorRow,
+  onSaved,
+}) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [displayName, setDisplayName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [specialty, setSpecialty] = useState("");
+  const [clinic, setClinic] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDisplayName(String(currentUser?.name || "").trim());
+    setPhone(
+      String(
+        doctorRow?.phone ||
+          doctorRow?.phone_number ||
+          doctorRow?.contact_phone ||
+          "",
+      ).trim(),
+    );
+    setSpecialty(String(doctorRow?.specialty || "").trim());
+    setClinic(String(doctorRow?.clinic_or_hospital || "").trim());
+    setError("");
+  }, [currentUser?.id, doctorRow?.id]);
+
+  const save = async () => {
+    if (!displayName.trim()) {
+      setError("Enter your display name.");
+      return;
+    }
+    if (!doctorProfileId) {
+      setError("Doctor profile is still loading. Pull to refresh in a moment.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const phoneDigits = String(phone || "").replace(/\D/g, "");
+      if (phoneDigits.length > 0 && phoneDigits.length < 10) {
+        setError("Enter a valid phone number (at least 10 digits), or leave blank.");
+        setSaving(false);
+        return;
+      }
+      const doctorUpdate = {
+        specialty: specialty.trim(),
+        clinic_or_hospital: clinic.trim(),
+      };
+      if (phoneDigits.length >= 10) {
+        doctorUpdate.phone = phoneDigits;
+      }
+      await pb.collection("doctor_profile").update(doctorProfileId, doctorUpdate);
+      if (currentUser?.id) {
+        await pb.collection("UsersAuth").update(currentUser.id, {
+          name: displayName.trim(),
+        });
+        try {
+          await pb.collection("UsersAuth").authRefresh();
+        } catch {
+          // ignore
+        }
+      }
+      if (typeof onSaved === "function") onSaved();
+      onBack();
+    } catch (e) {
+      setError(
+        formatPocketBaseClientError(e) ||
+          e?.message ||
+          "Could not save. Check doctor_profile update rules in PocketBase.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <KeyboardAvoidingView
+        style={{ flex: 1, minHeight: 0 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View
+          style={{
+            backgroundColor: theme.card,
+            padding: RFValue(20),
+            borderBottomWidth: 1,
+            borderBottomColor: theme.cardBorder,
+            flexDirection: "row",
+            alignItems: "center",
+          }}
+        >
+          <TouchableOpacity
+            onPress={onBack}
+            style={{
+              width: RFValue(36),
+              height: RFValue(36),
+              borderRadius: RFValue(10),
+              backgroundColor: theme.inputBg,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: RFValue(14),
+            }}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={RFValue(20)}
+              color={theme.textPrimary}
+            />
+          </TouchableOpacity>
+          <Text
+            style={{
+              fontSize: RFValue(20),
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            Edit profile
+          </Text>
+        </View>
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{
+            padding: RFValue(16),
+            paddingBottom: Math.max(insets.bottom, RFValue(20)) + RFValue(24),
+          }}
+        >
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Display name
+          </Text>
+          <TextInput
+            value={displayName}
+            onChangeText={(t) => {
+              setDisplayName(t);
+              if (error) setError("");
+            }}
+            placeholder="Name shown to patients"
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(12),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(15),
+              color: theme.textPrimary,
+              marginBottom: RFValue(14),
+              backgroundColor: theme.card,
+            }}
+          />
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Phone number
+          </Text>
+          <TextInput
+            value={phone}
+            onChangeText={(t) => {
+              setPhone(t);
+              if (error) setError("");
+            }}
+            placeholder="e.g. +91 98765 43210"
+            keyboardType="phone-pad"
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(12),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(15),
+              color: theme.textPrimary,
+              marginBottom: RFValue(14),
+              backgroundColor: theme.card,
+            }}
+          />
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Specialty
+          </Text>
+          <TextInput
+            value={specialty}
+            onChangeText={setSpecialty}
+            placeholder="e.g. Cardiology"
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(12),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(15),
+              color: theme.textPrimary,
+              marginBottom: RFValue(14),
+              backgroundColor: theme.card,
+            }}
+          />
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              fontWeight: "700",
+              color: theme.textSecondary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Clinic or hospital
+          </Text>
+          <TextInput
+            value={clinic}
+            onChangeText={setClinic}
+            placeholder="Practice name or affiliation"
+            placeholderTextColor={theme.textTertiary}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              borderRadius: RFValue(12),
+              paddingHorizontal: RFValue(12),
+              paddingVertical: RFValue(12),
+              fontSize: RFValue(15),
+              color: theme.textPrimary,
+              marginBottom: RFValue(14),
+              backgroundColor: theme.card,
+            }}
+          />
+          {error ? (
+            <Text
+              style={{
+                color: theme.danger,
+                fontSize: RFValue(13),
+                marginBottom: RFValue(12),
+              }}
+            >
+              {error}
+            </Text>
+          ) : null}
+          <TouchableOpacity
+            onPress={save}
+            disabled={saving}
+            style={{
+              backgroundColor: theme.accent,
+              borderRadius: RFValue(14),
+              paddingVertical: RFValue(14),
+              alignItems: "center",
+              opacity: saving ? 0.65 : 1,
+            }}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: RFValue(16) }}>
+                Save changes
+              </Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+};
+
+const DoctorAccountPrivacyScreen = ({ onBack, currentUser }) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [busy, setBusy] = useState(false);
+
+  const openPrivacy = async () => {
+    try {
+      const can = await Linking.canOpenURL(NVOISYS_PRIVACY_POLICY_URL);
+      if (can) await Linking.openURL(NVOISYS_PRIVACY_POLICY_URL);
+      else Alert.alert("Privacy", "Unable to open the privacy policy link.");
+    } catch {
+      Alert.alert("Privacy", "Unable to open the privacy policy link.");
+    }
+  };
+
+  const sendReset = async () => {
+    const email = String(currentUser?.email || "").trim();
+    if (!email) {
+      Alert.alert("Password reset", "No email on this account.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await requestPasswordReset(email);
+      Alert.alert(
+        "Check your email",
+        "If an account exists for this address, PocketBase sent reset instructions.",
+      );
+    } catch (e) {
+      Alert.alert(
+        "Password reset",
+        formatPocketBaseClientError(e) || e?.message || "Request failed.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(20),
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.inputBg,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(14),
+          }}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={RFValue(20)}
+            color={theme.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text
+          style={{
+            fontSize: RFValue(20),
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          Privacy & security
+        </Text>
+      </View>
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: Math.max(insets.bottom, RFValue(20)) + RFValue(16),
+        }}
+      >
+        <Text
+          style={{
+            fontSize: RFValue(14),
+            color: theme.textSecondary,
+            lineHeight: RFValue(20),
+            marginBottom: RFValue(16),
+          }}
+        >
+          Review how we handle health data, then use a secure password reset if
+          you need to change credentials.
+        </Text>
+        <TouchableOpacity
+          onPress={openPrivacy}
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(14),
+            padding: RFValue(16),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            marginBottom: RFValue(12),
+          }}
+        >
+          <Text style={{ fontWeight: "800", color: theme.accent }}>
+            Open privacy policy
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: theme.textSecondary,
+              marginTop: RFValue(6),
+            }}
+          >
+            {NVOISYS_PRIVACY_POLICY_URL}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={sendReset}
+          disabled={busy}
+          style={{
+            backgroundColor: theme.accent,
+            borderRadius: RFValue(14),
+            paddingVertical: RFValue(14),
+            alignItems: "center",
+            opacity: busy ? 0.65 : 1,
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Email password reset link
+            </Text>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const DoctorAccountNotificationsScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [enabled, setEnabled] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(NOTIFICATIONS_ENABLED_STORAGE_KEY);
+        if (cancelled) return;
+        const on = raw !== "false";
+        notificationDisplayPrefs.enabled = on;
+        setEnabled(on);
+      } catch {
+        if (!cancelled) setEnabled(notificationDisplayPrefs.enabled);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onToggle = async (value) => {
+    setEnabled(value);
+    notificationDisplayPrefs.enabled = value;
+    try {
+      await AsyncStorage.setItem(
+        NOTIFICATIONS_ENABLED_STORAGE_KEY,
+        value ? "true" : "false",
+      );
+    } catch {
+      // ignore
+    }
+    configureNotificationsHandler();
+    if (value) {
+      try {
+        const asked = await Notifications.requestPermissionsAsync();
+        if (!asked.granted) {
+          Alert.alert(
+            "Notifications",
+            "Allow notifications in system settings for alerts and reminders.",
+          );
+        }
+      } catch {
+        // ignore
+      }
+    } else {
+      try {
+        await Notifications.cancelAllScheduledNotificationsAsync();
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(20),
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.inputBg,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(14),
+          }}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={RFValue(20)}
+            color={theme.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text
+          style={{
+            fontSize: RFValue(20),
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          Notifications
+        </Text>
+      </View>
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: Math.max(insets.bottom, RFValue(20)) + RFValue(16),
+        }}
+      >
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(16),
+            padding: RFValue(16),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            flexDirection: "row",
+            alignItems: "center",
+          }}
+        >
+          <View style={{ flex: 1, paddingRight: RFValue(12) }}>
+            <Text
+              style={{
+                fontSize: RFValue(15),
+                fontWeight: "700",
+                color: theme.textPrimary,
+              }}
+            >
+              In-app alerts and scheduled reminders
+            </Text>
+            <Text
+              style={{
+                fontSize: RFValue(12),
+                color: theme.textSecondary,
+                marginTop: RFValue(6),
+                lineHeight: RFValue(18),
+              }}
+            >
+              Turn off to silence banners and cancel pending local reminders on
+              this device.
+            </Text>
+          </View>
+          <Switch
+            value={enabled}
+            onValueChange={onToggle}
+            trackColor={{
+              false: theme.inputBorder,
+              true: theme.accentLight,
+            }}
+            thumbColor={enabled ? theme.accent : theme.textTertiary}
+          />
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const DoctorAccountScheduleScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const tabNav = useMainTabNav();
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          padding: RFValue(20),
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{
+            width: RFValue(36),
+            height: RFValue(36),
+            borderRadius: RFValue(10),
+            backgroundColor: theme.inputBg,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: RFValue(14),
+          }}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={RFValue(20)}
+            color={theme.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text
+          style={{
+            fontSize: RFValue(20),
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          Schedule
+        </Text>
+      </View>
+      <ScrollView
+        contentContainerStyle={{
+          padding: RFValue(16),
+          paddingBottom: Math.max(insets.bottom, RFValue(20)) + RFValue(16),
+        }}
+      >
+        <Text
+          style={{
+            fontSize: RFValue(14),
+            color: theme.textSecondary,
+            lineHeight: RFValue(21),
+            marginBottom: RFValue(18),
+          }}
+        >
+          Appointment requests, approvals, and time proposals are managed from
+          the Appointments tab. Open it to see your queue and calendar-linked
+          visits.
+        </Text>
+        <TouchableOpacity
+          onPress={() => {
+            tabNav?.navigateTab?.("Appts");
+            onBack();
+          }}
+          style={{
+            backgroundColor: theme.accent,
+            borderRadius: RFValue(14),
+            paddingVertical: RFValue(14),
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "800", fontSize: RFValue(15) }}>
+            Go to Appointments
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
 const DoctorProfileScreen = ({ onLogout }) => {
   const { theme, followSystem, setFollowSystem } = useTheme();
   const { currentUser, refreshAllData } = useAppData();
   const [showTheme, setShowTheme] = useState(false);
   const [showPackageSetup, setShowPackageSetup] = useState(false);
+  const [doctorAccountPane, setDoctorAccountPane] = useState(null);
+  const [profileReloadNonce, setProfileReloadNonce] = useState(0);
   const [doctorProfileId, setDoctorProfileId] = useState(null);
   const [doctorRow, setDoctorRow] = useState(null);
   const [concerns, setConcerns] = useState([]);
@@ -16562,7 +17191,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
     return () => {
       active = false;
     };
-  }, [currentUser?.id]);
+  }, [currentUser?.id, profileReloadNonce]);
 
   const toggleConcernChip = (chipId) => {
     const tag = normalizeConcernTag(chipId);
@@ -16647,6 +17276,40 @@ const DoctorProfileScreen = ({ onLogout }) => {
 
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
 
+  if (doctorAccountPane === "edit") {
+    return (
+      <DoctorAccountEditScreen
+        onBack={() => setDoctorAccountPane(null)}
+        currentUser={currentUser}
+        doctorProfileId={doctorProfileId}
+        doctorRow={doctorRow}
+        onSaved={() => setProfileReloadNonce((n) => n + 1)}
+      />
+    );
+  }
+  if (doctorAccountPane === "privacy") {
+    return (
+      <DoctorAccountPrivacyScreen
+        onBack={() => setDoctorAccountPane(null)}
+        currentUser={currentUser}
+      />
+    );
+  }
+  if (doctorAccountPane === "notifications") {
+    return (
+      <DoctorAccountNotificationsScreen
+        onBack={() => setDoctorAccountPane(null)}
+      />
+    );
+  }
+  if (doctorAccountPane === "schedule") {
+    return (
+      <DoctorAccountScheduleScreen
+        onBack={() => setDoctorAccountPane(null)}
+      />
+    );
+  }
+
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
@@ -16701,7 +17364,10 @@ const DoctorProfileScreen = ({ onLogout }) => {
               marginTop: RFValue(4),
             }}
           >
-            Specialist | License: -----
+            {String(doctorRow?.specialty || "Specialist").trim() || "Specialist"}
+            {" | "}
+            {String(doctorRow?.clinic_or_hospital || "Practice").trim() ||
+              "Practice"}
           </Text>
           <View
             style={{
@@ -17145,13 +17811,22 @@ const DoctorProfileScreen = ({ onLogout }) => {
               Account
             </Text>
             {[
-              { icon: "person-outline", label: "Edit Profile" },
-              { icon: "shield-checkmark-outline", label: "Privacy & Security" },
-              { icon: "notifications-outline", label: "Notifications" },
-              { icon: "calendar-outline", label: "Schedule" },
+              { icon: "person-outline", label: "Edit Profile", pane: "edit" },
+              {
+                icon: "shield-checkmark-outline",
+                label: "Privacy & Security",
+                pane: "privacy",
+              },
+              {
+                icon: "notifications-outline",
+                label: "Notifications",
+                pane: "notifications",
+              },
+              { icon: "calendar-outline", label: "Schedule", pane: "schedule" },
             ].map((item, idx) => (
               <TouchableOpacity
-                key={idx}
+                key={item.pane}
+                onPress={() => setDoctorAccountPane(item.pane)}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -19856,6 +20531,8 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   const cardOffsetsRef = React.useRef({});
   const [rxSideWarnings, setRxSideWarnings] = useState({});
   const [rxSideLoading, setRxSideLoading] = useState(false);
+  const [rxScrollViewportH, setRxScrollViewportH] = useState(0);
+  const [rxScrollContentH, setRxScrollContentH] = useState(0);
 
   const cards = React.useMemo(() => {
     const list = [...(prescriptionRecords || [])].sort(
@@ -19958,10 +20635,19 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
     }
   }, [highlightPrescriptionId, cards]);
 
+  React.useEffect(() => {
+    setRxScrollContentH(0);
+  }, [cards]);
+
+  const rxScrollContentShort =
+    rxScrollViewportH > 0 &&
+    rxScrollContentH > 0 &&
+    rxScrollContentH < rxScrollViewportH - 2;
+
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["bottom", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar
         barStyle={theme.statusBarStyle}
@@ -20013,15 +20699,26 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
         </View>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          padding: RFValue(16),
-          paddingTop: RFValue(8),
-          paddingBottom: tabScrollBottomPadding(),
+      <View
+        style={{ flex: 1, minHeight: 0 }}
+        onLayout={(e) => {
+          const h = e?.nativeEvent?.layout?.height;
+          if (typeof h === "number" && h > 0) setRxScrollViewportH(h);
         }}
       >
+        <ScrollView
+          ref={scrollRef}
+          style={rxScrollContentShort ? undefined : { flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={(_, h) => {
+            if (typeof h === "number" && h > 0) setRxScrollContentH(h);
+          }}
+          contentContainerStyle={{
+            padding: RFValue(16),
+            paddingTop: RFValue(8),
+            paddingBottom: Math.max(RFValue(12), tabScrollBottomPadding()),
+          }}
+        >
         {cards.length === 0 ? (
           <View style={{ alignItems: "center", paddingVertical: RFValue(40) }}>
             <Ionicons
@@ -20405,7 +21102,8 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
             </View>
           ))
         )}
-      </ScrollView>
+        </ScrollView>
+      </View>
     </SafeAreaView>
   );
 };
@@ -22798,10 +23496,18 @@ const MedicationTrackerScreen = ({ onBack }) => {
 };
 
 const FamilyHealthScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  const [fhScrollViewportH, setFhScrollViewportH] = useState(0);
+  const [fhScrollContentH, setFhScrollContentH] = useState(0);
+  const fhScrollContentShort =
+    fhScrollViewportH > 0 &&
+    fhScrollContentH > 0 &&
+    fhScrollContentH < fhScrollViewportH - 2;
+
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: "#F8FAFC" }}
-      edges={["bottom", "left", "right"]}
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <View
@@ -22840,15 +23546,27 @@ const FamilyHealthScreen = ({ onBack }) => {
         </View>
       </View>
 
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          alignItems: "center",
-          padding: RFValue(24),
-          paddingTop: RFValue(12),
+      <View
+        style={{ flex: 1, minHeight: 0 }}
+        onLayout={(e) => {
+          const h = e?.nativeEvent?.layout?.height;
+          if (typeof h === "number" && h > 0) setFhScrollViewportH(h);
         }}
       >
-        <GlowView glowColor="#4338CA" size={RFValue(120)}>
+        <ScrollView
+          style={fhScrollContentShort ? undefined : { flex: 1 }}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={(_, h) => {
+            if (typeof h === "number" && h > 0) setFhScrollContentH(h);
+          }}
+          contentContainerStyle={{
+            alignItems: "center",
+            padding: RFValue(24),
+            paddingTop: RFValue(12),
+            paddingBottom: Math.max(RFValue(12), tabScrollBottomPadding()),
+          }}
+        >
+        <GlowView glowColor={theme.accent} size={RFValue(120)}>
           <View
             style={{
               width: RFValue(100),
@@ -22999,12 +23717,15 @@ const FamilyHealthScreen = ({ onBack }) => {
             Notify Me When Ready
           </Text>
         </TouchableOpacity>
-      </ScrollView>
+        </ScrollView>
+      </View>
     </SafeAreaView>
   );
 };
 
 const EmergencySOScreen = ({ onBack }) => {
+  const { currentUser } = useAppData();
+  const patientQuickCareBinding = usePatientQuickCareBinding();
   const [sosActive, setSosActive] = useState(false);
   const [countdown, setCountdown] = useState(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
@@ -24407,6 +25128,7 @@ const PatientWoundScreen = () => {
     refreshAllData,
     requestOpenConversation,
   } = useAppData();
+  const patientQuickCareBinding = usePatientQuickCareBinding();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
   const handleOpenOfferConversation = useCallback(
     (conversationId, peerUserId) => {
@@ -29468,6 +30190,28 @@ export default function App() {
     };
   }, [currentUser?.id, userRole]);
 
+  // Doctors: same deferred permission so package-sale realtime alerts can show.
+  useEffect(() => {
+    if (!currentUser?.id || userRole !== "doctor") return;
+    if (
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const delayMs = Platform.OS === "android" ? 2000 : 0;
+    const t = setTimeout(() => {
+      InteractionManager.runAfterInteractions(() => {
+        if (cancelled) return;
+        ensureReminderPermissions().catch(() => {});
+      });
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [currentUser?.id, userRole, patientProfile?.status]);
+
   // Step 9: give every patient a pinned "Health Assistant" conversation the
   // first time they sign in. The call is best-effort - if PocketBase doesn't
   // have the `kind` field or blocks the create, login still proceeds.
@@ -29508,7 +30252,24 @@ export default function App() {
       }, 800);
     };
 
+    const paidPackageNotifyAt = Object.create(null);
+    const packageMeetingDoctorNotifyAt = Object.create(null);
+
     const subscribe = async () => {
+      const doctorOfferOwnerIds = new Set([
+        String(currentUser.id || "").trim(),
+      ].filter(Boolean));
+      if (userRole === "doctor") {
+        try {
+          const profileId = await resolveDoctorProfileIdForUser(
+            currentUser.id,
+          );
+          if (profileId) doctorOfferOwnerIds.add(String(profileId).trim());
+        } catch {
+          // ignore
+        }
+      }
+
       try {
         await pb.collection("wounds").subscribe("*", () => {
           scheduleDataRefresh();
@@ -29530,11 +30291,113 @@ export default function App() {
         console.log("App subscription error:", error);
       }
       try {
-        await pb.collection(PB_APPOINTMENTS_COLLECTION).subscribe("*", () => {
+        await pb.collection(PB_APPOINTMENTS_COLLECTION).subscribe("*", (evt) => {
           scheduleDataRefresh();
+          if (userRole !== "doctor" || evt?.action !== "create") return;
+          const record = evt?.record;
+          if (!record?.id) return;
+          const reason = String(record.reason || "");
+          if (!reason.includes("NVHS_MEETING_WORKFLOW")) return;
+          let workflow;
+          try {
+            workflow = decodeMeetingWorkflowFromAppointmentRow(record);
+          } catch {
+            return;
+          }
+          if (
+            String(workflow?.status || "").trim() !==
+            PACKAGE_MEETING_STATUS.AWAITING_DOCTOR
+          ) {
+            return;
+          }
+          void (async () => {
+            try {
+              const docKey = String(record.doctor || "").trim();
+              if (!docKey || !currentUser?.id) return;
+              let profileId = "";
+              try {
+                profileId = String(
+                  (await resolveDoctorProfileIdForUser(currentUser.id)) || "",
+                ).trim();
+              } catch {
+                profileId = "";
+              }
+              const myKeys = new Set(
+                [String(currentUser.id).trim(), profileId].filter(Boolean),
+              );
+              if (!myKeys.has(docKey)) return;
+              const now = Date.now();
+              if (
+                packageMeetingDoctorNotifyAt[record.id] &&
+                now - packageMeetingDoctorNotifyAt[record.id] < 4000
+              ) {
+                return;
+              }
+              packageMeetingDoctorNotifyAt[record.id] = now;
+              configureNotificationsHandler();
+              const existing = await Notifications.getPermissionsAsync();
+              if (!existing.granted) {
+                const asked = await Notifications.requestPermissionsAsync();
+                if (!asked.granted) return;
+              }
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: "New package meeting request",
+                  body: "A patient proposed a demo time. Open Booking Tracks on Home to accept or suggest slots.",
+                  sound: "default",
+                },
+                trigger: null,
+              });
+            } catch (error) {
+              console.log("package meeting doctor notify:", error?.message);
+            }
+          })();
         });
       } catch (error) {
         console.log("appointments subscribe skipped:", error?.message);
+      }
+      try {
+        await pb.collection("package_offers").subscribe("*", async (evt) => {
+          scheduleDataRefresh();
+          if (userRole !== "doctor" || evt?.action === "delete") return;
+          const record = evt?.record;
+          if (!record?.id) return;
+          const st = String(record.status || "")
+            .trim()
+            .toLowerCase();
+          if (!["paid", "active", "started"].includes(st)) return;
+          const docId = String(record.doctor || "").trim();
+          if (!docId || !doctorOfferOwnerIds.has(docId)) return;
+          const now = Date.now();
+          if (
+            paidPackageNotifyAt[record.id] &&
+            now - paidPackageNotifyAt[record.id] < 5000
+          ) {
+            return;
+          }
+          paidPackageNotifyAt[record.id] = now;
+          try {
+            configureNotificationsHandler();
+            const existing = await Notifications.getPermissionsAsync();
+            if (!existing.granted) {
+              const asked = await Notifications.requestPermissionsAsync();
+              if (!asked.granted) return;
+            }
+            const title = "Package payment received";
+            const pkgTitle = String(record.title || "Care package").trim();
+            const body = pkgTitle
+              ? `${pkgTitle} was paid. The deal is active — check Package offers.`
+              : "A package was paid. The deal is active — check Package offers.";
+            await Notifications.scheduleNotificationAsync({
+              content: { title, body, sound: "default" },
+              trigger: null,
+            });
+          } catch (error) {
+            console.log("package_offers doctor notify:", error?.message);
+          }
+        });
+      } catch (error) {
+        console.log("package_offers subscribe skipped:", error?.message);
       }
     };
 
@@ -29552,6 +30415,11 @@ export default function App() {
       pb.collection("conversations").unsubscribe("*");
       try {
         pb.collection(PB_APPOINTMENTS_COLLECTION).unsubscribe("*");
+      } catch {
+        // Collection may not exist in every workspace.
+      }
+      try {
+        pb.collection("package_offers").unsubscribe("*");
       } catch {
         // Collection may not exist in every workspace.
       }
