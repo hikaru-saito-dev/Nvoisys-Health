@@ -30,6 +30,7 @@ import {
   cancelQuickRequest,
   CARE_MODE,
   closeQuickRequest,
+  consumerPlanDisplayName,
   createPatientSelectedPackageOffer,
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
@@ -4784,7 +4785,8 @@ export function DoctorQuickRequestsPanel({
   return (
     <View
       style={{
-        marginTop: 12,
+        marginTop: 0,
+        marginBottom: 16,
         backgroundColor: theme.card,
         borderRadius: 16,
         padding: 14,
@@ -4863,7 +4865,9 @@ export function DoctorQuickRequestsPanel({
             marginBottom: 14,
           }}
         >
-          No queued requests (or list blocked - see red message above).
+          {err
+            ? "No queued requests, or the list could not be loaded (see message above)."
+            : "No queued requests."}
         </Text>
       ) : (
         solutionRows.map(renderSolutionCard)
