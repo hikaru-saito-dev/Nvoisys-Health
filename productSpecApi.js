@@ -117,8 +117,11 @@ export function entitlementsForConsumerPlan(plan) {
   return {
     plan: p,
     /** null = unlimited daily AI assistant messages */
-    aiChatDailyLimit: isBasic ? 25 : null,
-    /** Rolling 7-day cap on doctor consultation time (minutes) with the package doctor. */
+    aiChatDailyLimit: isBasic ? 20 : null,
+    /**
+     * Rolling 7-day cap on doctor consultation minutes with the package doctor
+     * (Basic ≈ 3h, Gold ≈ 5h; Premium ≈ open access for 24/7 tier).
+     */
     consultationMinutesPerWeek: isBasic ? 180 : isGold ? 300 : 10080,
     sideEffectAi: isPremium,
     emergencyAssistant: isPremium,
@@ -320,47 +323,52 @@ export const FIXED_PACKAGE_DEFINITIONS = [
     slot: 1,
     name: "Basic — Essential Care",
     total_period: "90 days",
-    treatment_type: "Structured follow-up & remote support",
+    treatment_type: "Core care & limited AI",
     description:
-      "Entry-level packaged care with core monitoring and safety checks. Ideal for stable conditions with periodic doctor oversight.",
+      "Core subscription with limited AI chat, scheduled doctor time, and medication adherence support.",
     features: [
-      "Scheduled video or chat consults",
-      "24/7 app-guided monitoring prompts",
-      "AI medication interaction checks",
-      "Care plan & dose reminders in-app",
+      "Limited AI chat access",
+      "3 hours of doctor consultation time (scheduled by the doctor)",
+      "Daily medication reminders",
     ],
   },
   {
     slot: 2,
     name: "Gold — Active Care",
     total_period: "120 days",
-    treatment_type: "Ongoing condition management",
+    treatment_type: "Expanded AI & more doctor time",
     description:
-      "Step-up support for patients who need closer follow-up between visits, with richer monitoring and AI-assisted reviews.",
+      "Includes unlimited AI chat, more scheduled doctor consultation time, and daily medication reminders.",
     features: [
-      "Everything in Basic",
-      "More frequent touchpoints with your care team",
-      "Enhanced 24/7 monitoring workflows",
-      "Expanded AI med checks & adherence insights",
-      "Priority messaging window",
+      "Unlimited AI chat access",
+      "5 hours of doctor consultation time (scheduled by the doctor)",
+      "Daily medication reminders",
     ],
   },
   {
     slot: 3,
     name: "Premium — Comprehensive Care",
     total_period: "180 days",
-    treatment_type: "High-touch / complex care paths",
+    treatment_type: "Full access, safety, diet & emergency support",
     description:
-      "Full-feature packaged programme for complex or high-risk journeys. Feature set is defined by the app and updated centrally.",
+      "Full AI and safety tools, 24/7 doctor access, diet review by your doctor, and a personal assistant for emergencies and logistics.",
     features: [
-      "Everything in Gold",
-      "Maximum tier 24/7 monitoring pathways",
-      "Full AI-assisted medication & symptom reviews",
-      "Care coordination summaries for your records",
-      "Highest-priority routing for package consults",
+      "Unlimited AI chat access",
+      "AI-powered side effects checker",
+      "Daily medication reminders",
+      "24/7 doctor consultation access at any time of the day",
+      "Diet checking by doctor",
+      "Personal assistant for emergencies (e.g. finding hospitals and reducing hassle)",
     ],
   },
 ];
+
+/** Canonical catalogue row for a slot (1–3). Used by doctor setup, find-doctor, and patient modals. */
+export function getFixedPackageDefinitionForSlot(slotNum) {
+  const n = Number(slotNum) || 1;
+  const idx = Math.min(Math.max(n, 1), 3) - 1;
+  return FIXED_PACKAGE_DEFINITIONS[idx] || FIXED_PACKAGE_DEFINITIONS[0];
+}
 
 function parsePackageTemplatesRaw(raw) {
   if (Array.isArray(raw)) return raw;

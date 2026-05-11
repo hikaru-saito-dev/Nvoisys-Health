@@ -45,6 +45,7 @@ import {
   doctorTierEligibleForPackageMode,
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
+  getFixedPackageDefinitionForSlot,
   getAiAssistantUsageToday,
   getCoinBalanceForUser,
   incrementAiAssistantUsageToday,
@@ -2684,6 +2685,7 @@ export function PackageDoctorJourneyScreen({
   const [pickerMode, setPickerMode] = useState(null);
   const [meetingDesc, setMeetingDesc] = useState("");
   const [selectedSlot, setSelectedSlot] = useState(null);
+  const [packageDetailSlot, setPackageDetailSlot] = useState(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -3037,6 +3039,15 @@ export function PackageDoctorJourneyScreen({
               the fee is not configured. The paid doctor-patient pair is fixed
               for coin settlement.
             </Text>
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: 11,
+                marginBottom: 8,
+              }}
+            >
+              Tap a package to see what is included, then pay when you are ready.
+            </Text>
             {(selectedDoctor.packageSlots || []).map((slot) => {
               const amount = resolvePackageSlotAmountInr(slot);
               const selected = selectedSlot?.slot === slot.slot;
@@ -3044,7 +3055,10 @@ export function PackageDoctorJourneyScreen({
               return (
                 <TouchableOpacity
                   key={slot.slot}
-                  onPress={() => setSelectedSlot(slot)}
+                  onPress={() => {
+                    setSelectedSlot(slot);
+                    setPackageDetailSlot(Number(slot.slot) || 1);
+                  }}
                   style={{
                     padding: 12,
                     borderRadius: 12,
@@ -3297,6 +3311,111 @@ export function PackageDoctorJourneyScreen({
           ) : null}
         </View>
       </ScrollView>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={packageDetailSlot != null}
+        onRequestClose={() => setPackageDetailSlot(null)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            justifyContent: "center",
+            padding: 18,
+          }}
+        >
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => setPackageDetailSlot(null)}
+          />
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: 18,
+              padding: 16,
+              maxHeight: "88%",
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                marginBottom: 10,
+              }}
+            >
+              <Text
+                style={{
+                  flex: 1,
+                  paddingRight: 8,
+                  color: theme.textPrimary,
+                  fontSize: S.title,
+                  fontWeight: "900",
+                }}
+              >
+                {packageDetailSlot != null
+                  ? getFixedPackageDefinitionForSlot(packageDetailSlot).name
+                  : ""}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setPackageDetailSlot(null)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Close package details"
+              >
+                <Ionicons
+                  name="close-circle"
+                  size={28}
+                  color={theme.textTertiary}
+                />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
+              {packageDetailSlot != null ? (
+                <>
+                  <Text
+                    style={{
+                      color: theme.textSecondary,
+                      fontSize: S.small,
+                      lineHeight: 22,
+                      marginBottom: 12,
+                    }}
+                  >
+                    {
+                      getFixedPackageDefinitionForSlot(packageDetailSlot)
+                        .description
+                    }
+                  </Text>
+                  {(
+                    getFixedPackageDefinitionForSlot(packageDetailSlot)
+                      .features || []
+                  ).map((line, i) => (
+                    <Text
+                      key={i}
+                      style={{
+                        color: theme.textPrimary,
+                        fontSize: S.body,
+                        marginBottom: 8,
+                        lineHeight: 22,
+                      }}
+                    >
+                      • {line}
+                    </Text>
+                  ))}
+                </>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
