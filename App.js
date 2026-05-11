@@ -87,8 +87,10 @@ import {
   effectiveCareMode,
   ensurePackageDemoMeetingConversation,
   entitlementsForConsumerPlan,
+  getCoinBalanceForUser,
   getPatientActiveQuickCareBinding,
   listPackageOffersForDoctor,
+  recordPatientWalletDepositStub,
   mergeLocalFeesOntoSlots,
   minutesUsedWithDoctorThisRollingWeek,
   needsCareOnboarding,
@@ -109,6 +111,7 @@ import {
 import {
   AdminConsoleAppScreen,
   CareModeOnboardingScreen,
+  CoinWalletDoctorPanel,
   DoctorCoinPaymentHistoryPanel,
   DoctorPackageSetupScreen,
   DoctorQuickRequestsPanel,
@@ -3966,7 +3969,9 @@ const WalletDepositScreen = ({
               {coinBalance} coins
             </Text>
             <Text style={{ color: theme.textTertiary, fontSize: RFValue(12), marginTop: RFValue(8), lineHeight: RFValue(18) }}>
-              Deposits will be connected to payments tomorrow. For now, this screen confirms navigation + responsive layout.
+              Deposits use a stub flow: the same number of coins is credited to your
+              wallet in PocketBase (`coin_ledger`). Connect Cashfree here when you are
+              ready for live INR collection.
             </Text>
           </View>
 
@@ -4252,10 +4257,52 @@ const PatientHomeScreen = () => {
   const [showQuickCounselling, setShowQuickCounselling] = useState(false);
   const [showPackageJourney, setShowPackageJourney] = useState(false);
   const [packageDoctors, setPackageDoctors] = useState([]);
+  const [showWallet, setShowWallet] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [patientCoinBalance, setPatientCoinBalance] = useState(0);
 
   useEffect(() => {
     void fetchHospitals();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentUser?.id || dataLoading) return undefined;
+    (async () => {
+      try {
+        const b = await getCoinBalanceForUser(currentUser.id);
+        if (!cancelled) setPatientCoinBalance(Number(b) || 0);
+      } catch {
+        if (!cancelled) setPatientCoinBalance(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, dataLoading]);
+
+  const handleWalletDeposit = useCallback(async () => {
+    const raw = String(depositAmount || "").trim();
+    const n = Math.floor(Number(raw));
+    if (!currentUser?.id) return;
+    if (!Number.isFinite(n) || n < 1) {
+      Alert.alert("Deposit", "Enter a whole number of rupees (1 or more).");
+      return;
+    }
+    try {
+      const next = await recordPatientWalletDepositStub(currentUser.id, n);
+      setPatientCoinBalance(Number(next) || 0);
+      setDepositAmount("");
+      try {
+        await refreshAllData();
+      } catch {
+        /* ignore */
+      }
+      Alert.alert("Deposit", `${n} coins were added to your wallet.`);
+    } catch (e) {
+      Alert.alert("Deposit", e?.message || "Could not add coins.");
+    }
+  }, [currentUser?.id, depositAmount, refreshAllData]);
 
   useEffect(() => {
     if (!showPackageJourney) return;
@@ -4303,6 +4350,10 @@ const PatientHomeScreen = () => {
     const handleBack = () => {
       if (startCallType) {
         setStartCallType(null);
+        return true;
+      }
+      if (showWallet) {
+        setShowWallet(false);
         return true;
       }
       if (showFindDoctor) {
@@ -4362,6 +4413,7 @@ const PatientHomeScreen = () => {
     return () => subscription.remove();
   }, [
     startCallType,
+    showWallet,
     showFindDoctor,
     showPrescription,
     showMeds,
@@ -4383,6 +4435,24 @@ const PatientHomeScreen = () => {
         onBack={() => setShowMedical(false)}
         patientUserId={currentUser?.id}
         scrollContentBottomInset={patientFullScreenScrollBottomInset()}
+      />
+    );
+  if (showWallet)
+    return (
+      <WalletDepositScreen
+        theme={theme}
+        coinBalance={patientCoinBalance}
+        depositAmount={depositAmount}
+        setDepositAmount={setDepositAmount}
+        onDeposit={handleWalletDeposit}
+        onBack={() => {
+          setShowWallet(false);
+          if (currentUser?.id) {
+            void getCoinBalanceForUser(currentUser.id)
+              .then((b) => setPatientCoinBalance(Number(b) || 0))
+              .catch(() => {});
+          }
+        }}
       />
     );
   if (showQuickSol)
@@ -4692,6 +4762,69 @@ const PatientHomeScreen = () => {
                     Track care and reach help fast.
                   </Text>
                 </View>
+
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={() => setShowWallet(true)}
+                  style={{
+                    marginTop: RFValue(16),
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: "#FFF",
+                    borderRadius: RFValue(18),
+                    paddingVertical: RFValue(14),
+                    paddingHorizontal: RFValue(14),
+                    shadowColor: "#000",
+                    shadowOpacity: 0.12,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowRadius: 10,
+                    elevation: 4,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: RFValue(44),
+                      height: RFValue(44),
+                      borderRadius: RFValue(12),
+                      backgroundColor: "#EEF2FF",
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons
+                      name="wallet-outline"
+                      size={RFValue(22)}
+                      color={theme.accent}
+                    />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: RFValue(12) }}>
+                    <Text
+                      style={{
+                        color: "#64748B",
+                        fontSize: RFValue(10),
+                        fontWeight: "800",
+                        letterSpacing: 1.2,
+                      }}
+                    >
+                      WALLET
+                    </Text>
+                    <Text
+                      style={{
+                        color: "#0F172A",
+                        fontSize: RFValue(18),
+                        fontWeight: "900",
+                        marginTop: RFValue(2),
+                      }}
+                    >
+                      {patientCoinBalance} coins
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={RFValue(22)}
+                    color="#94A3B8"
+                  />
+                </TouchableOpacity>
 
                 <View
                   style={{
@@ -15956,6 +16089,23 @@ const DoctorDashboard = ({ wounds, patients }) => {
         <View
           style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
         >
+          <View
+            style={{
+              marginBottom: RFValue(16),
+              backgroundColor: theme.card,
+              borderRadius: RFValue(20),
+              padding: RFValue(16),
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+              shadowColor: theme.shadowColor,
+              shadowOpacity: 0.06,
+              shadowOffset: { width: 0, height: 4 },
+              shadowRadius: 12,
+              elevation: 3,
+            }}
+          >
+            <CoinWalletDoctorPanel theme={theme} />
+          </View>
           <PackageMeetingDoctorPanel theme={theme} />
           {quickServiceDoctor ? (
             <DoctorQuickRequestsPanel

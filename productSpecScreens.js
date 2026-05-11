@@ -5497,7 +5497,7 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
   );
 
   return (
-    <View style={{ marginTop: 12 }}>
+    <View style={{ marginTop: 0 }}>
       <Text
         style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 8 }}
       >

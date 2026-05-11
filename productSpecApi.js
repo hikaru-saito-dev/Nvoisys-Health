@@ -2659,6 +2659,51 @@ export async function recordTrialCoinTopup({
   });
 }
 
+/**
+ * Stub wallet top-up (1 coin = ₹1): logs `payment_transactions` when possible,
+ * then credits `coin_ledger`. Replace with Cashfree when deposits go live.
+ */
+export async function recordPatientWalletDepositStub(
+  patientUserId,
+  amountInr,
+) {
+  const userId = String(patientUserId || getAuthUser()?.id || "").trim();
+  const amount = Math.floor(Number(amountInr));
+  if (!userId) throw new Error("Sign in required.");
+  if (!Number.isFinite(amount) || amount < 1) {
+    throw new Error("Enter a valid whole number of rupees (minimum 1).");
+  }
+  const refId = `wd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    await recordPaymentTransaction({
+      patientUserId: userId,
+      sourceCollection: "wallet_deposit",
+      sourceId: refId,
+      kind: "wallet_deposit_stub",
+      provider: "stub",
+      providerOrderId: refId,
+      amountInr: amount,
+      currency: "INR",
+      status: "success",
+      description: `Wallet deposit (stub): ${amount} coins`,
+    });
+  } catch (e) {
+    console.log(
+      "recordPatientWalletDepositStub payment_transactions:",
+      e?.message,
+    );
+  }
+  await createCoinLedgerLine({
+    user: userId,
+    delta: amount,
+    reason: "wallet_deposit_stub",
+    ref_collection: "wallet_deposit",
+    ref_id: refId,
+    meta: { amount_inr: amount, at: new Date().toISOString() },
+  });
+  return getCoinBalanceForUser(userId);
+}
+
 async function findDoctorCoinBalanceRow(doctorUserId) {
   if (!doctorUserId) return null;
   try {
