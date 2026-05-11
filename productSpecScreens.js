@@ -1960,71 +1960,47 @@ export function QuickCounsellingScreen({
             {planLabel} plan · ₹25 (25 coins) — queued for{" "}
             {quickCareBinding.doctorName || "your package doctor"}.
           </Text>
-          {consultMinutesLimit > 0 ? (
-            <Text
-              style={{
-                color: theme.textTertiary,
-                marginBottom: 12,
-                fontSize: 11,
-                lineHeight: 16,
-              }}
-            >
-              Consultation minutes this week (completed visits, estimate):{" "}
-              {consultMinutesUsed} / {consultMinutesLimit}.
+        
+        <TextInput
+          placeholder={
+            fromWoundTracker
+              ? "Describe symptoms, pain, or questions for your video consultation…"
+              : "What would you like to talk about?"
+          }
+          placeholderTextColor={theme.textTertiary}
+          value={topic}
+          onChangeText={setTopic}
+          multiline
+          textAlignVertical="top"
+          style={{
+            minHeight: fromWoundTracker ? 140 : 88,
+            backgroundColor: theme.card,
+            borderRadius: 14,
+            padding: 14,
+            color: theme.textPrimary,
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+          }}
+        />
+        <TouchableOpacity
+          onPress={submit}
+          disabled={busy}
+          style={{
+            marginTop: 20,
+            backgroundColor: theme.success,
+            padding: 16,
+            borderRadius: 16,
+            alignItems: "center",
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Start request (25 coins)
             </Text>
-          ) : null}
-          {fromWoundTracker ? (
-            <Text
-              style={{
-                color: theme.textTertiary,
-                marginBottom: 12,
-                fontSize: S.small,
-              }}
-            >
-              Describe wound-related concerns for your doctor’s video follow-up.
-            </Text>
-          ) : null}
-          <TextInput
-            placeholder={
-              fromWoundTracker
-                ? "Describe symptoms, pain, or questions for your video consultation…"
-                : "What would you like to talk about?"
-            }
-            placeholderTextColor={theme.textTertiary}
-            value={topic}
-            onChangeText={setTopic}
-            onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
-            multiline
-            textAlignVertical="top"
-            style={{
-              minHeight: fromWoundTracker ? 140 : 88,
-              backgroundColor: theme.card,
-              borderRadius: 14,
-              padding: 14,
-              color: theme.textPrimary,
-              borderWidth: 1,
-              borderColor: theme.cardBorder,
-            }}
-          />
-          <TouchableOpacity
-            onPress={submit}
-            disabled={busy}
-            style={{
-              marginTop: 20,
-              backgroundColor: theme.success,
-              padding: 16,
-              borderRadius: 16,
-              alignItems: "center",
-            }}
-          >
-            {busy ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={{ color: "#fff", fontWeight: "800" }}>
-                Start request (25 coins)
-              </Text>
-            )}
-          </TouchableOpacity>
+          )}
+        </TouchableOpacity>
       </ScrollView>
     </View>
   );

@@ -11,6 +11,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -8829,11 +8830,28 @@ const ThemeScreen = ({ onBack }) => {
     followSystem,
     setFollowSystem,
   } = useTheme();
+  const themeScrollRef = useRef(null);
+  const themeScrollYRef = useRef(0);
+  const themeRestoreYRef = useRef(null);
   const [selectedTheme, setSelectedTheme] = useState(paletteKey);
 
   useEffect(() => {
     setSelectedTheme(paletteKey);
   }, [paletteKey]);
+
+  useLayoutEffect(() => {
+    if (themeRestoreYRef.current == null) return;
+    const y = themeRestoreYRef.current;
+    themeRestoreYRef.current = null;
+    const tryRestore = () =>
+      themeScrollRef.current?.scrollTo?.({ y, animated: false });
+    tryRestore();
+    requestAnimationFrame(() => {
+      tryRestore();
+      requestAnimationFrame(tryRestore);
+    });
+    [50, 150, 300, 500].forEach((ms) => setTimeout(tryRestore, ms));
+  }, [followSystem]);
 
   const themes = [
     {
@@ -8957,6 +8975,12 @@ const ThemeScreen = ({ onBack }) => {
       </View>
 
       <ScrollView
+        ref={themeScrollRef}
+        keyboardShouldPersistTaps="always"
+        onScroll={(e) => {
+          themeScrollYRef.current = e.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
         contentContainerStyle={{
           padding: RFValue(16),
           paddingBottom: tabScrollBottomPadding(),
@@ -9003,7 +9027,10 @@ const ThemeScreen = ({ onBack }) => {
             </View>
             <Switch
               value={followSystem}
-              onValueChange={setFollowSystem}
+              onValueChange={(value) => {
+                themeRestoreYRef.current = themeScrollYRef.current;
+                setFollowSystem(value);
+              }}
               trackColor={{
                 false: theme.inputBorder,
                 true: theme.accentLight,
@@ -10236,6 +10263,9 @@ const PatientProfileScreen = ({
   const [showMedicalRecords, setShowMedicalRecords] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const { theme, followSystem, setFollowSystem } = useTheme();
+  const profileScrollRef = useRef(null);
+  const profileScrollYRef = useRef(0);
+  const profileRestoreYRef = useRef(null);
   const {
     upgradeToPackageMode,
     resetCareOnboarding,
@@ -10247,6 +10277,20 @@ const PatientProfileScreen = ({
   const phoneDisplay = formatPhoneForDisplay(
     patientProfilePhoneRaw(patientProfile),
   );
+
+  useLayoutEffect(() => {
+    if (profileRestoreYRef.current == null) return;
+    const y = profileRestoreYRef.current;
+    profileRestoreYRef.current = null;
+    const tryRestore = () =>
+      profileScrollRef.current?.scrollTo?.({ y, animated: false });
+    tryRestore();
+    requestAnimationFrame(() => {
+      tryRestore();
+      requestAnimationFrame(tryRestore);
+    });
+    [50, 150, 300, 500].forEach((ms) => setTimeout(tryRestore, ms));
+  }, [followSystem]);
 
   useEffect(() => {
     let cancelled = false;
@@ -10345,6 +10389,12 @@ const PatientProfileScreen = ({
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <ScrollView
+        ref={profileScrollRef}
+        keyboardShouldPersistTaps="always"
+        onScroll={(e) => {
+          profileScrollYRef.current = e.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
         contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}
       >
         <View
@@ -10856,7 +10906,10 @@ const PatientProfileScreen = ({
               </View>
               <Switch
                 value={followSystem}
-                onValueChange={setFollowSystem}
+                onValueChange={(value) => {
+                  profileRestoreYRef.current = profileScrollYRef.current;
+                  setFollowSystem(value);
+                }}
                 trackColor={{
                   false: theme.inputBorder,
                   true: theme.accentLight,
@@ -15863,10 +15916,12 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const pendingWounds = (wounds || []).filter(
     (w) => w.status === "Review Pending",
   ).length;
-  /** Tier lives on `doctor_profile` (same hook slot as `patientProfile` for patients). */
-  const quickServiceDoctor = doctorTierEligibleForQuickService(
-    doctorProfile || currentUser,
-  );
+  const criticalPatients = (patients || []).filter(
+    (p) => p.riskLevel === "High",
+  ).length;
+  /** Doctor tier comes from the signed-in user / doctor profile fields — not patientProfile. */
+  const quickServiceDoctor =
+    doctorTierEligibleForQuickService(currentUser);
 
   // Doctor "Help" flow per spec:
   //   ensure conversation → send first message → record offer →
@@ -17288,6 +17343,23 @@ const DoctorProfileScreen = ({ onLogout }) => {
   const [concernsError, setConcernsError] = useState("");
   const [concernsSavedFlash, setConcernsSavedFlash] = useState(false);
   const [doctorConsultLanguage, setDoctorConsultLanguage] = useState("");
+  const doctorScrollRef = useRef(null);
+  const doctorScrollYRef = useRef(0);
+  const doctorRestoreYRef = useRef(null);
+
+  useLayoutEffect(() => {
+    if (doctorRestoreYRef.current == null) return;
+    const y = doctorRestoreYRef.current;
+    doctorRestoreYRef.current = null;
+    const tryRestore = () =>
+      doctorScrollRef.current?.scrollTo?.({ y, animated: false });
+    tryRestore();
+    requestAnimationFrame(() => {
+      tryRestore();
+      requestAnimationFrame(tryRestore);
+    });
+    [50, 150, 300, 500].forEach((ms) => setTimeout(tryRestore, ms));
+  }, [followSystem]);
 
   useEffect(() => {
     let active = true;
@@ -17448,6 +17520,12 @@ const DoctorProfileScreen = ({ onLogout }) => {
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
       <ScrollView
+        ref={doctorScrollRef}
+        keyboardShouldPersistTaps="always"
+        onScroll={(e) => {
+          doctorScrollYRef.current = e.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
         contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}
       >
         {/* Profile Header */}
@@ -18076,7 +18154,10 @@ const DoctorProfileScreen = ({ onLogout }) => {
               </View>
               <Switch
                 value={followSystem}
-                onValueChange={setFollowSystem}
+              onValueChange={(value) => {
+                doctorRestoreYRef.current = doctorScrollYRef.current;
+                setFollowSystem(value);
+              }}
                 trackColor={{
                   false: theme.inputBorder,
                   true: theme.accentLight,
@@ -24504,6 +24585,8 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
 // --- CUSTOM TAB NAVIGATOR ---
 const CustomTabNavigator = ({ routes, activeColor }) => {
   const [activeIndex, setActiveIndex] = useState(0);
+  const routesRef = useRef(routes);
+  routesRef.current = routes;
 
   useEffect(() => {
     const handleBack = () => {
@@ -24520,35 +24603,47 @@ const CustomTabNavigator = ({ routes, activeColor }) => {
     return () => subscription.remove();
   }, [activeIndex]);
 
-  const state = {
-    index: activeIndex,
-    routes: routes.map((r, i) => ({ key: r.name, name: r.name })),
-  };
+  const state = useMemo(
+    () => ({
+      index: activeIndex,
+      routes: routesRef.current.map((r) => ({ key: r.name, name: r.name })),
+    }),
+    [activeIndex],
+  );
 
-  const navigation = {
-    navigate: (name) => {
-      const idx = routes.findIndex((r) => r.name === name);
-      if (idx !== -1) setActiveIndex(idx);
-    },
-    emit: () => ({ defaultPrevented: false }),
-  };
+  const navigation = useMemo(
+    () => ({
+      navigate: (name) => {
+        const idx = routesRef.current.findIndex((r) => r.name === name);
+        if (idx !== -1) setActiveIndex(idx);
+      },
+      emit: () => ({ defaultPrevented: false }),
+    }),
+    [],
+  );
 
-  const descriptors = {};
-  routes.forEach((r) => {
-    descriptors[r.key || r.name] = {
-      options: { tabBarLabel: r.label || r.name, tabBarIcon: r.icon },
-    };
-  });
+  const descriptors = useMemo(() => {
+    const next = {};
+    routesRef.current.forEach((r) => {
+      next[r.key || r.name] = {
+        options: { tabBarLabel: r.label || r.name, tabBarIcon: r.icon },
+      };
+    });
+    return next;
+  }, [routes]);
 
   const ActiveComponent = routes[activeIndex].component;
 
-  const mainTabNavValue = {
-    navigateTab: (name) => {
-      const idx = routes.findIndex((r) => r.name === name);
-      if (idx !== -1) setActiveIndex(idx);
-    },
-    activeName: routes[activeIndex]?.name || "",
-  };
+  const mainTabNavValue = useMemo(
+    () => ({
+      navigateTab: (name) => {
+        const idx = routesRef.current.findIndex((r) => r.name === name);
+        if (idx !== -1) setActiveIndex(idx);
+      },
+      activeName: routesRef.current[activeIndex]?.name || "",
+    }),
+    [activeIndex],
+  );
 
   return (
     <MainTabNavigationContext.Provider value={mainTabNavValue}>
@@ -27920,6 +28015,27 @@ export default function App() {
     AsyncStorage.setItem(THEME_FOLLOW_SYSTEM_KEY, "false").catch(() => {});
   }, []);
 
+  const themeContextValue = useMemo(
+    () => ({
+      theme,
+      changeTheme,
+      /** @deprecated use paletteKey — kept for any legacy reads */
+      themeKey: paletteKey,
+      paletteKey,
+      resolvedPaletteKey,
+      followSystem,
+      setFollowSystem,
+    }),
+    [
+      theme,
+      changeTheme,
+      paletteKey,
+      resolvedPaletteKey,
+      followSystem,
+      setFollowSystem,
+    ],
+  );
+
   useEffect(() => {
     const subscription = Appearance.addChangeListener(({ colorScheme }) => {
       setSystemScheme(colorScheme === "dark" ? "dark" : "light");
@@ -30719,18 +30835,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <ThemeContext.Provider
-        value={{
-          theme,
-          changeTheme,
-          /** @deprecated use paletteKey — kept for any legacy reads */
-          themeKey: paletteKey,
-          paletteKey,
-          resolvedPaletteKey,
-          followSystem,
-          setFollowSystem,
-        }}
-      >
+      <ThemeContext.Provider value={themeContextValue}>
         <AppDataContext.Provider value={appDataValue}>
           <RootErrorBoundary theme={theme}>
             <AppContent
@@ -30940,7 +31045,7 @@ const AppContent = ({
     setPatientProfile(profile || null);
   };
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await logoutUser();
     setCurrentUser(null);
     setPatientProfile(null);
@@ -30949,7 +31054,59 @@ const AppContent = ({
     setDoctorSelectedWoundId(null);
     setPatientSelectedWoundId(null);
     setPatientShowNewWound(false);
-  };
+  }, [
+    setCurrentUser,
+    setDoctorSelectedWoundId,
+    setLocalCareMode,
+    setPatientProfile,
+    setPatientSelectedWoundId,
+    setPatientShowNewWound,
+    setUserRole,
+  ]);
+
+  const handlePatientProfileSaved = useCallback(async () => {
+    try {
+      if (pb.authStore.isValid) {
+        await pb.collection("UsersAuth").authRefresh();
+      }
+      const refreshedUser = getAuthUser();
+      if (refreshedUser?.id) {
+        setCurrentUser(refreshedUser);
+      }
+      const refreshedProfile = await ensureRoleProfile("patient");
+      setPatientProfile(refreshedProfile);
+    } catch (error) {
+      console.log("onPatientProfileSaved:", error);
+    }
+  }, [setCurrentUser, setPatientProfile]);
+
+  const renderDoctorProfileTab = useCallback(
+    (props) => <DoctorProfileScreen {...props} onLogout={handleLogout} />,
+    [handleLogout],
+  );
+
+  const renderPharmacyProfileTab = useCallback(
+    (props) => <PharmacyProfileScreen {...props} onLogout={handleLogout} />,
+    [handleLogout],
+  );
+
+  const renderPatientProfileTab = useCallback(
+    (props) => (
+      <PatientProfileScreen
+        {...props}
+        patientProfile={patientProfile}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onPatientProfileSaved={handlePatientProfileSaved}
+      />
+    ),
+    [
+      currentUser,
+      handleLogout,
+      handlePatientProfileSaved,
+      patientProfile,
+    ],
+  );
 
   const handleMandatoryNameSaved = async (updatedUser) => {
     setCurrentUser(updatedUser);
@@ -31274,9 +31431,7 @@ const AppContent = ({
             {
               name: "Profile",
               label: "Profile",
-              component: (props) => (
-                <DoctorProfileScreen {...props} onLogout={handleLogout} />
-              ),
+              component: renderDoctorProfileTab,
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "person" : "person-outline"}
@@ -31345,9 +31500,7 @@ const AppContent = ({
             {
               name: "Profile",
               label: "Profile",
-              component: (props) => (
-                <PharmacyProfileScreen {...props} onLogout={handleLogout} />
-              ),
+              component: renderPharmacyProfileTab,
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "person" : "person-outline"}
@@ -31445,29 +31598,7 @@ const AppContent = ({
           {
             name: "Profile",
             label: "Profile",
-            component: (props) => (
-              <PatientProfileScreen
-                {...props}
-                patientProfile={patientProfile}
-                currentUser={currentUser}
-                onLogout={handleLogout}
-                onPatientProfileSaved={async () => {
-                  try {
-                    if (pb.authStore.isValid) {
-                      await pb.collection("UsersAuth").authRefresh();
-                    }
-                    const refreshedUser = getAuthUser();
-                    if (refreshedUser?.id) {
-                      setCurrentUser(refreshedUser);
-                    }
-                    const refreshedProfile = await ensureRoleProfile("patient");
-                    setPatientProfile(refreshedProfile);
-                  } catch (error) {
-                    console.log("onPatientProfileSaved:", error);
-                  }
-                }}
-              />
-            ),
+            component: renderPatientProfileTab,
             icon: ({ color, focused }) => (
               <Ionicons
                 name={focused ? "person" : "person-outline"}
