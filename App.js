@@ -7418,6 +7418,7 @@ const PatientChatScreen = () => {
   const insets = useSafeAreaInsets();
   const {
     currentUserId,
+    userRole,
     conversations,
     loadConversationMessages,
     sendConversationMessage,
@@ -8442,6 +8443,13 @@ const PatientChatScreen = () => {
     );
   }
 
+  const pharmacyPortalChat = userRole === "pharmacy";
+  const chatListEmpty =
+    pharmacyPortalChat &&
+    !dataLoading &&
+    filteredContacts.length === 0 &&
+    !showDirectoryResults;
+
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
@@ -8454,6 +8462,9 @@ const PatientChatScreen = () => {
           style={{
             backgroundColor: theme.card,
             padding: RFValue(20),
+            paddingTop: pharmacyPortalChat
+              ? safeTopContentPadding(insets, 10)
+              : RFValue(20),
             borderBottomWidth: 1,
             borderBottomColor: theme.cardBorder,
           }}
@@ -8463,7 +8474,7 @@ const PatientChatScreen = () => {
               fontSize: RFValue(22),
               fontWeight: "900",
               color: theme.textPrimary,
-              marginBottom: RFValue(16),
+              marginBottom: pharmacyPortalChat ? RFValue(8) : RFValue(16),
             }}
           >
             Messages
@@ -8503,8 +8514,15 @@ const PatientChatScreen = () => {
         <ScrollView
           style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={{
+            flexGrow: 1,
             padding: RFValue(16),
             paddingBottom: tabScrollBottomPadding() + RFValue(8),
+            ...(chatListEmpty
+              ? {
+                  justifyContent: "center",
+                  minHeight: Math.round(SCREEN_HEIGHT * 0.42),
+                }
+              : {}),
           }}
         >
           {showDirectoryResults ? (
@@ -8809,7 +8827,10 @@ const PatientChatScreen = () => {
             ))
           ) : (
             <View
-              style={{ alignItems: "center", paddingVertical: RFValue(60) }}
+              style={{
+                alignItems: "center",
+                paddingVertical: pharmacyPortalChat ? RFValue(12) : RFValue(60),
+              }}
             >
               <Ionicons
                 name="chatbubbles-outline"
@@ -23209,6 +23230,7 @@ const PharmacyDirectoryScreen = ({ onBack }) => {
 
 const MedicationTrackerScreen = ({ onBack }) => {
   const { theme } = useTheme();
+  const medInsets = useSafeAreaInsets();
   const {
     currentUserId,
     fetchMedicationSchedule,
@@ -23422,6 +23444,7 @@ const MedicationTrackerScreen = ({ onBack }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
+          paddingTop: safeTopContentPadding(medInsets, 12),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -23433,24 +23456,28 @@ const MedicationTrackerScreen = ({ onBack }) => {
             marginBottom: RFValue(16),
           }}
         >
-          <TouchableOpacity
-            onPress={onBack}
-            style={{
-              width: RFValue(36),
-              height: RFValue(36),
-              borderRadius: RFValue(10),
-              backgroundColor: theme.inputBg,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: RFValue(14),
-            }}
-          >
-            <Ionicons
-              name="arrow-back"
-              size={RFValue(20)}
-              color={theme.textPrimary}
-            />
-          </TouchableOpacity>
+          {onBack ? (
+            <TouchableOpacity
+              onPress={onBack}
+              style={{
+                width: RFValue(36),
+                height: RFValue(36),
+                borderRadius: RFValue(10),
+                backgroundColor: theme.inputBg,
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: RFValue(14),
+              }}
+            >
+              <Ionicons
+                name="arrow-back"
+                size={RFValue(20)}
+                color={theme.textPrimary}
+              />
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: RFValue(36), marginRight: RFValue(14) }} />
+          )}
           <Text
             style={{
               fontSize: RFValue(18),
@@ -24854,6 +24881,7 @@ const DEFAULT_OPENING_HOURS = {
 
 const PharmacyProfileScreen = ({ onLogout }) => {
   const { theme } = useTheme();
+  const profileInsets = useSafeAreaInsets();
   const keyboardInset = useKeyboardBottomInset();
   const { currentUser, savePharmacyProfile } = useAppData();
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -25003,14 +25031,14 @@ const PharmacyProfileScreen = ({ onLogout }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
       <View
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
+          paddingTop: safeTopContentPadding(profileInsets, 14),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -27598,6 +27626,7 @@ const DoctorWoundsScreen = () => {
 
 const PharmacyDashboard = ({ orders }) => {
   const { theme } = useTheme();
+  const dashInsets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState("Pending");
   const {
     updateOrderStatus,
@@ -27676,14 +27705,14 @@ const PharmacyDashboard = ({ orders }) => {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar barStyle="light-content" backgroundColor={theme.accentBg} />
       <View
         style={{
           backgroundColor: theme.accentBg,
           padding: RFValue(24),
-          paddingTop: safeHeaderPaddingTop(20),
+          paddingTop: safeTopContentPadding(dashInsets, 20),
           borderBottomLeftRadius: RFValue(32),
           borderBottomRightRadius: RFValue(32),
         }}
@@ -27753,6 +27782,7 @@ const PharmacyDashboard = ({ orders }) => {
             doctorUserId={currentUser?.id}
             onHelpPatient={handleHelpQuickPatient}
             onOpenHelpChat={handleOpenExistingHelpChat}
+            autoRefreshQuickQueues
           />
         </View>
 
@@ -27905,8 +27935,9 @@ const PHARMACY_STATUS_STEPS = [
   { id: "cancelled", label: "Cancelled", next: null },
 ];
 
-const PharmacyOrdersScreen = ({ orders }) => {
+const PharmacyOrdersScreen = ({ orders, compactTopInset = false }) => {
   const { theme } = useTheme();
+  const ordersInsets = useSafeAreaInsets();
   const { updateOrderStatus, userRole } = useAppData();
   const [busyId, setBusyId] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -27954,6 +27985,9 @@ const PharmacyOrdersScreen = ({ orders }) => {
         style={{
           backgroundColor: theme.card,
           padding: RFValue(20),
+          paddingTop: compactTopInset
+            ? safeTopContentPadding(ordersInsets, 12)
+            : RFValue(20),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -31356,7 +31390,7 @@ const PharmacyProviderKindGate = ({
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
+      edges={["left", "right"]}
     >
       <StatusBar
         barStyle={theme.statusBarStyle}
@@ -31367,7 +31401,7 @@ const PharmacyProviderKindGate = ({
         contentContainerStyle={{
           flexGrow: 1,
           padding: RFValue(24),
-          paddingTop: Math.max(gateInsets.top, RFValue(16)),
+          paddingTop: safeTopContentPadding(gateInsets, 16),
           paddingBottom: Math.max(gateInsets.bottom, RFValue(24)),
           justifyContent: "center",
         }}
@@ -31943,7 +31977,7 @@ const AppContent = ({
     return (
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.bg }}
-        edges={["top", "left", "right"]}
+        edges={["left", "right"]}
       >
         <StatusBar
           barStyle={theme.statusBarStyle}
@@ -31969,7 +32003,13 @@ const AppContent = ({
             {
               name: "Inventory",
               label: "Meds",
-              component: MedicationTrackerScreen,
+              component: (props) => (
+                <PharmacyOrdersScreen
+                  {...props}
+                  orders={medOrders}
+                  compactTopInset
+                />
+              ),
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "leaf" : "leaf-outline"}

@@ -4575,6 +4575,8 @@ export function DoctorQuickRequestsPanel({
   doctorUserId,
   onHelpPatient,
   onOpenHelpChat,
+  /** When true, hide the manual Refresh control and keep lists fresh via poll + PocketBase realtime. */
+  autoRefreshQuickQueues = false,
 }) {
   const user = getAuthUser();
   const effectiveDoctorId = doctorUserId || user?.id || "";
@@ -4591,10 +4593,13 @@ export function DoctorQuickRequestsPanel({
   const [helpMessage, setHelpMessage] = useState("");
   const [helpBusy, setHelpBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
     if (!effectiveDoctorId) return;
-    setErr("");
-    setLoading(true);
+    if (!silent) {
+      setErr("");
+      setLoading(true);
+    }
     const parts = [];
     let sol = [];
     let cou = [];
@@ -4652,12 +4657,44 @@ export function DoctorQuickRequestsPanel({
     setOfferMap(next);
 
     if (parts.length) setErr(parts.join("\n"));
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [effectiveDoctorId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!autoRefreshQuickQueues) return undefined;
+    const pollMs = 12000;
+    const poll = setInterval(() => void load({ silent: true }), pollMs);
+    let cancelled = false;
+    const bump = () => {
+      if (!cancelled) void load({ silent: true });
+    };
+    (async () => {
+      try {
+        await pb.collection("quick_solution_requests").subscribe("*", bump);
+        await pb.collection("quick_counselling_requests").subscribe("*", bump);
+      } catch (e) {
+        console.log("quick queue subscribe skipped:", e?.message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+      try {
+        pb.collection("quick_solution_requests").unsubscribe("*");
+      } catch {
+        // ignore
+      }
+      try {
+        pb.collection("quick_counselling_requests").unsubscribe("*");
+      } catch {
+        // ignore
+      }
+    };
+  }, [autoRefreshQuickQueues, load]);
 
   const openHelpModal = (record, kind) => {
     const patientUserId = quickRequestPatientUserId(record);
@@ -4922,22 +4959,24 @@ export function DoctorQuickRequestsPanel({
             Quick Queues
           </Text>
         </View>
-        <TouchableOpacity
-          onPress={() => void load()}
-          disabled={loading}
-          style={{
-            paddingHorizontal: 14,
-            paddingVertical: 8,
-            borderRadius: 12,
-            backgroundColor: theme.accentLight,
-          }}
-        >
-          <Text
-            style={{ color: theme.accent, fontWeight: "800", fontSize: 12 }}
+        {!autoRefreshQuickQueues ? (
+          <TouchableOpacity
+            onPress={() => void load()}
+            disabled={loading}
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 12,
+              backgroundColor: theme.accentLight,
+            }}
           >
-            {loading ? "…" : "Refresh"}
-          </Text>
-        </TouchableOpacity>
+            <Text
+              style={{ color: theme.accent, fontWeight: "800", fontSize: 12 }}
+            >
+              {loading ? "…" : "Refresh"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
       {err ? (
         <Text
