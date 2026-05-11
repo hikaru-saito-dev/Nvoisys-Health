@@ -1,0 +1,20 @@
+diff --git a/node_modules/react-native/ReactAndroid/cmake-utils/ReactNative-application.cmake b/node_modules/react-native/ReactAndroid/cmake-utils/ReactNative-application.cmake
+--- a/node_modules/react-native/ReactAndroid/cmake-utils/ReactNative-application.cmake
++++ b/node_modules/react-native/ReactAndroid/cmake-utils/ReactNative-application.cmake
+@@ -81,6 +81,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
+         fbjni                               # via 3rd party prefab
+         jsi                                 # prefab ready
+         reactnative                         # prefab ready
++        c++_shared
+ )
+ 
+ # We use an interface target to propagate flags to all the generated targets
+@@ -88,7 +89,8 @@
+ # We use an interface target to propagate flags to all the generated targets
+ # such as the folly flags or others.
+ add_library(common_flags INTERFACE)
+ target_compile_options(common_flags INTERFACE ${folly_FLAGS})
++target_link_libraries(common_flags INTERFACE c++_shared)
+ 
+ # If project is on RN CLI v9, then we can use the following lines to link against the autolinked 3rd party libraries.
+ if(EXISTS ${PROJECT_BUILD_DIR}/generated/autolinking/src/main/jni/Android-autolinking.cmake)

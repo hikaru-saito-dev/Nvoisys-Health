@@ -470,7 +470,7 @@ function compactProfileFields(fields) {
 /**
  * Matches PocketBase `patient_profile`:
  *   Required (pre-existing): user, primary_condition, gender
- *   Phone now lives on UsersAuth so doctors and patients share one contact field.
+ *   Optional (pre-existing): phone
  *   Optional (Launch v1.0):  age (number), weight_kg (number), height_cm (number),
  *                            marital_status (text/select), district (text), state (text),
  *                            smoking (text/select), alcohol (text/select),
@@ -478,18 +478,21 @@ function compactProfileFields(fields) {
  *                            language (text — comfortable consultation language)
  *   Product spec: care_mode (text/select: package_doctor | casual | not_planning),
  *                  preferred_quick_doctor / preferred_quick_provider (relation → UsersAuth, optional)
- *                  registration_document or id_document (file, optional) — ID / insurance photo at signup.
  * Avatar is uploaded after create in signUpWithEmail (file field).
  */
 async function createPatientProfileRecord(userId, merged) {
   const primary_condition = String(merged.primary_condition || "").trim();
   const gender = String(merged.gender || "").trim();
+  const phone = String(merged.phone || "").trim();
 
   const payload = {
     user: userId,
     primary_condition,
     gender,
   };
+  if (phone) {
+    payload.phone = phone;
+  }
 
   // Launch v1.0 additions. Each field is written only when a non-empty
   // value is supplied, so this remains backwards compatible with older
@@ -725,21 +728,16 @@ export async function signUpWithEmail({
     passwordConfirm == null ? normalizedPassword : passwordConfirm,
   );
 
-  const { avatarAsset, registrationDocAsset, ...rawProfile } =
-    profileFields || {};
+  const { avatarAsset, ...rawProfile } = profileFields || {};
   const profilePayload = compactProfileFields(rawProfile);
 
-  const authPayload = {
+  await pb.collection("UsersAuth").create({
     name: name?.trim() || "",
     email: normalizedEmail,
     password: normalizedPassword,
     passwordConfirm: normalizedPasswordConfirm,
     role,
-  };
-  const authPhone = String(profilePayload.phone || "").trim();
-  if (authPhone) authPayload.phone = authPhone;
-
-  await pb.collection("UsersAuth").create(authPayload);
+  });
 
   // Briefly authenticate so we can seed the role-specific profile with
   // collected fields (primary_condition, specialty, avatar, etc.). The user
@@ -756,38 +754,15 @@ export async function signUpWithEmail({
 
     let profile = await ensureRoleProfile(role, profilePayload);
 
-    if (role === "patient" && profile?.id) {
-      if (avatarAsset?.uri) {
-        const part = uploadPartFromImageAsset(avatarAsset);
-        if (part) {
-          try {
-            const formData = new FormData();
-            formData.append("avatar", part);
-            await pb.collection("patient_profile").update(profile.id, formData);
-          } catch (avatarError) {
-            console.log("Patient profile avatar upload skipped:", avatarError);
-          }
-        }
-      }
-      if (registrationDocAsset?.uri) {
-        const docPart = uploadPartFromImageAsset(registrationDocAsset);
-        if (docPart) {
-          try {
-            const fd = new FormData();
-            fd.append("registration_document", docPart);
-            await pb.collection("patient_profile").update(profile.id, fd);
-          } catch (docErr) {
-            try {
-              const fd2 = new FormData();
-              fd2.append("id_document", docPart);
-              await pb.collection("patient_profile").update(profile.id, fd2);
-            } catch (docErr2) {
-              console.log(
-                "Patient registration document upload skipped:",
-                docErr2?.message || docErr,
-              );
-            }
-          }
+    if (role === "patient" && avatarAsset?.uri && profile?.id) {
+      const part = uploadPartFromImageAsset(avatarAsset);
+      if (part) {
+        try {
+          const formData = new FormData();
+          formData.append("avatar", part);
+          await pb.collection("patient_profile").update(profile.id, formData);
+        } catch (avatarError) {
+          console.log("Patient profile avatar upload skipped:", avatarError);
         }
       }
     }

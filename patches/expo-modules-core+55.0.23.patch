@@ -1,0 +1,16 @@
+diff --git a/node_modules/expo-modules-core/android/cmake/main.cmake b/node_modules/expo-modules-core/android/cmake/main.cmake
+--- a/node_modules/expo-modules-core/android/cmake/main.cmake
++++ b/node_modules/expo-modules-core/android/cmake/main.cmake
+@@ -58,11 +58,12 @@ endif ()
+ target_link_libraries(
+   expo-modules-core
+   PRIVATE
+   ${LOG_LIB}
+   android
+   ${JSEXECUTOR_LIB}
+   ${NEW_ARCHITECTURE_DEPENDENCIES}
+   expo-modules-jsi
++  c++_shared
+ )
+ 
+ if (REACT_NATIVE_WORKLETS_DIR)
