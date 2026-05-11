@@ -1496,6 +1496,7 @@ const MEAL_TIMING_NOTIFICATION_HINT = {
 const notificationDisplayPrefs = { enabled: true };
 
 const NOTIFICATIONS_ENABLED_STORAGE_KEY = "nvhs_notifications_enabled";
+const FOOD_LOG_DRAFTS_STORAGE_PREFIX = "nvhs_food_drafts";
 
 let notificationsHandlerConfigured = false;
 const configureNotificationsHandler = () => {
@@ -10244,6 +10245,626 @@ const PatientAppointmentsScreen = ({ onBack }) => {
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+    </SafeAreaView>
+  );
+};
+
+const PatientFoodLogScreen = () => {
+  const { theme } = useTheme();
+  const { currentUser } = useAppData();
+  const [description, setDescription] = useState("");
+  const [photoAsset, setPhotoAsset] = useState(null);
+  const [remoteLogs, setRemoteLogs] = useState([]);
+  const [localDrafts, setLocalDrafts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [remoteError, setRemoteError] = useState("");
+  const [selectedLogForDoctorView, setSelectedLogForDoctorView] = useState(null);
+
+  const storageKey = useMemo(
+    () => `${FOOD_LOG_DRAFTS_STORAGE_PREFIX}_${currentUser?.id || "guest"}`,
+    [currentUser?.id],
+  );
+
+  const loadLocalDrafts = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem(storageKey);
+      const parsed = JSON.parse(raw || "[]");
+      if (Array.isArray(parsed)) {
+        setLocalDrafts(
+          parsed.filter((item) => item && typeof item === "object"),
+        );
+      } else {
+        setLocalDrafts([]);
+      }
+    } catch {
+      setLocalDrafts([]);
+    }
+  }, [storageKey]);
+
+  const persistLocalDrafts = useCallback(
+    async (entries) => {
+      setLocalDrafts(entries);
+      try {
+        await AsyncStorage.setItem(storageKey, JSON.stringify(entries));
+      } catch {
+        /* ignore local storage write errors */
+      }
+    },
+    [storageKey],
+  );
+
+  const mapRemoteFoodLog = useCallback(
+    (record) => {
+      const imageField =
+        record?.image ||
+        record?.photo ||
+        record?.meal_image ||
+        record?.meal_photo ||
+        null;
+      const imageUrl = imageField
+        ? pb.files.getURL(record, imageField, { thumb: "1080x1080" })
+        : "";
+      return {
+        id: `remote_${record?.id || Date.now()}`,
+        source: "remote",
+        description: String(
+          record?.description || record?.notes || record?.title || "",
+        ),
+        created:
+          record?.created ||
+          record?.updated ||
+          new Date().toISOString(),
+        photoUrl: imageUrl,
+        status: String(record?.status || "submitted"),
+        doctorWarning: String(
+          record?.doctor_warning ||
+            record?.warning ||
+            record?.doctor_note ||
+            "",
+        ).trim(),
+      };
+    },
+    [],
+  );
+
+  const loadRemoteLogs = useCallback(async () => {
+    if (!currentUser?.id) {
+      setRemoteLogs([]);
+      return;
+    }
+    setRemoteError("");
+    try {
+      const records = await pb.collection("food_logs").getFullList({
+        filter: `patient="${currentUser.id}"`,
+        sort: "-created",
+      });
+      setRemoteLogs(records.map((item) => mapRemoteFoodLog(item)));
+    } catch (error) {
+      setRemoteError(
+        "Food logs are saved locally. Remote doctor sync will appear after backend setup.",
+      );
+      console.log("food_logs load fallback:", error?.message || error);
+      setRemoteLogs([]);
+    }
+  }, [currentUser?.id, mapRemoteFoodLog]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoading(true);
+      await Promise.all([loadLocalDrafts(), loadRemoteLogs()]);
+      if (active) setLoading(false);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [loadLocalDrafts, loadRemoteLogs]);
+
+  const pickMealPhoto = async (source) => {
+    try {
+      if (source === "camera") {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow camera access to capture your meal photo.",
+          );
+          return;
+        }
+      } else {
+        const permission =
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission?.granted) {
+          Alert.alert(
+            "Permission needed",
+            "Please allow gallery access to select your meal photo.",
+          );
+          return;
+        }
+      }
+      const pickerOptions = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+        allowsEditing: true,
+      };
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      if (result?.canceled) return;
+      const picked = result?.assets?.[0];
+      if (picked?.uri) setPhotoAsset(picked);
+    } catch (error) {
+      Alert.alert("Photo", error?.message || "Unable to choose photo.");
+    }
+  };
+
+  const submitFoodLog = async () => {
+    const trimmed = description.trim();
+    if (!trimmed && !photoAsset?.uri) {
+      Alert.alert(
+        "Missing details",
+        "Add a meal description or a photo before submitting.",
+      );
+      return;
+    }
+    if (!currentUser?.id) {
+      Alert.alert("Session", "Please login again and retry.");
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const localEntry = {
+      id: `local_${Date.now()}`,
+      source: "local",
+      description: trimmed,
+      created: nowIso,
+      photoUrl: photoAsset?.uri || "",
+      status: "pending_sync",
+      doctorWarning: "",
+    };
+
+    setSaving(true);
+    await persistLocalDrafts([localEntry, ...localDrafts]);
+
+    try {
+      let created = null;
+      const imagePart = photoAsset?.uri
+        ? pickerAssetToUploadPart(photoAsset)
+        : null;
+
+      if (imagePart) {
+        const formData = new FormData();
+        formData.append("patient", currentUser.id);
+        formData.append("description", trimmed);
+        formData.append("status", "pending_review");
+        formData.append("image", imagePart);
+        try {
+          created = await pb.collection("food_logs").create(formData);
+        } catch {
+          const fallbackData = new FormData();
+          fallbackData.append("patient", currentUser.id);
+          fallbackData.append("description", trimmed);
+          fallbackData.append("status", "pending_review");
+          fallbackData.append("photo", imagePart);
+          created = await pb.collection("food_logs").create(fallbackData);
+        }
+      } else {
+        created = await pb.collection("food_logs").create({
+          patient: currentUser.id,
+          description: trimmed,
+          status: "pending_review",
+        });
+      }
+
+      if (created) {
+        await persistLocalDrafts(
+          localDrafts.filter((item) => item?.id !== localEntry.id),
+        );
+      }
+      setDescription("");
+      setPhotoAsset(null);
+      await loadRemoteLogs();
+    } catch (error) {
+      setRemoteError(
+        "Saved locally. Remote doctor sync will be enabled after backend setup.",
+      );
+      console.log("food_logs submit fallback:", error?.message || error);
+      setDescription("");
+      setPhotoAsset(null);
+      Alert.alert(
+        "Saved locally",
+        "Your food entry is saved on this device and will sync when doctor-side backend is enabled.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const mergedLogs = useMemo(() => {
+    const all = [...remoteLogs, ...localDrafts];
+    return all.sort((a, b) => {
+      const aTime = new Date(a?.created || 0).getTime();
+      const bTime = new Date(b?.created || 0).getTime();
+      return bTime - aTime;
+    });
+  }, [localDrafts, remoteLogs]);
+
+  const doctorExplanationForLog = useCallback((entry) => {
+    if (!entry) return "";
+    if (entry.doctorWarning) return entry.doctorWarning;
+    if (entry.status === "pending_sync") {
+      return "This entry is currently saved only on your device. Once backend sync is enabled and the doctor reviews it, their advice and warnings will appear here.";
+    }
+    return "This food entry has been submitted. Doctor explanation will appear here after review.";
+  }, []);
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{
+            padding: RFValue(16),
+            paddingBottom: tabScrollBottomPadding(),
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: RFValue(16),
+              padding: RFValue(16),
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+              marginBottom: RFValue(14),
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontSize: RFValue(18),
+                fontWeight: "800",
+              }}
+            >
+              Food Journal
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: RFValue(12),
+                marginTop: RFValue(6),
+                lineHeight: RFValue(18),
+              }}
+            >
+              Upload your meal photo with a note. Doctor review and warnings can
+              be attached here.
+            </Text>
+            <View
+              style={{
+                flexDirection: "row",
+                gap: RFValue(10),
+                marginTop: RFValue(14),
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => pickMealPhoto("camera")}
+                style={{
+                  flex: 1,
+                  backgroundColor: theme.accentLight,
+                  borderRadius: RFValue(12),
+                  paddingVertical: RFValue(10),
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: theme.accent, fontWeight: "700" }}>
+                  Camera
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => pickMealPhoto("gallery")}
+                style={{
+                  flex: 1,
+                  backgroundColor: theme.inputBg,
+                  borderRadius: RFValue(12),
+                  borderWidth: 1,
+                  borderColor: theme.inputBorder,
+                  paddingVertical: RFValue(10),
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
+                  Gallery
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {photoAsset?.uri ? (
+              <View style={{ marginTop: RFValue(12) }}>
+                <Image
+                  source={{ uri: photoAsset.uri }}
+                  style={{
+                    width: "100%",
+                    height: RFValue(180),
+                    borderRadius: RFValue(12),
+                    backgroundColor: theme.inputBg,
+                  }}
+                />
+                <TouchableOpacity
+                  onPress={() => setPhotoAsset(null)}
+                  style={{ alignSelf: "flex-end", marginTop: RFValue(8) }}
+                >
+                  <Text style={{ color: theme.danger, fontWeight: "700" }}>
+                    Remove photo
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            <TextInput
+              value={description}
+              onChangeText={setDescription}
+              multiline
+              placeholder="Describe what you ate (portion, ingredients, timing, anything important)..."
+              placeholderTextColor={theme.textTertiary}
+              style={{
+                marginTop: RFValue(12),
+                minHeight: RFValue(110),
+                borderRadius: RFValue(12),
+                borderWidth: 1,
+                borderColor: theme.inputBorder,
+                backgroundColor: theme.inputBg,
+                color: theme.textPrimary,
+                paddingHorizontal: RFValue(12),
+                paddingTop: RFValue(12),
+                textAlignVertical: "top",
+              }}
+            />
+            <TouchableOpacity
+              onPress={submitFoodLog}
+              disabled={saving}
+              style={{
+                marginTop: RFValue(12),
+                backgroundColor: theme.accent,
+                borderRadius: RFValue(12),
+                paddingVertical: RFValue(12),
+                alignItems: "center",
+                opacity: saving ? 0.65 : 1,
+              }}
+            >
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={{ color: "#fff", fontWeight: "800" }}>
+                  Submit food log
+                </Text>
+              )}
+            </TouchableOpacity>
+            {remoteError ? (
+              <Text
+                style={{
+                  color: theme.warning,
+                  fontSize: RFValue(11),
+                  marginTop: RFValue(10),
+                  lineHeight: RFValue(16),
+                }}
+              >
+                {remoteError}
+              </Text>
+            ) : null}
+          </View>
+
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: RFValue(14),
+              fontWeight: "700",
+              marginBottom: RFValue(8),
+            }}
+          >
+            Recent uploads
+          </Text>
+
+          {loading ? (
+            <ActivityIndicator color={theme.accent} />
+          ) : mergedLogs.length === 0 ? (
+            <View
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: RFValue(14),
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.cardBorder,
+                padding: RFValue(16),
+              }}
+            >
+              <Text style={{ color: theme.textSecondary, textAlign: "center" }}>
+                No food uploads yet. Add your first meal entry above.
+              </Text>
+            </View>
+          ) : (
+            mergedLogs.map((entry) => (
+              <TouchableOpacity
+                key={entry.id}
+                activeOpacity={0.88}
+                onPress={() => setSelectedLogForDoctorView(entry)}
+                style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(14),
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.cardBorder,
+                  padding: RFValue(12),
+                  marginBottom: RFValue(10),
+                }}
+              >
+                {entry.photoUrl ? (
+                  <Image
+                    source={{ uri: entry.photoUrl }}
+                    style={{
+                      width: "100%",
+                      height: RFValue(160),
+                      borderRadius: RFValue(10),
+                      backgroundColor: theme.inputBg,
+                      marginBottom: RFValue(10),
+                    }}
+                  />
+                ) : null}
+                {entry.description ? (
+                  <Text
+                    style={{
+                      color: theme.textPrimary,
+                      fontSize: RFValue(13),
+                      lineHeight: RFValue(20),
+                    }}
+                  >
+                    {entry.description}
+                  </Text>
+                ) : null}
+                <View
+                  style={{
+                    marginTop: RFValue(10),
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: theme.textTertiary, fontSize: RFValue(11) }}>
+                    {new Date(entry.created).toLocaleString()}
+                  </Text>
+                  <View
+                    style={{
+                      paddingHorizontal: RFValue(8),
+                      paddingVertical: RFValue(3),
+                      borderRadius: RFValue(999),
+                      backgroundColor:
+                        entry.status === "pending_sync"
+                          ? theme.warningLight
+                          : theme.accentLight,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: RFValue(10),
+                        fontWeight: "700",
+                        color:
+                          entry.status === "pending_sync"
+                            ? theme.warning
+                            : theme.accent,
+                      }}
+                    >
+                      {entry.status === "pending_sync"
+                        ? "Saved locally"
+                        : "Submitted"}
+                    </Text>
+                  </View>
+                </View>
+                {entry.doctorWarning ? (
+                  <View
+                    style={{
+                      marginTop: RFValue(10),
+                      padding: RFValue(10),
+                      borderRadius: RFValue(10),
+                      backgroundColor: theme.warningLight,
+                      borderWidth: 1,
+                      borderColor: theme.warning,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: theme.warning,
+                        fontSize: RFValue(12),
+                        fontWeight: "700",
+                      }}
+                    >
+                      Doctor warning
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.textPrimary,
+                        fontSize: RFValue(12),
+                        marginTop: RFValue(4),
+                        lineHeight: RFValue(18),
+                      }}
+                    >
+                      {entry.doctorWarning}
+                    </Text>
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+      <Modal
+        transparent
+        visible={!!selectedLogForDoctorView}
+        animationType="fade"
+        onRequestClose={() => setSelectedLogForDoctorView(null)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.45)",
+            justifyContent: "center",
+            padding: RFValue(20),
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: RFValue(16),
+              padding: RFValue(16),
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontSize: RFValue(16),
+                fontWeight: "800",
+              }}
+            >
+              Doctor explanation
+            </Text>
+            <Text
+              style={{
+                marginTop: RFValue(6),
+                color: theme.textSecondary,
+                fontSize: RFValue(12),
+              }}
+            >
+              Based on this food upload
+            </Text>
+            <Text
+              style={{
+                marginTop: RFValue(14),
+                color: theme.textPrimary,
+                fontSize: RFValue(13),
+                lineHeight: RFValue(20),
+              }}
+            >
+              {doctorExplanationForLog(selectedLogForDoctorView)}
+            </Text>
+            <TouchableOpacity
+              onPress={() => setSelectedLogForDoctorView(null)}
+              style={{
+                marginTop: RFValue(16),
+                backgroundColor: theme.accent,
+                borderRadius: RFValue(10),
+                paddingVertical: RFValue(10),
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "700" }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -31578,6 +32199,18 @@ const AppContent = ({
             icon: ({ color, focused }) => (
               <Ionicons
                 name={focused ? "cart" : "cart-outline"}
+                size={RFValue(22)}
+                color={color}
+              />
+            ),
+          },
+          {
+            name: "Food",
+            label: "Food",
+            component: PatientFoodLogScreen,
+            icon: ({ color, focused }) => (
+              <Ionicons
+                name={focused ? "restaurant" : "restaurant-outline"}
                 size={RFValue(22)}
                 color={color}
               />
