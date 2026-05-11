@@ -282,6 +282,33 @@ export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
   return !doctorTierEligibleForPackageMode(tier);
 }
 
+/** PocketBase `pharmacy_profile.provider_kind` — drives medicine orders vs quick queues only. */
+export const PHARMACY_PROVIDER_KIND = Object.freeze({
+  RMP_DOCTOR: "rmp_doctor",
+  CLINIC: "clinic",
+});
+
+export function normalizePharmacyProviderKind(raw) {
+  const t = String(raw || "").toLowerCase().trim();
+  if (t === "rmp_doctor" || t === "rmp" || t === "gp" || t === "general_physician") {
+    return PHARMACY_PROVIDER_KIND.RMP_DOCTOR;
+  }
+  if (t === "clinic" || t === "pharmacy") {
+    return PHARMACY_PROVIDER_KIND.CLINIC;
+  }
+  return "";
+}
+
+/** RMP / general physicians do not take medicine orders; clinics do. Unknown → treat as clinic (legacy). */
+export function pharmacyReceivesMedicineOrders(profileOrKind) {
+  const k =
+    typeof profileOrKind === "string" || typeof profileOrKind === "number"
+      ? normalizePharmacyProviderKind(profileOrKind)
+      : normalizePharmacyProviderKind(profileOrKind?.provider_kind);
+  if (k === PHARMACY_PROVIDER_KIND.RMP_DOCTOR) return false;
+  return true;
+}
+
 /** Three fixed catalogue slots - only `total_amount_inr` is doctor-editable; rest is app-defined. */
 export const DOCTOR_PACKAGE_SLOT_IDS = [1, 2, 3];
 

@@ -575,6 +575,8 @@ async function createDoctorProfileRecord(userId, merged) {
  *   Required: user (relation -> UsersAuth)
  *   Optional: store_name, tagline, address, district, state, phone,
  *             opening_hours (JSON), closing_days (JSON), products (JSON)
+ *   Optional: provider_kind (select) — `rmp_doctor` (general physician, no med orders)
+ *             or `clinic` (pharmacy/clinic with med orders + quick queues). Add in PB Admin.
  *
  * The pharmacy fills out the rest of these via PharmacyProfileScreen after
  * logging in. We seed `store_name` with the auth user's name when available
@@ -582,6 +584,17 @@ async function createDoctorProfileRecord(userId, merged) {
  * field has been marked required/unique on the server, we retry with a
  * minimal payload so signup/login can still succeed.
  */
+function coercePharmacyProviderKindForCreate(raw) {
+  const t = String(raw || "").toLowerCase().trim();
+  if (t === "rmp_doctor" || t === "rmp" || t === "gp" || t === "general_physician") {
+    return "rmp_doctor";
+  }
+  if (t === "clinic" || t === "pharmacy") {
+    return "clinic";
+  }
+  return "";
+}
+
 async function createPharmacyProfileRecord(userId, merged) {
   const authUser = getAuthUser();
   const fallbackStoreName = String(
@@ -590,6 +603,9 @@ async function createPharmacyProfileRecord(userId, merged) {
 
   const payload = { user: userId };
   if (fallbackStoreName) payload.store_name = fallbackStoreName;
+
+  const providerKind = coercePharmacyProviderKindForCreate(merged.provider_kind);
+  if (providerKind) payload.provider_kind = providerKind;
 
   const textKeys = ["tagline", "address", "district", "state", "phone"];
   for (const key of textKeys) {

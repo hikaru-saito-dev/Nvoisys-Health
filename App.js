@@ -97,8 +97,11 @@ import {
   needsCareOnboarding,
   PACKAGE_MEETING_STATUS,
   normalizeDoctorPackageSlots,
+  normalizePharmacyProviderKind,
   packageSlotDisplayName,
+  PHARMACY_PROVIDER_KIND,
   packageTemplatesRawFromRecord,
+  pharmacyReceivesMedicineOrders,
   persistPatientCareMode,
   readLocalCareMode,
   readLocalDoctorPackageFees,
@@ -1496,7 +1499,6 @@ const MEAL_TIMING_NOTIFICATION_HINT = {
 const notificationDisplayPrefs = { enabled: true };
 
 const NOTIFICATIONS_ENABLED_STORAGE_KEY = "nvhs_notifications_enabled";
-const FOOD_LOG_DRAFTS_STORAGE_PREFIX = "nvhs_food_drafts";
 
 let notificationsHandlerConfigured = false;
 const configureNotificationsHandler = () => {
@@ -2583,10 +2585,15 @@ const mapPharmacyListingRecord = (record) => {
         })
         .filter(Boolean)
     : [];
+  const providerKind = normalizePharmacyProviderKind(
+    record.provider_kind || record.pharmacy_kind,
+  );
   return {
     id: record.id,
     profileId: record.id,
     userId,
+    providerKind,
+    receivesMedicineOrders: pharmacyReceivesMedicineOrders(providerKind),
     name:
       record.store_name ||
       record.name ||
@@ -10250,626 +10257,6 @@ const PatientAppointmentsScreen = ({ onBack }) => {
   );
 };
 
-const PatientFoodLogScreen = () => {
-  const { theme } = useTheme();
-  const { currentUser } = useAppData();
-  const [description, setDescription] = useState("");
-  const [photoAsset, setPhotoAsset] = useState(null);
-  const [remoteLogs, setRemoteLogs] = useState([]);
-  const [localDrafts, setLocalDrafts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [remoteError, setRemoteError] = useState("");
-  const [selectedLogForDoctorView, setSelectedLogForDoctorView] = useState(null);
-
-  const storageKey = useMemo(
-    () => `${FOOD_LOG_DRAFTS_STORAGE_PREFIX}_${currentUser?.id || "guest"}`,
-    [currentUser?.id],
-  );
-
-  const loadLocalDrafts = useCallback(async () => {
-    try {
-      const raw = await AsyncStorage.getItem(storageKey);
-      const parsed = JSON.parse(raw || "[]");
-      if (Array.isArray(parsed)) {
-        setLocalDrafts(
-          parsed.filter((item) => item && typeof item === "object"),
-        );
-      } else {
-        setLocalDrafts([]);
-      }
-    } catch {
-      setLocalDrafts([]);
-    }
-  }, [storageKey]);
-
-  const persistLocalDrafts = useCallback(
-    async (entries) => {
-      setLocalDrafts(entries);
-      try {
-        await AsyncStorage.setItem(storageKey, JSON.stringify(entries));
-      } catch {
-        /* ignore local storage write errors */
-      }
-    },
-    [storageKey],
-  );
-
-  const mapRemoteFoodLog = useCallback(
-    (record) => {
-      const imageField =
-        record?.image ||
-        record?.photo ||
-        record?.meal_image ||
-        record?.meal_photo ||
-        null;
-      const imageUrl = imageField
-        ? pb.files.getURL(record, imageField, { thumb: "1080x1080" })
-        : "";
-      return {
-        id: `remote_${record?.id || Date.now()}`,
-        source: "remote",
-        description: String(
-          record?.description || record?.notes || record?.title || "",
-        ),
-        created:
-          record?.created ||
-          record?.updated ||
-          new Date().toISOString(),
-        photoUrl: imageUrl,
-        status: String(record?.status || "submitted"),
-        doctorWarning: String(
-          record?.doctor_warning ||
-            record?.warning ||
-            record?.doctor_note ||
-            "",
-        ).trim(),
-      };
-    },
-    [],
-  );
-
-  const loadRemoteLogs = useCallback(async () => {
-    if (!currentUser?.id) {
-      setRemoteLogs([]);
-      return;
-    }
-    setRemoteError("");
-    try {
-      const records = await pb.collection("food_logs").getFullList({
-        filter: `patient="${currentUser.id}"`,
-        sort: "-created",
-      });
-      setRemoteLogs(records.map((item) => mapRemoteFoodLog(item)));
-    } catch (error) {
-      setRemoteError(
-        "Food logs are saved locally. Remote doctor sync will appear after backend setup.",
-      );
-      console.log("food_logs load fallback:", error?.message || error);
-      setRemoteLogs([]);
-    }
-  }, [currentUser?.id, mapRemoteFoodLog]);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      setLoading(true);
-      await Promise.all([loadLocalDrafts(), loadRemoteLogs()]);
-      if (active) setLoading(false);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [loadLocalDrafts, loadRemoteLogs]);
-
-  const pickMealPhoto = async (source) => {
-    try {
-      if (source === "camera") {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permission?.granted) {
-          Alert.alert(
-            "Permission needed",
-            "Please allow camera access to capture your meal photo.",
-          );
-          return;
-        }
-      } else {
-        const permission =
-          await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission?.granted) {
-          Alert.alert(
-            "Permission needed",
-            "Please allow gallery access to select your meal photo.",
-          );
-          return;
-        }
-      }
-      const pickerOptions = {
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
-        allowsEditing: true,
-      };
-      const result =
-        source === "camera"
-          ? await ImagePicker.launchCameraAsync(pickerOptions)
-          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
-      if (result?.canceled) return;
-      const picked = result?.assets?.[0];
-      if (picked?.uri) setPhotoAsset(picked);
-    } catch (error) {
-      Alert.alert("Photo", error?.message || "Unable to choose photo.");
-    }
-  };
-
-  const submitFoodLog = async () => {
-    const trimmed = description.trim();
-    if (!trimmed && !photoAsset?.uri) {
-      Alert.alert(
-        "Missing details",
-        "Add a meal description or a photo before submitting.",
-      );
-      return;
-    }
-    if (!currentUser?.id) {
-      Alert.alert("Session", "Please login again and retry.");
-      return;
-    }
-
-    const nowIso = new Date().toISOString();
-    const localEntry = {
-      id: `local_${Date.now()}`,
-      source: "local",
-      description: trimmed,
-      created: nowIso,
-      photoUrl: photoAsset?.uri || "",
-      status: "pending_sync",
-      doctorWarning: "",
-    };
-
-    setSaving(true);
-    await persistLocalDrafts([localEntry, ...localDrafts]);
-
-    try {
-      let created = null;
-      const imagePart = photoAsset?.uri
-        ? pickerAssetToUploadPart(photoAsset)
-        : null;
-
-      if (imagePart) {
-        const formData = new FormData();
-        formData.append("patient", currentUser.id);
-        formData.append("description", trimmed);
-        formData.append("status", "pending_review");
-        formData.append("image", imagePart);
-        try {
-          created = await pb.collection("food_logs").create(formData);
-        } catch {
-          const fallbackData = new FormData();
-          fallbackData.append("patient", currentUser.id);
-          fallbackData.append("description", trimmed);
-          fallbackData.append("status", "pending_review");
-          fallbackData.append("photo", imagePart);
-          created = await pb.collection("food_logs").create(fallbackData);
-        }
-      } else {
-        created = await pb.collection("food_logs").create({
-          patient: currentUser.id,
-          description: trimmed,
-          status: "pending_review",
-        });
-      }
-
-      if (created) {
-        await persistLocalDrafts(
-          localDrafts.filter((item) => item?.id !== localEntry.id),
-        );
-      }
-      setDescription("");
-      setPhotoAsset(null);
-      await loadRemoteLogs();
-    } catch (error) {
-      setRemoteError(
-        "Saved locally. Remote doctor sync will be enabled after backend setup.",
-      );
-      console.log("food_logs submit fallback:", error?.message || error);
-      setDescription("");
-      setPhotoAsset(null);
-      Alert.alert(
-        "Saved locally",
-        "Your food entry is saved on this device and will sync when doctor-side backend is enabled.",
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const mergedLogs = useMemo(() => {
-    const all = [...remoteLogs, ...localDrafts];
-    return all.sort((a, b) => {
-      const aTime = new Date(a?.created || 0).getTime();
-      const bTime = new Date(b?.created || 0).getTime();
-      return bTime - aTime;
-    });
-  }, [localDrafts, remoteLogs]);
-
-  const doctorExplanationForLog = useCallback((entry) => {
-    if (!entry) return "";
-    if (entry.doctorWarning) return entry.doctorWarning;
-    if (entry.status === "pending_sync") {
-      return "This entry is currently saved only on your device. Once backend sync is enabled and the doctor reviews it, their advice and warnings will appear here.";
-    }
-    return "This food entry has been submitted. Doctor explanation will appear here after review.";
-  }, []);
-
-  return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["left", "right"]}
-    >
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{
-            padding: RFValue(16),
-            paddingBottom: tabScrollBottomPadding(),
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(16),
-              padding: RFValue(16),
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-              marginBottom: RFValue(14),
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: RFValue(18),
-                fontWeight: "800",
-              }}
-            >
-              Food Journal
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: RFValue(12),
-                marginTop: RFValue(6),
-                lineHeight: RFValue(18),
-              }}
-            >
-              Upload your meal photo with a note. Doctor review and warnings can
-              be attached here.
-            </Text>
-            <View
-              style={{
-                flexDirection: "row",
-                gap: RFValue(10),
-                marginTop: RFValue(14),
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => pickMealPhoto("camera")}
-                style={{
-                  flex: 1,
-                  backgroundColor: theme.accentLight,
-                  borderRadius: RFValue(12),
-                  paddingVertical: RFValue(10),
-                  alignItems: "center",
-                }}
-              >
-                <Text style={{ color: theme.accent, fontWeight: "700" }}>
-                  Camera
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => pickMealPhoto("gallery")}
-                style={{
-                  flex: 1,
-                  backgroundColor: theme.inputBg,
-                  borderRadius: RFValue(12),
-                  borderWidth: 1,
-                  borderColor: theme.inputBorder,
-                  paddingVertical: RFValue(10),
-                  alignItems: "center",
-                }}
-              >
-                <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                  Gallery
-                </Text>
-              </TouchableOpacity>
-            </View>
-            {photoAsset?.uri ? (
-              <View style={{ marginTop: RFValue(12) }}>
-                <Image
-                  source={{ uri: photoAsset.uri }}
-                  style={{
-                    width: "100%",
-                    height: RFValue(180),
-                    borderRadius: RFValue(12),
-                    backgroundColor: theme.inputBg,
-                  }}
-                />
-                <TouchableOpacity
-                  onPress={() => setPhotoAsset(null)}
-                  style={{ alignSelf: "flex-end", marginTop: RFValue(8) }}
-                >
-                  <Text style={{ color: theme.danger, fontWeight: "700" }}>
-                    Remove photo
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-            <TextInput
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              placeholder="Describe what you ate (portion, ingredients, timing, anything important)..."
-              placeholderTextColor={theme.textTertiary}
-              style={{
-                marginTop: RFValue(12),
-                minHeight: RFValue(110),
-                borderRadius: RFValue(12),
-                borderWidth: 1,
-                borderColor: theme.inputBorder,
-                backgroundColor: theme.inputBg,
-                color: theme.textPrimary,
-                paddingHorizontal: RFValue(12),
-                paddingTop: RFValue(12),
-                textAlignVertical: "top",
-              }}
-            />
-            <TouchableOpacity
-              onPress={submitFoodLog}
-              disabled={saving}
-              style={{
-                marginTop: RFValue(12),
-                backgroundColor: theme.accent,
-                borderRadius: RFValue(12),
-                paddingVertical: RFValue(12),
-                alignItems: "center",
-                opacity: saving ? 0.65 : 1,
-              }}
-            >
-              {saving ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={{ color: "#fff", fontWeight: "800" }}>
-                  Submit food log
-                </Text>
-              )}
-            </TouchableOpacity>
-            {remoteError ? (
-              <Text
-                style={{
-                  color: theme.warning,
-                  fontSize: RFValue(11),
-                  marginTop: RFValue(10),
-                  lineHeight: RFValue(16),
-                }}
-              >
-                {remoteError}
-              </Text>
-            ) : null}
-          </View>
-
-          <Text
-            style={{
-              color: theme.textPrimary,
-              fontSize: RFValue(14),
-              fontWeight: "700",
-              marginBottom: RFValue(8),
-            }}
-          >
-            Recent uploads
-          </Text>
-
-          {loading ? (
-            <ActivityIndicator color={theme.accent} />
-          ) : mergedLogs.length === 0 ? (
-            <View
-              style={{
-                backgroundColor: theme.card,
-                borderRadius: RFValue(14),
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: theme.cardBorder,
-                padding: RFValue(16),
-              }}
-            >
-              <Text style={{ color: theme.textSecondary, textAlign: "center" }}>
-                No food uploads yet. Add your first meal entry above.
-              </Text>
-            </View>
-          ) : (
-            mergedLogs.map((entry) => (
-              <TouchableOpacity
-                key={entry.id}
-                activeOpacity={0.88}
-                onPress={() => setSelectedLogForDoctorView(entry)}
-                style={{
-                  backgroundColor: theme.card,
-                  borderRadius: RFValue(14),
-                  borderWidth: StyleSheet.hairlineWidth,
-                  borderColor: theme.cardBorder,
-                  padding: RFValue(12),
-                  marginBottom: RFValue(10),
-                }}
-              >
-                {entry.photoUrl ? (
-                  <Image
-                    source={{ uri: entry.photoUrl }}
-                    style={{
-                      width: "100%",
-                      height: RFValue(160),
-                      borderRadius: RFValue(10),
-                      backgroundColor: theme.inputBg,
-                      marginBottom: RFValue(10),
-                    }}
-                  />
-                ) : null}
-                {entry.description ? (
-                  <Text
-                    style={{
-                      color: theme.textPrimary,
-                      fontSize: RFValue(13),
-                      lineHeight: RFValue(20),
-                    }}
-                  >
-                    {entry.description}
-                  </Text>
-                ) : null}
-                <View
-                  style={{
-                    marginTop: RFValue(10),
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <Text style={{ color: theme.textTertiary, fontSize: RFValue(11) }}>
-                    {new Date(entry.created).toLocaleString()}
-                  </Text>
-                  <View
-                    style={{
-                      paddingHorizontal: RFValue(8),
-                      paddingVertical: RFValue(3),
-                      borderRadius: RFValue(999),
-                      backgroundColor:
-                        entry.status === "pending_sync"
-                          ? theme.warningLight
-                          : theme.accentLight,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: RFValue(10),
-                        fontWeight: "700",
-                        color:
-                          entry.status === "pending_sync"
-                            ? theme.warning
-                            : theme.accent,
-                      }}
-                    >
-                      {entry.status === "pending_sync"
-                        ? "Saved locally"
-                        : "Submitted"}
-                    </Text>
-                  </View>
-                </View>
-                {entry.doctorWarning ? (
-                  <View
-                    style={{
-                      marginTop: RFValue(10),
-                      padding: RFValue(10),
-                      borderRadius: RFValue(10),
-                      backgroundColor: theme.warningLight,
-                      borderWidth: 1,
-                      borderColor: theme.warning,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: theme.warning,
-                        fontSize: RFValue(12),
-                        fontWeight: "700",
-                      }}
-                    >
-                      Doctor warning
-                    </Text>
-                    <Text
-                      style={{
-                        color: theme.textPrimary,
-                        fontSize: RFValue(12),
-                        marginTop: RFValue(4),
-                        lineHeight: RFValue(18),
-                      }}
-                    >
-                      {entry.doctorWarning}
-                    </Text>
-                  </View>
-                ) : null}
-              </TouchableOpacity>
-            ))
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
-      <Modal
-        transparent
-        visible={!!selectedLogForDoctorView}
-        animationType="fade"
-        onRequestClose={() => setSelectedLogForDoctorView(null)}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.45)",
-            justifyContent: "center",
-            padding: RFValue(20),
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(16),
-              padding: RFValue(16),
-              borderWidth: 1,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: RFValue(16),
-                fontWeight: "800",
-              }}
-            >
-              Doctor explanation
-            </Text>
-            <Text
-              style={{
-                marginTop: RFValue(6),
-                color: theme.textSecondary,
-                fontSize: RFValue(12),
-              }}
-            >
-              Based on this food upload
-            </Text>
-            <Text
-              style={{
-                marginTop: RFValue(14),
-                color: theme.textPrimary,
-                fontSize: RFValue(13),
-                lineHeight: RFValue(20),
-              }}
-            >
-              {doctorExplanationForLog(selectedLogForDoctorView)}
-            </Text>
-            <TouchableOpacity
-              onPress={() => setSelectedLogForDoctorView(null)}
-              style={{
-                marginTop: RFValue(16),
-                backgroundColor: theme.accent,
-                borderRadius: RFValue(10),
-                paddingVertical: RFValue(10),
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: "#fff", fontWeight: "700" }}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
-  );
-};
-
 const NVOISYS_PRIVACY_POLICY_URL = "https://nvoisyshealth.com/privacy";
 
 const PatientProfileScreen = ({
@@ -14267,6 +13654,8 @@ const AuthScreen = ({ onLogin }) => {
   }, []);
   const [doctorSpecialtyField, setDoctorSpecialtyField] = useState("");
   const [doctorClinic, setDoctorClinic] = useState("");
+  const [pharmacySignupProviderKind, setPharmacySignupProviderKind] =
+    useState("");
   const [registrationLanguage, setRegistrationLanguage] = useState("");
 
   const [forgotEmail, setForgotEmail] = useState("");
@@ -14352,6 +13741,12 @@ const AuthScreen = ({ onLogin }) => {
     return () => subscription.remove();
   }, [step]);
 
+  useEffect(() => {
+    if (role !== "pharmacy") {
+      setPharmacySignupProviderKind("");
+    }
+  }, [role]);
+
   const handleRequestPasswordReset = async () => {
     try {
       setForgotLoading(true);
@@ -14425,6 +13820,13 @@ const AuthScreen = ({ onLogin }) => {
             );
           }
         }
+        if (role === "pharmacy") {
+          if (!normalizePharmacyProviderKind(pharmacySignupProviderKind)) {
+            throw new Error(
+              "Please choose how you use this account: general physician (RMP) or clinic / pharmacy.",
+            );
+          }
+        }
 
         await signUpWithEmail({
           name: name.trim(),
@@ -14453,7 +13855,13 @@ const AuthScreen = ({ onLogin }) => {
                       ? { language: registrationLanguage.trim() }
                       : {}),
                   }
-                : {},
+                : role === "pharmacy"
+                  ? {
+                      provider_kind: normalizePharmacyProviderKind(
+                        pharmacySignupProviderKind,
+                      ),
+                    }
+                  : {},
         });
 
         setAuthSuccess(
@@ -14464,6 +13872,7 @@ const AuthScreen = ({ onLogin }) => {
         setPasswordConfirm("");
         setShowPassword(false);
         setShowPasswordConfirm(false);
+        setPharmacySignupProviderKind("");
         return;
       }
 
@@ -15222,6 +14631,103 @@ const AuthScreen = ({ onLogin }) => {
                   }}
                   placeholderTextColor={theme.textTertiary}
                 />
+              </>
+            )}
+
+            {authMode === "signup" && role === "pharmacy" && (
+              <>
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    fontWeight: "700",
+                    color: theme.textSecondary,
+                    marginBottom: RFValue(8),
+                  }}
+                >
+                  How will you use this account?
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    color: theme.textTertiary,
+                    marginBottom: RFValue(12),
+                  }}
+                >
+                  RMP doctors only answer Quick Solution and Quick Counselling.
+                  Clinics also receive medicine orders.
+                </Text>
+                <TouchableOpacity
+                  onPress={() =>
+                    setPharmacySignupProviderKind(PHARMACY_PROVIDER_KIND.RMP_DOCTOR)
+                  }
+                  style={{
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(14),
+                    padding: RFValue(16),
+                    marginBottom: RFValue(10),
+                    borderWidth: 2,
+                    borderColor:
+                      pharmacySignupProviderKind ===
+                      PHARMACY_PROVIDER_KIND.RMP_DOCTOR
+                        ? theme.accent
+                        : theme.inputBorder,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: RFValue(15),
+                      fontWeight: "800",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    I am a general physician (RMP)
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(6),
+                    }}
+                  >
+                    No medicine orders — Quick Solution & Quick Counselling
+                    only.
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() =>
+                    setPharmacySignupProviderKind(PHARMACY_PROVIDER_KIND.CLINIC)
+                  }
+                  style={{
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(14),
+                    padding: RFValue(16),
+                    marginBottom: RFValue(14),
+                    borderWidth: 2,
+                    borderColor:
+                      pharmacySignupProviderKind === PHARMACY_PROVIDER_KIND.CLINIC
+                        ? theme.accent
+                        : theme.inputBorder,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: RFValue(15),
+                      fontWeight: "800",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    Clinic / pharmacy
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(6),
+                    }}
+                  >
+                    Medicine orders plus Quick Solution & Quick Counselling.
+                  </Text>
+                </TouchableOpacity>
               </>
             )}
 
@@ -22527,6 +22033,27 @@ const PharmacyCard = ({ theme, pharmacy, onOpen }) => {
               </Text>
             </View>
           ) : null}
+          {pharmacy.providerKind === PHARMACY_PROVIDER_KIND.RMP_DOCTOR ? (
+            <View
+              style={{
+                backgroundColor: theme.warningLight,
+                paddingHorizontal: RFValue(8),
+                paddingVertical: 2,
+                borderRadius: RFValue(10),
+                marginLeft: 8,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: RFValue(10),
+                  color: theme.warning,
+                  fontWeight: "700",
+                }}
+              >
+                RMP
+              </Text>
+            </View>
+          ) : null}
           {pharmacy.products?.length ? (
             <Text
               style={{
@@ -23021,6 +22548,7 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
   const { ensureDirectConversation } = useAppData();
   const [startingChat, setStartingChat] = useState(false);
   const [showOrderComposer, setShowOrderComposer] = useState(false);
+  const canOrderMeds = pharmacy?.receivesMedicineOrders !== false;
 
   const handleCall = () => {
     const number = String(pharmacy?.phone || "").trim();
@@ -23173,29 +22701,56 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
           ) : null}
 
           <View style={{ flexDirection: "row", marginTop: RFValue(12) }}>
-            <TouchableOpacity
-              onPress={() => setShowOrderComposer(true)}
-              disabled={!pharmacy?.userId}
-              style={{
-                flex: 1,
-                backgroundColor: theme.accent,
-                paddingVertical: RFValue(12),
-                borderRadius: RFValue(12),
-                alignItems: "center",
-                opacity: !pharmacy?.userId ? 0.5 : 1,
-                marginRight: RFValue(8),
-              }}
-            >
-              <Text
+            {canOrderMeds ? (
+              <TouchableOpacity
+                onPress={() => setShowOrderComposer(true)}
+                disabled={!pharmacy?.userId}
                 style={{
-                  color: "#FFF",
-                  fontWeight: "800",
-                  fontSize: RFValue(13),
+                  flex: 1,
+                  backgroundColor: theme.accent,
+                  paddingVertical: RFValue(12),
+                  borderRadius: RFValue(12),
+                  alignItems: "center",
+                  opacity: !pharmacy?.userId ? 0.5 : 1,
+                  marginRight: RFValue(8),
                 }}
               >
-                Order medicines
-              </Text>
-            </TouchableOpacity>
+                <Text
+                  style={{
+                    color: "#FFF",
+                    fontWeight: "800",
+                    fontSize: RFValue(13),
+                  }}
+                >
+                  Order medicines
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <View
+                style={{
+                  flex: 1,
+                  backgroundColor: theme.bg,
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  paddingVertical: RFValue(12),
+                  borderRadius: RFValue(12),
+                  alignItems: "center",
+                  marginRight: RFValue(8),
+                }}
+              >
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    fontWeight: "700",
+                    fontSize: RFValue(12),
+                    textAlign: "center",
+                    paddingHorizontal: RFValue(6),
+                  }}
+                >
+                  Medicine orders not available (general physician / RMP)
+                </Text>
+              </View>
+            )}
             <TouchableOpacity
               onPress={handleChat}
               disabled={startingChat || !pharmacy?.userId}
@@ -23363,7 +22918,7 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
         </View>
       </ScrollView>
 
-      {showOrderComposer ? (
+      {showOrderComposer && canOrderMeds ? (
         <PatientOrderComposerModal
           pharmacy={pharmacy}
           onClose={() => setShowOrderComposer(false)}
@@ -28044,7 +27599,74 @@ const DoctorWoundsScreen = () => {
 const PharmacyDashboard = ({ orders }) => {
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState("Pending");
-  const { updateOrderStatus } = useAppData();
+  const {
+    updateOrderStatus,
+    currentUser,
+    patientProfile,
+    ensureDirectConversation,
+    sendConversationMessage,
+    refreshAllData,
+    requestOpenConversation,
+    requestOpenDirectChatWithPatient,
+  } = useAppData();
+  const tabNav = useMainTabNav();
+  const receivesMeds = pharmacyReceivesMedicineOrders(patientProfile);
+  const isRmp =
+    normalizePharmacyProviderKind(patientProfile?.provider_kind) ===
+    PHARMACY_PROVIDER_KIND.RMP_DOCTOR;
+
+  const handleHelpQuickPatient = useCallback(
+    async ({ requestId, requestKind, patientUserId, message }) => {
+      if (!currentUser?.id) {
+        throw new Error("Sign in again before offering help.");
+      }
+      const conversation = await ensureDirectConversation(patientUserId);
+      const conversationId = conversation?.id;
+      if (!conversationId) {
+        throw new Error("Could not open chat with this patient.");
+      }
+      await sendConversationMessage(conversationId, message);
+      try {
+        await recordQuickHelpOffer({
+          requestId,
+          requestKind,
+          doctorUserId: currentUser.id,
+          patientUserId,
+          conversationId,
+          firstMessage: message,
+        });
+      } catch (e) {
+        console.log("recordQuickHelpOffer ignored:", e?.message);
+      }
+      try {
+        await refreshAllData();
+      } catch {
+        // ignore
+      }
+      tabNav?.navigateTab?.("Chat");
+      return { conversationId };
+    },
+    [
+      currentUser?.id,
+      ensureDirectConversation,
+      sendConversationMessage,
+      refreshAllData,
+      tabNav,
+    ],
+  );
+
+  const handleOpenExistingHelpChat = useCallback(
+    (conversationId, patientUserId) => {
+      if (conversationId) {
+        requestOpenConversation?.(conversationId, { patientUserId });
+      } else if (patientUserId) {
+        requestOpenDirectChatWithPatient?.(patientUserId);
+      }
+      tabNav?.navigateTab?.("Chat");
+    },
+    [requestOpenConversation, requestOpenDirectChatWithPatient, tabNav],
+  );
+
   const filteredOrders = (orders || []).filter(
     (o) =>
       o.status === activeTab ||
@@ -28069,7 +27691,7 @@ const PharmacyDashboard = ({ orders }) => {
         <Text
           style={{ color: "#F5F3FF", fontSize: RFValue(14), fontWeight: "600" }}
         >
-          Pharmacy Portal
+          {isRmp ? "General physician (RMP)" : "Pharmacy Portal"}
         </Text>
         <Text
           style={{
@@ -28079,41 +27701,44 @@ const PharmacyDashboard = ({ orders }) => {
             marginTop: RFValue(4),
           }}
         >
-          MediStore Pharma
+          {isRmp ? "Quick Solution & Counselling" : "MediStore Pharma"}
         </Text>
 
-        <View
-          style={{
-            flexDirection: "row",
-            marginTop: RFValue(24),
-            backgroundColor: "rgba(255,255,255,0.15)",
-            borderRadius: RFValue(12),
-            padding: 4,
-          }}
-        >
-          {["Pending", "History"].map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              onPress={() => setActiveTab(tab)}
-              style={{
-                flex: 1,
-                paddingVertical: RFValue(10),
-                alignItems: "center",
-                backgroundColor: activeTab === tab ? theme.card : "transparent",
-                borderRadius: RFValue(10),
-              }}
-            >
-              <Text
+        {receivesMeds ? (
+          <View
+            style={{
+              flexDirection: "row",
+              marginTop: RFValue(24),
+              backgroundColor: "rgba(255,255,255,0.15)",
+              borderRadius: RFValue(12),
+              padding: 4,
+            }}
+          >
+            {["Pending", "History"].map((tab) => (
+              <TouchableOpacity
+                key={tab}
+                onPress={() => setActiveTab(tab)}
                 style={{
-                  color: activeTab === tab ? theme.accent : "#DDD",
-                  fontWeight: "700",
+                  flex: 1,
+                  paddingVertical: RFValue(10),
+                  alignItems: "center",
+                  backgroundColor:
+                    activeTab === tab ? theme.card : "transparent",
+                  borderRadius: RFValue(10),
                 }}
               >
-                {tab}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+                <Text
+                  style={{
+                    color: activeTab === tab ? theme.accent : "#DDD",
+                    fontWeight: "700",
+                  }}
+                >
+                  {tab}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
       </View>
 
       <ScrollView
@@ -28122,125 +27747,151 @@ const PharmacyDashboard = ({ orders }) => {
           paddingBottom: tabScrollBottomPadding(),
         }}
       >
-        {filteredOrders.map((o) => (
-          <View
-            key={o.id}
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(16),
-              padding: RFValue(18),
-              marginBottom: RFValue(12),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.05,
-              elevation: 2,
-            }}
-          >
+        <View style={{ marginBottom: RFValue(16) }}>
+          <DoctorQuickRequestsPanel
+            theme={theme}
+            doctorUserId={currentUser?.id}
+            onHelpPatient={handleHelpQuickPatient}
+            onOpenHelpChat={handleOpenExistingHelpChat}
+          />
+        </View>
+
+        {receivesMeds ? (
+          filteredOrders.map((o) => (
             <View
+              key={o.id}
               style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
+                backgroundColor: theme.card,
+                borderRadius: RFValue(16),
+                padding: RFValue(18),
                 marginBottom: RFValue(12),
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.05,
+                elevation: 2,
               }}
             >
-              <View>
-                <Text
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  marginBottom: RFValue(12),
+                }}
+              >
+                <View>
+                  <Text
+                    style={{
+                      fontSize: RFValue(15),
+                      fontWeight: "800",
+                      color: theme.textPrimary,
+                    }}
+                  >
+                    Order #{o.id}
+                  </Text>
+                  <Text
+                    style={{ fontSize: RFValue(12), color: theme.textSecondary }}
+                  >
+                    {o.patient} | {o.time}
+                  </Text>
+                </View>
+                <View
                   style={{
-                    fontSize: RFValue(15),
-                    fontWeight: "800",
-                    color: theme.textPrimary,
+                    backgroundColor: theme.accentLight,
+                    paddingHorizontal: RFValue(10),
+                    paddingVertical: RFValue(4),
+                    borderRadius: RFValue(8),
                   }}
                 >
-                  Order #{o.id}
-                </Text>
-                <Text
-                  style={{ fontSize: RFValue(12), color: theme.textSecondary }}
-                >
-                  {o.patient} | {o.time}
-                </Text>
+                  <Text
+                    style={{
+                      fontSize: RFValue(12),
+                      fontWeight: "800",
+                      color: theme.accent,
+                    }}
+                  >
+                    {o.total}
+                  </Text>
+                </View>
               </View>
               <View
                 style={{
-                  backgroundColor: theme.accentLight,
-                  paddingHorizontal: RFValue(10),
-                  paddingVertical: RFValue(4),
-                  borderRadius: RFValue(8),
+                  backgroundColor: theme.bg,
+                  padding: RFValue(12),
+                  borderRadius: RFValue(10),
+                  marginBottom: RFValue(16),
                 }}
               >
                 <Text
-                  style={{
-                    fontSize: RFValue(12),
-                    fontWeight: "800",
-                    color: theme.accent,
-                  }}
+                  style={{ fontSize: RFValue(13), color: theme.textPrimary }}
                 >
-                  {o.total}
+                  {o.items}
                 </Text>
               </View>
+              {activeTab === "Pending" ? (
+                <View style={{ flexDirection: "row" }}>
+                  <TouchableOpacity
+                    onPress={() => updateOrderStatus(o, "confirmed")}
+                    style={{
+                      flex: 1,
+                      backgroundColor: theme.accent,
+                      paddingVertical: RFValue(12),
+                      borderRadius: RFValue(10),
+                      alignItems: "center",
+                      marginRight: RFValue(8),
+                    }}
+                  >
+                    <Text style={{ color: "#FFF", fontWeight: "700" }}>
+                      Accept & Ship
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => updateOrderStatus(o, "cancelled")}
+                    style={{
+                      flex: 1,
+                      backgroundColor: theme.dangerLight,
+                      paddingVertical: RFValue(12),
+                      borderRadius: RFValue(10),
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: theme.danger, fontWeight: "700" }}>
+                      Reject
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={20}
+                    color={theme.success}
+                  />
+                  <Text
+                    style={{
+                      color: theme.success,
+                      fontWeight: "700",
+                      marginLeft: 6,
+                    }}
+                  >
+                    {o.status}
+                  </Text>
+                </View>
+              )}
             </View>
-            <View
+          ))
+        ) : (
+          <View style={{ alignItems: "center", marginTop: RFValue(8) }}>
+            <Text
               style={{
-                backgroundColor: theme.bg,
-                padding: RFValue(12),
-                borderRadius: RFValue(10),
-                marginBottom: RFValue(16),
+                color: theme.textTertiary,
+                fontSize: RFValue(13),
+                textAlign: "center",
               }}
             >
-              <Text style={{ fontSize: RFValue(13), color: theme.textPrimary }}>
-                {o.items}
-              </Text>
-            </View>
-            {activeTab === "Pending" ? (
-              <View style={{ flexDirection: "row" }}>
-                <TouchableOpacity
-                  onPress={() => updateOrderStatus(o, "confirmed")}
-                  style={{
-                    flex: 1,
-                    backgroundColor: theme.accent,
-                    paddingVertical: RFValue(12),
-                    borderRadius: RFValue(10),
-                    alignItems: "center",
-                    marginRight: RFValue(8),
-                  }}
-                >
-                  <Text style={{ color: "#FFF", fontWeight: "700" }}>
-                    Accept & Ship
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => updateOrderStatus(o, "cancelled")}
-                  style={{
-                    flex: 1,
-                    backgroundColor: theme.dangerLight,
-                    paddingVertical: RFValue(12),
-                    borderRadius: RFValue(10),
-                    alignItems: "center",
-                  }}
-                >
-                  <Text style={{ color: theme.danger, fontWeight: "700" }}>
-                    Reject
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons
-                  name="checkmark-circle"
-                  size={20}
-                  color={theme.success}
-                />
-                <Text
-                  style={{
-                    color: theme.success,
-                    fontWeight: "700",
-                    marginLeft: 6,
-                  }}
-                >
-                  {o.status}
-                </Text>
-              </View>
-            )}
+              Medicine orders are not enabled for RMP accounts. Use Quick
+              Solution and Quick Counselling above.
+            </Text>
           </View>
-        ))}
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -28919,6 +28570,8 @@ export default function App() {
         const value = String(values?.[key] || "").trim();
         if (value) payload[key] = value;
       }
+      const pk = normalizePharmacyProviderKind(values?.provider_kind);
+      if (pk) payload.provider_kind = pk;
       if (values?.opening_hours && typeof values.opening_hours === "object") {
         payload.opening_hours = values.opening_hours;
       }
@@ -28977,6 +28630,10 @@ export default function App() {
       const next = prev.slice();
       next[existingIdx] = mapped;
       return next;
+    });
+    setPatientProfile((prev) => {
+      if (!saved?.id) return prev;
+      return { ...(prev && prev.id === saved.id ? prev : {}), ...saved };
     });
     return saved;
   };
@@ -29157,12 +28814,17 @@ export default function App() {
         setWounds(allWounds.filter((record) => record.hasPharmacy));
         // Step 6: pharmacies only see orders addressed to them, OR legacy
         // doctor-prescribed orders (which have no `pharmacy` field set yet).
-        setMedOrders(
-          allOrders.filter(
-            (record) =>
-              !record.pharmacyId || record.pharmacyId === activeUser.id,
-          ),
-        );
+        // RMP / general physicians do not receive medicine orders in-app.
+        if (!pharmacyReceivesMedicineOrders(patientProfile)) {
+          setMedOrders([]);
+        } else {
+          setMedOrders(
+            allOrders.filter(
+              (record) =>
+                !record.pharmacyId || record.pharmacyId === activeUser.id,
+            ),
+          );
+        }
         setPrescriptions([]);
         setAppointments([]);
       }
@@ -30201,6 +29863,26 @@ export default function App() {
     if (!pharmacyUserId) {
       throw new Error("Pharmacy is not available for ordering.");
     }
+    try {
+      const targetProfile = await pb
+        .collection("pharmacy_profile")
+        .getFirstListItem(`user="${pharmacyUserId}"`, { requestKey: null });
+      if (!pharmacyReceivesMedicineOrders(targetProfile)) {
+        throw new Error(
+          "This provider does not accept medicine orders. You can still use chat or Quick Solution / Counselling where available.",
+        );
+      }
+    } catch (e) {
+      const msg = String(e?.message || "");
+      if (msg.includes("does not accept medicine orders")) {
+        throw e;
+      }
+      if (e?.status === 404) {
+        // Legacy pharmacy row missing — allow order.
+      } else {
+        console.log("createPharmacyOrder profile check:", e?.message || e);
+      }
+    }
     const cleanItems = safeArray(items)
       .map((item) => ({
         name: String(item?.name || "").trim(),
@@ -31054,7 +30736,12 @@ export default function App() {
       return;
     }
     refreshAllData(currentUser, userRole);
-  }, [currentUser?.id, userRole, patientProfile?.status]);
+  }, [
+    currentUser?.id,
+    userRole,
+    patientProfile?.status,
+    patientProfile?.provider_kind,
+  ]);
 
   // Step 7b: when a patient logs in, request notification permission up-front
   // so later dose reminders can be scheduled silently. Best-effort.
@@ -31635,6 +31322,174 @@ const MandatoryNameScreen = ({ currentUser, theme, onSaved, onLogout }) => {
   );
 };
 
+const PharmacyProviderKindGate = ({
+  theme,
+  savePharmacyProfile,
+  setPatientProfile,
+  refreshAllData,
+  onLogout,
+}) => {
+  const gateInsets = useSafeAreaInsets();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const pick = async (kind) => {
+    const normalized = normalizePharmacyProviderKind(kind);
+    if (!normalized) return;
+    try {
+      setBusy(true);
+      setErr("");
+      await savePharmacyProfile({ provider_kind: normalized });
+      const refreshed = await ensureRoleProfile("pharmacy");
+      setPatientProfile(refreshed || null);
+      await refreshAllData();
+    } catch (e) {
+      setErr(
+        e?.message ||
+          "Could not save. Add a `provider_kind` field on `pharmacy_profile` in PocketBase (select: rmp_doctor, clinic).",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["top", "left", "right"]}
+    >
+      <StatusBar
+        barStyle={theme.statusBarStyle}
+        backgroundColor={theme.statusBarBg}
+      />
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{
+          flexGrow: 1,
+          padding: RFValue(24),
+          paddingTop: Math.max(gateInsets.top, RFValue(16)),
+          paddingBottom: Math.max(gateInsets.bottom, RFValue(24)),
+          justifyContent: "center",
+        }}
+      >
+        <Text
+          style={{
+            fontSize: RFValue(22),
+            fontWeight: "800",
+            color: theme.textPrimary,
+            marginBottom: RFValue(8),
+          }}
+        >
+          How do you use this account?
+        </Text>
+        <Text
+          style={{
+            fontSize: RFValue(14),
+            color: theme.textSecondary,
+            marginBottom: RFValue(22),
+            lineHeight: RFValue(20),
+          }}
+        >
+          Choose one. This controls whether you receive medicine orders in the
+          app.
+        </Text>
+        <TouchableOpacity
+          disabled={busy}
+          onPress={() => pick(PHARMACY_PROVIDER_KIND.RMP_DOCTOR)}
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(16),
+            padding: RFValue(18),
+            marginBottom: RFValue(12),
+            borderWidth: 2,
+            borderColor: theme.inputBorder,
+            opacity: busy ? 0.65 : 1,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: RFValue(16),
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            I am a general physician (RMP)
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(13),
+              color: theme.textSecondary,
+              marginTop: RFValue(8),
+            }}
+          >
+            Quick Solution and Quick Counselling only — no medicine orders.
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          disabled={busy}
+          onPress={() => pick(PHARMACY_PROVIDER_KIND.CLINIC)}
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(16),
+            padding: RFValue(18),
+            marginBottom: RFValue(18),
+            borderWidth: 2,
+            borderColor: theme.inputBorder,
+            opacity: busy ? 0.65 : 1,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: RFValue(16),
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            Clinic / pharmacy
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(13),
+              color: theme.textSecondary,
+              marginTop: RFValue(8),
+            }}
+          >
+            Medicine orders plus Quick Solution and Quick Counselling.
+          </Text>
+        </TouchableOpacity>
+        {busy ? (
+          <ActivityIndicator
+            style={{ marginBottom: RFValue(12) }}
+            color={theme.accent}
+          />
+        ) : null}
+        {err ? (
+          <Text
+            style={{
+              color: theme.danger,
+              marginBottom: RFValue(14),
+              fontSize: RFValue(13),
+            }}
+          >
+            {err}
+          </Text>
+        ) : null}
+        <TouchableOpacity onPress={onLogout} disabled={busy}>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontWeight: "700",
+              textAlign: "center",
+            }}
+          >
+            Sign out
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
 const AppContent = ({
   userRole,
   setUserRole,
@@ -31658,6 +31513,8 @@ const AppContent = ({
     setPatientShowNewWound,
     fetchApprovedDoctors,
     payForPackageOffer,
+    savePharmacyProfile,
+    refreshAllData,
   } = useAppData();
 
   const handleAuthSuccess = ({ user, profile }) => {
@@ -31835,6 +31692,21 @@ const AppContent = ({
         currentUser={currentUser}
         theme={theme}
         onSaved={handleMandatoryNameSaved}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  if (
+    userRole === "pharmacy" &&
+    !normalizePharmacyProviderKind(patientProfile?.provider_kind)
+  ) {
+    return (
+      <PharmacyProviderKindGate
+        theme={theme}
+        savePharmacyProfile={savePharmacyProfile}
+        setPatientProfile={setPatientProfile}
+        refreshAllData={refreshAllData}
         onLogout={handleLogout}
       />
     );
@@ -32199,18 +32071,6 @@ const AppContent = ({
             icon: ({ color, focused }) => (
               <Ionicons
                 name={focused ? "cart" : "cart-outline"}
-                size={RFValue(22)}
-                color={color}
-              />
-            ),
-          },
-          {
-            name: "Food",
-            label: "Food",
-            component: PatientFoodLogScreen,
-            icon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "restaurant" : "restaurant-outline"}
                 size={RFValue(22)}
                 color={color}
               />
