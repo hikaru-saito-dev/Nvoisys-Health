@@ -20,6 +20,234 @@ export const CARE_MODE = {
   SKIP: "not_planning",
 };
 
+/**
+ * Consumer plans (Basic / Gold / Premium) map from the doctor's **package slot**
+ * the patient paid for: slot 1 → Basic, 2 → Gold, 3 → Premium.
+ */
+export const CONSUMER_PLAN = {
+  BASIC: "basic",
+  GOLD: "gold",
+  PREMIUM: "premium",
+};
+
+export function packageSlotToConsumerPlan(slot) {
+  const n = Number(slot);
+  if (n === 2) return CONSUMER_PLAN.GOLD;
+  if (n === 3) return CONSUMER_PLAN.PREMIUM;
+  return CONSUMER_PLAN.BASIC;
+}
+
+export function consumerPlanDisplayName(plan) {
+  const p = String(plan || "").toLowerCase();
+  if (p === CONSUMER_PLAN.GOLD) return "Gold";
+  if (p === CONSUMER_PLAN.PREMIUM) return "Premium";
+  return "Basic";
+}
+
+/** Doctor package slot index (1–3) → tier label shown to doctors and patients. */
+export function packageSlotDisplayName(slot) {
+  const n = Number(slot);
+  if (n === 2) return "Gold";
+  if (n === 3) return "Premium";
+  if (Number.isFinite(n) && n > 3) return `Tier ${n}`;
+  return "Basic";
+}
+
+/** Minimum package fee (INR) per catalogue slot — Basic / Gold / Premium. No maximum. */
+export const PACKAGE_SLOT_MIN_FEE_INR = Object.freeze({
+  1: 12000,
+  2: 20000,
+  3: 50000,
+});
+
+export function packageSlotMinimumFeeInr(slotNum) {
+  const n = Number(slotNum);
+  const v = PACKAGE_SLOT_MIN_FEE_INR[n];
+  if (Number.isFinite(v) && v > 0) return v;
+  return PACKAGE_SLOT_MIN_FEE_INR[1];
+}
+
+/**
+ * Normalizes stored fee strings: empty stays empty; amounts below the tier
+ * minimum are cleared so doctors must re-enter a valid fee (save stays blocked
+ * until all slots meet minimums — see doctorPackageFeeErrors).
+ */
+function coerceStoredPackageFeeInr(slotNum, feeRaw) {
+  if (feeRaw === undefined || feeRaw === null) return "";
+  const trimmed = String(feeRaw).trim();
+  if (!trimmed) return "";
+  const amount = Number(trimmed.replace(/,/g, "") || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "";
+  const min = packageSlotMinimumFeeInr(slotNum);
+  if (amount < min) return "";
+  return String(Math.round(amount));
+}
+
+/** Human-readable validation lines for doctor package fee inputs. */
+export function doctorPackageFeeErrors(slots) {
+  if (!Array.isArray(slots) || slots.length === 0) {
+    return ["Configure all three package fees."];
+  }
+  const errors = [];
+  for (const s of slots) {
+    const label = packageSlotDisplayName(s.slot);
+    const min = packageSlotMinimumFeeInr(s.slot);
+    const amt = Number(
+      String(s.total_amount_inr || "")
+        .replace(/,/g, "")
+        .trim() || 0,
+    );
+    if (!Number.isFinite(amt) || amt <= 0) {
+      errors.push(`${label}: enter your fee in INR.`);
+    } else if (amt < min) {
+      errors.push(
+        `${label}: minimum ₹${min.toLocaleString("en-IN")} (no maximum).`,
+      );
+    }
+  }
+  return errors;
+}
+
+/** Entitlements for product-spec Basic / Gold / Premium (aligned to package slots 1–3). */
+export function entitlementsForConsumerPlan(plan) {
+  const p = String(plan || CONSUMER_PLAN.BASIC).toLowerCase();
+  const isBasic = p === CONSUMER_PLAN.BASIC;
+  const isGold = p === CONSUMER_PLAN.GOLD;
+  const isPremium = p === CONSUMER_PLAN.PREMIUM;
+  return {
+    plan: p,
+    /** null = unlimited daily AI assistant messages */
+    aiChatDailyLimit: isBasic ? 25 : null,
+    /** Rolling 7-day cap on doctor consultation time (minutes) with the package doctor. */
+    consultationMinutesPerWeek: isBasic ? 180 : isGold ? 300 : 10080,
+    sideEffectAi: isPremium,
+    emergencyAssistant: isPremium,
+    dietDoctorReview: isPremium,
+    doctorAccess247: isPremium,
+  };
+}
+
+const NVHS_DOCTOR_TAG_RE = /^\[NVHS_DOCTOR:([^\]]+)\]\s*/;
+
+/** Prefix notes/topic so Quick requests route to the patient's package doctor without a picker. */
+export function prefixQuickRequestTextWithDoctor(doctorUserId, text) {
+  const d = String(doctorUserId || "").trim();
+  const body = String(text || "");
+  if (!d) return body;
+  return `[NVHS_DOCTOR:${d}]\n${body}`;
+}
+
+export function parseQuickRequestDoctorTag(text) {
+  const s = String(text || "");
+  const m = s.match(NVHS_DOCTOR_TAG_RE);
+  if (!m) return { doctorUserId: null, body: s };
+  return { doctorUserId: m[1], body: s.replace(NVHS_DOCTOR_TAG_RE, "") };
+}
+
+function filterQuickRowsForDoctor(rows, doctorUserId) {
+  const id = String(doctorUserId || "").trim();
+  if (!id) return rows || [];
+  return (rows || []).filter((row) => {
+    const raw =
+      row.notes ??
+      row.topic ??
+      row.description ??
+      row.message ??
+      "";
+    const tagged = parseQuickRequestDoctorTag(String(raw || "")).doctorUserId;
+    if (!tagged) return true;
+    return tagged === id;
+  });
+}
+
+export async function getPatientActiveQuickCareBinding(
+  patientAuthUserId,
+  patientProfileIdHint = null,
+) {
+  const uid = String(patientAuthUserId || "").trim();
+  if (!uid) return null;
+  const pairs = await listActivePackagePairsForPatient(
+    uid,
+    patientProfileIdHint,
+  );
+  if (!pairs.length) return null;
+  const sorted = [...pairs].sort((a, b) =>
+    String(b.created || "").localeCompare(String(a.created || "")),
+  );
+  const top = sorted[0];
+  const doctorUserId = String(top.doctor_user_id || "").trim();
+  if (!doctorUserId) return null;
+  const packageSlot =
+    top.package_slot != null && top.package_slot !== ""
+      ? Number(top.package_slot)
+      : 1;
+  const consumerPlan = packageSlotToConsumerPlan(
+    Number.isFinite(packageSlot) ? packageSlot : 1,
+  );
+  return {
+    doctorUserId,
+    packageSlot: Number.isFinite(packageSlot) ? packageSlot : 1,
+    consumerPlan,
+    offerId: top.offerId || top.id || null,
+    title: top.title || "Care package",
+    created: top.created || "",
+  };
+}
+
+const aiUsageDayKey = () => new Date().toISOString().slice(0, 10);
+
+export async function getAiAssistantUsageToday(patientUserId) {
+  const uid = String(patientUserId || "").trim();
+  if (!uid) return 0;
+  const key = `nvhs_ai_usage_${uid}_${aiUsageDayKey()}`;
+  try {
+    const v = await AsyncStorage.getItem(key);
+    return Math.max(0, Number(v) || 0);
+  } catch {
+    return 0;
+  }
+}
+
+export async function incrementAiAssistantUsageToday(patientUserId) {
+  const uid = String(patientUserId || "").trim();
+  if (!uid) return 0;
+  const key = `nvhs_ai_usage_${uid}_${aiUsageDayKey()}`;
+  const next = (await getAiAssistantUsageToday(uid)) + 1;
+  try {
+    await AsyncStorage.setItem(key, String(next));
+  } catch {
+    // ignore
+  }
+  return next;
+}
+
+/**
+ * Approximate consultation minutes used in the last 7 days with a given doctor
+ * (completed appointments only; 45 min each if schema has no duration).
+ */
+export function minutesUsedWithDoctorThisRollingWeek(
+  appointments,
+  patientUserId,
+  doctorUserId,
+) {
+  const pid = String(patientUserId || "").trim();
+  const did = String(doctorUserId || "").trim();
+  if (!pid || !did) return 0;
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  let sum = 0;
+  for (const a of appointments || []) {
+    if (String(a.patientId || a.patient || "") !== pid) continue;
+    if (String(a.doctorUserId || "") !== did) continue;
+    const st = String(a.statusKey || a.status || "").toLowerCase();
+    if (st !== "completed") continue;
+    const t = new Date(a.scheduledAt || 0).getTime();
+    if (!Number.isFinite(t) || t < weekAgo) continue;
+    const explicit = Number(a.raw?.duration_minutes ?? a.durationMinutes);
+    sum += Number.isFinite(explicit) && explicit > 0 ? explicit : 45;
+  }
+  return sum;
+}
+
 /** Package Doctor demos: professional or specialist tier only (RMP/clinic reserved for quick services). */
 export function doctorTierEligibleForPackageMode(tier) {
   const t = String(tier || "").toLowerCase();
@@ -40,12 +268,15 @@ const DEFAULT_PACKAGE_AMOUNT_INR = Math.max(
 const REFERRAL_MONTHLY_COMMISSION_COINS = 1000;
 
 export function resolvePackageSlotAmountInr(slot) {
+  const slotNum = Number(slot?.slot) || 1;
+  const min = packageSlotMinimumFeeInr(slotNum);
   const raw =
     slot?.total_amount_inr ?? slot?.amount_inr ?? slot?.default_amount_inr ?? "";
   const amount = Number(String(raw).replace(/,/g, "").trim() || 0);
-  return Number.isFinite(amount) && amount > 0
-    ? Math.round(amount)
-    : DEFAULT_PACKAGE_AMOUNT_INR;
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return Math.max(min, DEFAULT_PACKAGE_AMOUNT_INR);
+  }
+  return Math.max(min, Math.round(amount));
 }
 
 export function packageSlotUsesDefaultAmount(slot) {
@@ -62,7 +293,7 @@ export function packageSlotUsesDefaultAmount(slot) {
 export const FIXED_PACKAGE_DEFINITIONS = [
   {
     slot: 1,
-    name: "Package 1 - Essential Care",
+    name: "Basic — Essential Care",
     total_period: "90 days",
     treatment_type: "Structured follow-up & remote support",
     description:
@@ -76,13 +307,13 @@ export const FIXED_PACKAGE_DEFINITIONS = [
   },
   {
     slot: 2,
-    name: "Package 2 - Active Care",
+    name: "Gold — Active Care",
     total_period: "120 days",
     treatment_type: "Ongoing condition management",
     description:
       "Step-up support for patients who need closer follow-up between visits, with richer monitoring and AI-assisted reviews.",
     features: [
-      "Everything in Package 1",
+      "Everything in Basic",
       "More frequent touchpoints with your care team",
       "Enhanced 24/7 monitoring workflows",
       "Expanded AI med checks & adherence insights",
@@ -91,13 +322,13 @@ export const FIXED_PACKAGE_DEFINITIONS = [
   },
   {
     slot: 3,
-    name: "Package 3 - Comprehensive Care",
+    name: "Premium — Comprehensive Care",
     total_period: "180 days",
     treatment_type: "High-touch / complex care paths",
     description:
       "Full-feature packaged programme for complex or high-risk journeys. Feature set is defined by the app and updated centrally.",
     features: [
-      "Everything in Package 2",
+      "Everything in Gold",
       "Maximum tier 24/7 monitoring pathways",
       "Full AI-assisted medication & symptom reviews",
       "Care coordination summaries for your records",
@@ -239,7 +470,13 @@ export function mergeLocalFeesOntoSlots(slots, localFees) {
       L.total_amount_inr != null &&
       String(L.total_amount_inr).trim() !== ""
     ) {
-      return { ...s, total_amount_inr: String(L.total_amount_inr).trim() };
+      return {
+        ...s,
+        total_amount_inr: coerceStoredPackageFeeInr(
+          s.slot,
+          L.total_amount_inr,
+        ),
+      };
     }
     return s;
   });
@@ -251,7 +488,7 @@ export function normalizeDoctorPackageSlots(raw) {
   return DOCTOR_PACKAGE_SLOT_IDS.map((slotNum) => {
     const fixed = FIXED_PACKAGE_DEFINITIONS[slotNum - 1] || {
       slot: slotNum,
-      name: `Package ${slotNum}`,
+      name: `${packageSlotDisplayName(slotNum)} — Care package`,
       description: "",
       total_period: "",
       treatment_type: "",
@@ -262,22 +499,14 @@ export function normalizeDoctorPackageSlots(raw) {
     return {
       ...fixed,
       slot: slotNum,
-      total_amount_inr:
-        feeRaw === undefined || feeRaw === null ? "" : String(feeRaw).trim(),
+      total_amount_inr: coerceStoredPackageFeeInr(slotNum, feeRaw),
     };
   });
 }
 
 export function doctorPackagesSetupComplete(slots) {
   if (!Array.isArray(slots) || slots.length < 3) return false;
-  return slots.every((s) => {
-    const amt = Number(
-      String(s.total_amount_inr || "")
-        .replace(/,/g, "")
-        .trim() || 0,
-    );
-    return Number.isFinite(amt) && amt > 0;
-  });
+  return doctorPackageFeeErrors(slots).length === 0;
 }
 
 /**
@@ -292,6 +521,10 @@ export async function saveDoctorPackageTemplates(
 ) {
   if (!profileId) throw new Error("Missing doctor profile.");
   const normalized = normalizeDoctorPackageSlots(slots);
+  const feeErrs = doctorPackageFeeErrors(normalized);
+  if (feeErrs.length) {
+    throw new Error(feeErrs.join("\n"));
+  }
   const complete = doctorPackagesSetupComplete(normalized);
   const package_templates = normalized.map((s) => ({
     slot: s.slot,
@@ -1149,7 +1382,7 @@ export async function doctorSendAskPackageForDemoAppointment({
     slot,
     packageSlotIndex: idx,
   });
-  const label = String(slot?.name || `Package ${idx + 1}`).trim();
+  const label = String(slot?.name || packageSlotDisplayName(idx + 1)).trim();
   await attachPackageOfferToDemoAppointmentRow(
     appointmentId,
     offerRecord,
@@ -1765,7 +1998,11 @@ export async function doctorSendPackageOfferFromSlot({
   const amountInr = resolvePackageSlotAmountInr(slot);
   if (!amountInr) throw new Error("Package amount must be greater than zero.");
   const { platformFeeInr, doctorCoins } = splitPackagePayment(amountInr);
-  const title = String(slot?.name || `Package ${packageSlotIndex}`).trim();
+  const tierSlot = Number(slot?.slot);
+  const title = String(
+    slot?.name ||
+      `${packageSlotDisplayName(Number.isFinite(tierSlot) ? tierSlot : packageSlotIndex)} — Care package`,
+  ).trim();
   const desc = String(slot?.description || "").trim();
   const treatment = String(slot?.treatment_type || "").trim();
   const period = String(slot?.total_period || "").trim();
@@ -1805,7 +2042,9 @@ export async function createPatientSelectedPackageOffer({
   const amountInr = resolvePackageSlotAmountInr(slot);
   const { platformFeeInr, doctorCoins } = splitPackagePayment(amountInr);
   const slotNum = Number(slot?.slot || packageSlotIndex || 1) || 1;
-  const title = String(slot?.name || `Package ${slotNum}`).trim();
+  const title = String(
+    slot?.name || `${packageSlotDisplayName(slotNum)} — Care package`,
+  ).trim();
   const desc = String(slot?.description || "").trim();
   const treatment = String(slot?.treatment_type || "").trim();
   const period = String(slot?.total_period || "").trim();

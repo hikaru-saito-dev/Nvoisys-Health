@@ -41,6 +41,7 @@ import {
   createQuickSolutionRequest,
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
+  doctorPackageFeeErrors,
   doctorPackagesSetupComplete,
   doctorProposePackageMeetingReschedule,
   doctorSendPackageOfferFromSlot,
@@ -63,6 +64,8 @@ import {
   listPackageReferralsForDoctor,
   mergeLocalFeesOntoSlots,
   normalizeDoctorPackageSlots,
+  packageSlotDisplayName,
+  packageSlotMinimumFeeInr,
   PACKAGE_MEETING_STATUS,
   packageMeetingClosedLabel,
   packageMeetingDoctorListBucket,
@@ -89,6 +92,53 @@ const S = {
   small: 12,
   pad: 16,
 };
+
+/** Extra bottom padding while the keyboard is open so ScrollView can scroll past it. */
+function useKeyboardBottomPad() {
+  const [pad, setPad] = useState(0);
+  useEffect(() => {
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = (e) => {
+      const raw = Number(e?.endCoordinates?.height);
+      setPad(Number.isFinite(raw) && raw > 0 ? Math.round(raw) : 0);
+    };
+    const onHide = () => setPad(0);
+    const subA = Keyboard.addListener(showEvt, onShow);
+    const subB = Keyboard.addListener(hideEvt, onHide);
+    return () => {
+      subA.remove();
+      subB.remove();
+    };
+  }, []);
+  return pad;
+}
+
+/**
+ * Extra ScrollView content paddingBottom while the keyboard is open (additive to base inset).
+ * iOS: 0 — use ScrollView.automaticallyAdjustKeyboardInsets (avoids stacking with manual height).
+ * Android + softwareKeyboardLayoutMode resize: window already shrinks; add bounded slack for
+ * IME strip + scrollToEnd so the focused field clears the keyboard without a huge empty band.
+ */
+function keyboardExtraScrollPad(keyboardPad) {
+  if (!keyboardPad || keyboardPad <= 0) return 0;
+  if (Platform.OS === "ios") return 0;
+  // Android (incl. API 28): IME + resize timing often needs a larger scroll tail than a tiny strip.
+  return Math.min(380, Math.round(keyboardPad * 0.62) + 40);
+}
+
+function scrollToEndAfterKeyboard(scrollRef, animated = true) {
+  requestAnimationFrame(() => {
+    scrollRef.current?.scrollToEnd({ animated });
+    if (Platform.OS === "android") {
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated }), 200);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated }), 420);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated }), 700);
+    }
+  });
+}
 
 /** Turn ledger reason keys (snake_case) into readable sentence-style labels. */
 function formatCoinLedgerReasonForDisplay(reason) {
@@ -350,7 +400,7 @@ export function CareModeOnboardingScreen({
                     <Text
                       style={{ color: theme.textPrimary, fontWeight: "800" }}
                     >
-                      {slot.name || `Package ${slot.slot}`}
+                      {slot.name || packageSlotDisplayName(slot.slot)}
                     </Text>
                     <Text
                       style={{
@@ -676,9 +726,12 @@ export function DoctorPackageSetupScreen({
       return;
     }
     if (!doctorPackagesSetupComplete(slots)) {
+      const lines = doctorPackageFeeErrors(slots);
       Alert.alert(
-        "Set all 3 fees",
-        "Enter a service fee greater than zero (INR) for Package 1, 2, and 3.",
+        "Package fees",
+        lines.length
+          ? lines.join("\n")
+          : "Enter fees for Basic, Gold, and Premium (minimums apply; no maximum).",
       );
       return;
     }
@@ -846,7 +899,7 @@ export function DoctorPackageSetupScreen({
                 marginBottom: 6,
               }}
             >
-              {slot.name}
+              {slot.name || packageSlotDisplayName(slot.slot)}
             </Text>
             <Text
               style={{
@@ -855,7 +908,9 @@ export function DoctorPackageSetupScreen({
                 marginBottom: 4,
               }}
             >
-              {slot.total_period} · {slot.treatment_type}
+              Minimum ₹
+              {packageSlotMinimumFeeInr(slot.slot).toLocaleString("en-IN")} · no
+              maximum
             </Text>
             <Text
               style={{
@@ -940,13 +995,13 @@ export function DoctorPackageSetupScreen({
 
         <TouchableOpacity
           onPress={save}
-          disabled={busy}
+          disabled={busy || !doctorPackagesSetupComplete(slots)}
           style={{
             backgroundColor: theme.accent,
             padding: 16,
             borderRadius: 16,
             alignItems: "center",
-            opacity: busy ? 0.85 : 1,
+            opacity: busy || !doctorPackagesSetupComplete(slots) ? 0.55 : 1,
           }}
         >
           {busy ? (
@@ -963,12 +1018,23 @@ export function DoctorPackageSetupScreen({
   );
 }
 
-export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
+export function MedicalRecordsScreen({
+  theme,
+  onBack,
+  patientUserId,
+  scrollContentBottomInset = 100,
+}) {
   const insets = useSafeAreaInsets();
+  const keyboardPad = useKeyboardBottomPad();
+  const scrollRef = useRef(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
+  const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
+  const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1055,33 +1121,48 @@ export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
           Medical records
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.pad }}>
-        <Text
-          style={{
-            color: theme.textSecondary,
-            fontSize: S.small,
-            marginBottom: 12,
-          }}
-        >
-          Upload prescriptions, lab reports, or images. They stay on your
-          profile and can be shared during demo calls, package sessions, or
-          quick consults.
-        </Text>
-        <TextInput
-          placeholder="Title (e.g. Lab report Dec 2025)"
-          placeholderTextColor={theme.textTertiary}
-          value={title}
-          onChangeText={setTitle}
-          style={{
-            backgroundColor: theme.card,
-            borderRadius: 14,
-            padding: 14,
-            color: theme.textPrimary,
-            borderWidth: 1,
-            borderColor: theme.cardBorder,
-            marginBottom: 12,
-          }}
-        />
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={{
+          padding: S.pad,
+          paddingBottom: scrollBottomPad,
+        }}
+      >
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginBottom: 12,
+            }}
+          >
+            Upload prescriptions, lab reports, or images. They stay on your
+            profile and can be shared during demo calls, package sessions, or
+            quick consults.
+          </Text>
+          <TextInput
+            placeholder="Title (e.g. Lab report Dec 2025)"
+            placeholderTextColor={theme.textTertiary}
+            value={title}
+            onChangeText={setTitle}
+            onFocus={() => {
+              requestAnimationFrame(() =>
+                scrollRef.current?.scrollTo({ y: 0, animated: true }),
+              );
+            }}
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: 14,
+              padding: 14,
+              color: theme.textPrimary,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+              marginBottom: 12,
+            }}
+          />
         <TouchableOpacity
           onPress={pickAndUpload}
           disabled={busy}
@@ -1153,6 +1234,8 @@ export function MedicalRecordsScreen({ theme, onBack, patientUserId }) {
 
 export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
   const insets = useSafeAreaInsets();
+  const keyboardPad = useKeyboardBottomPad();
+  const scrollRef = useRef(null);
   const [notes, setNotes] = useState("");
   const [privateMode, setPrivateMode] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1179,6 +1262,10 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
       setBusy(false);
     }
   };
+
+  const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
+  const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
+  const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -1223,7 +1310,7 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
             backgroundColor: privateMode ? theme.accentLight : theme.card,
             padding: 14,
             borderRadius: 14,
-            marginBottom: 16,
+            marginBottom: 8,
             borderWidth: 2,
             borderColor: privateMode ? theme.accent : theme.cardBorder,
           }}
@@ -1256,8 +1343,9 @@ export function QuickSolutionScreen({ theme, onBack, patientUserId }) {
           multiline
           value={notes}
           onChangeText={setNotes}
+          onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
           style={{
-            minHeight: 120,
+            minHeight: 72,
             backgroundColor: theme.card,
             borderRadius: 14,
             padding: 14,
@@ -1299,6 +1387,11 @@ export function QuickCounsellingScreen({
   fromWoundTracker = false,
 }) {
   const insets = useSafeAreaInsets();
+  const keyboardPad = useKeyboardBottomPad();
+  const scrollRef = useRef(null);
+  const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
+  const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
+  const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -2460,7 +2553,7 @@ export function PackageDoctorJourneyScreen({
                   }}
                 >
                   <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
-                    {slot.name || `Package ${slot.slot}`}
+                    {slot.name || packageSlotDisplayName(slot.slot)}
                   </Text>
                   <Text
                     style={{
@@ -2737,6 +2830,19 @@ function PackageSuggestAfterMeetingInline({
     }
     if (!draftSlot) return;
     const slotNum = Number(draftSlot.slot) || activeSlotIndex + 1;
+    const minFee = packageSlotMinimumFeeInr(slotNum);
+    const draftAmt = Number(
+      String(draftSlot.total_amount_inr || "")
+        .replace(/,/g, "")
+        .trim() || 0,
+    );
+    if (!Number.isFinite(draftAmt) || draftAmt < minFee) {
+      Alert.alert(
+        "Minimum fee",
+        `${packageSlotDisplayName(slotNum)} requires at least ₹${minFee.toLocaleString("en-IN")} (no maximum).`,
+      );
+      return;
+    }
     try {
       setBusy(true);
       await doctorSendPackageOfferFromSlot({
@@ -2791,14 +2897,14 @@ function PackageSuggestAfterMeetingInline({
           lineHeight: 16,
         }}
       >
-        Pick Package 1, 2, or 3 (fees from your profile). The patient gets the
+        Pick Basic, Gold, or Premium (fees from your profile). The patient gets the
         breakdown and Pay now. Company receives payment first; your share is
         credited as coins after service delivery.
       </Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
         {[0, 1, 2].map((i) => {
           const s = catalogSlots[i];
-          const label = s?.name || `Package ${i + 1}`;
+          const label = s?.name || packageSlotDisplayName(i + 1);
           return (
             <TouchableOpacity
               key={i}
@@ -2909,7 +3015,10 @@ function PackageSuggestAfterMeetingInline({
                 </View>
               ) : null}
               <Text style={{ color: theme.textTertiary, fontSize: 11 }}>
-                Your service fee (INR)
+                Your service fee (INR) · minimum ₹
+                {packageSlotMinimumFeeInr(
+                  Number(draftSlot?.slot) || 1,
+                ).toLocaleString("en-IN")}
               </Text>
               <TextInput
                 keyboardType="numeric"
@@ -2918,6 +3027,7 @@ function PackageSuggestAfterMeetingInline({
                   setDraftSlot((d) => ({ ...d, total_amount_inr: t }))
                 }
                 style={slotInput(theme)}
+                placeholder={`e.g. ${packageSlotMinimumFeeInr(Number(draftSlot?.slot) || 1)}`}
                 placeholderTextColor={theme.textTertiary}
               />
             </ScrollView>

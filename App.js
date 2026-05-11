@@ -88,6 +88,7 @@ import {
   mergeLocalFeesOntoSlots,
   needsCareOnboarding,
   normalizeDoctorPackageSlots,
+  packageSlotDisplayName,
   packageTemplatesRawFromRecord,
   persistPatientCareMode,
   readLocalCareMode,
@@ -3110,6 +3111,13 @@ const ri = (size) => {
 const tabScrollBottomPadding = () => RFValue(8);
 
 /**
+ * Full-screen patient flows (Quick Solve, Diet, Medical records, Quick Counselling)
+ * replace the tab bar — do not pass floating-tab height here or you get a permanent
+ * bottom gap. Safe-area bottom is applied inside each screen.
+ */
+const patientFullScreenScrollBottomInset = () => tabScrollBottomPadding();
+
+/**
  * Android IME draws a suggestion/toolbar row above the keys that
  * `adjustResize` + `KeyboardAvoidingView` often still overlap slightly.
  * Derive a small composer-only margin from the reported keyboard height
@@ -4378,16 +4386,13 @@ const PatientHomeScreen = () => {
 
   if (showWallet)
     return (
-      <SlideScreen onBack={() => setShowWallet(false)}>
-        <WalletDepositScreen
-          theme={theme}
-          coinBalance={coinBalance}
-          depositAmount={depositAmount}
-          setDepositAmount={setDepositAmount}
-          onDeposit={handleDepositPress}
-          onBack={null}
-        />
-      </SlideScreen>
+      <DietMonitoringScreen
+        theme={theme}
+        onBack={() => setShowDietMonitoring(false)}
+        patientUserId={currentUser?.id}
+        doctorName={patientQuickCareBinding?.doctorName || ""}
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
+      />
     );
 
   if (showMedical)
@@ -4396,6 +4401,7 @@ const PatientHomeScreen = () => {
         theme={theme}
         onBack={() => setShowMedical(false)}
         patientUserId={currentUser?.id}
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   if (showQuickSol)
@@ -4407,6 +4413,19 @@ const PatientHomeScreen = () => {
           setQuickRequestsRefreshKey((k) => k + 1);
         }}
         patientUserId={currentUser?.id}
+        quickCareBinding={patientQuickCareBinding}
+        onOpenPackageJourney={() => {
+          setShowQuickSol(false);
+          setShowPackageJourney(true);
+        }}
+        onAskAi={runQuickSolveAi}
+        consultMinutesUsed={
+          patientQuickCareBinding?.consultMinutesUsed ?? 0
+        }
+        consultMinutesLimit={
+          patientQuickCareBinding?.consultMinutesLimit ?? 0
+        }
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   if (showQuickCounselling)
@@ -4418,6 +4437,18 @@ const PatientHomeScreen = () => {
           setQuickRequestsRefreshKey((k) => k + 1);
         }}
         patientUserId={currentUser?.id}
+        quickCareBinding={patientQuickCareBinding}
+        onOpenPackageJourney={() => {
+          setShowQuickCounselling(false);
+          setShowPackageJourney(true);
+        }}
+        consultMinutesUsed={
+          patientQuickCareBinding?.consultMinutesUsed ?? 0
+        }
+        consultMinutesLimit={
+          patientQuickCareBinding?.consultMinutesLimit ?? 0
+        }
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   if (showPackageJourney)
@@ -9987,6 +10018,7 @@ const PatientProfileScreen = ({
         theme={theme}
         onBack={() => setShowMedicalRecords(false)}
         patientUserId={currentUser?.id}
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
@@ -11192,9 +11224,8 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
       iconBg: "#EEF2FF",
       iconColor: "#4338CA",
       title: "Welcome to\nNvoisys Health",
-      subtitle: "Your 24/7 health monitoring companion powered by AI",
+      subtitle: "Your 24/7 health companion powered by AI",
       bullets: [
-        "Real-time vital monitoring",
         "Instant emergency response",
         "Connected to doctors across India",
       ],
@@ -11206,11 +11237,9 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
       iconColor: "#7C3AED",
       title: "Your Personal\nHealth Guardian",
       subtitle:
-        "Monitor vitals, get medication recommendations, and connect with your assigned doctor instantly",
+        "Get medication context, AI-assisted guidance, and connect with your assigned doctor",
       bullets: [
-        "Track heart rate, BP, sugar levels",
         "AI-powered health guidance",
-        "Emergency doctor assignment",
         "Chat & video call with doctors",
       ],
     },
@@ -11221,12 +11250,10 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
       iconColor: "#DC2626",
       title: "Emergency Response\nNetwork",
       subtitle:
-        "When seconds matter, our system connects patients with the nearest available doctor and hospital",
+        "When seconds matter, our system helps you reach care pathways and nearby resources",
       bullets: [
-        "Instant SOS to assigned doctor",
         "Automatic nearby doctor alerts",
         "Hospital recommendations",
-        "Real-time location sharing",
       ],
     },
   ];
@@ -15560,6 +15587,9 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const criticalPatients = (patients || []).filter(
     (p) => p.riskLevel === "High",
   ).length;
+  /** Doctor tier comes from the signed-in user / doctor profile fields — not patientProfile. */
+  const quickServiceDoctor =
+    doctorTierEligibleForQuickService(currentUser);
 
   // Doctor "Help" flow per spec:
   //   ensure conversation → send first message → record offer →
@@ -19147,7 +19177,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                           color: theme.textPrimary,
                         }}
                       >
-                        {pkg.name || `Package ${pkg.slot}`}
+                        {pkg.name || packageSlotDisplayName(pkg.slot)}
                       </Text>
                       <Text
                         style={{
@@ -19985,6 +20015,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
 
       <ScrollView
         ref={scrollRef}
+        style={{ flex: 1 }}
         contentContainerStyle={{
           padding: RFValue(16),
           paddingTop: RFValue(8),
@@ -20284,7 +20315,6 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                           fontSize: RFValue(10),
                           fontWeight: "700",
                         }}
-                        numberOfLines={3}
                       >
                         {med.dosage}
                       </Text>
@@ -22811,8 +22841,8 @@ const FamilyHealthScreen = ({ onBack }) => {
       </View>
 
       <ScrollView
+        style={{ flex: 1 }}
         contentContainerStyle={{
-          flexGrow: 1,
           alignItems: "center",
           padding: RFValue(24),
           paddingTop: RFValue(12),
@@ -22902,7 +22932,7 @@ const FamilyHealthScreen = ({ onBack }) => {
             What to expect:
           </Text>
           {[
-            { icon: "pulse", text: "Real-time vitals monitoring" },
+            { icon: "pulse", text: "Family wellness overview (planned)" },
             {
               icon: "alert-circle-outline",
               text: "Emergency notifications for dependents",
@@ -22977,6 +23007,38 @@ const FamilyHealthScreen = ({ onBack }) => {
 const EmergencySOScreen = ({ onBack }) => {
   const [sosActive, setSosActive] = useState(false);
   const [countdown, setCountdown] = useState(null);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+
+  const requestPersonalAssistant = async () => {
+    if (!currentUser?.id) {
+      Alert.alert("Sign in", "Please log in to request assistance.");
+      return;
+    }
+    if (patientQuickCareBinding?.consumerPlan !== CONSUMER_PLAN.PREMIUM) {
+      Alert.alert(
+        "Premium feature",
+        "Emergency personal assistant coordination is included with the Premium package. Complete that package to enable this option.",
+      );
+      return;
+    }
+    try {
+      setAssistantBusy(true);
+      await createEmergencyAssistantRequest({
+        patientUserId: currentUser.id,
+        doctorUserId: patientQuickCareBinding?.doctorUserId || "",
+        notes:
+          "Emergency SOS — request company personal assistant (hospital / ambulance / ICU coordination).",
+      });
+      Alert.alert(
+        "Request logged",
+        "Your emergency assistant request was submitted. The care desk will coordinate with you and your package doctor. If this is life-threatening, call 108 immediately.",
+      );
+    } catch (e) {
+      Alert.alert("Assistant request", e?.message || "Could not submit.");
+    } finally {
+      setAssistantBusy(false);
+    }
+  };
 
   const triggerSOS = () => {
     setSosActive(true);
@@ -24375,6 +24437,18 @@ const PatientWoundScreen = () => {
           void refreshAllData?.().catch(() => {});
         }}
         patientUserId={currentUser?.id}
+        quickCareBinding={patientQuickCareBinding}
+        onOpenPackageJourney={() => {
+          setShowWoundTabQuickCounselling(false);
+          tabNav?.navigateTab?.("Home");
+        }}
+        consultMinutesUsed={
+          patientQuickCareBinding?.consultMinutesUsed ?? 0
+        }
+        consultMinutesLimit={
+          patientQuickCareBinding?.consultMinutesLimit ?? 0
+        }
+        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
   }
