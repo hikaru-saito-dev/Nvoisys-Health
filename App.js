@@ -4026,13 +4026,17 @@ const WalletDepositScreen = ({
 };
 
 function usePatientQuickCareBinding() {
-  const { currentUser, patientProfile, appointments } = useAppData();
+  const { currentUser, patientProfile, appointments, dataLoading } =
+    useAppData();
   const [quickCareBinding, setQuickCareBinding] = useState(null);
   useEffect(() => {
     let cancelled = false;
     const uid = currentUser?.id;
     if (!uid) {
       setQuickCareBinding(null);
+      return undefined;
+    }
+    if (dataLoading) {
       return undefined;
     }
     (async () => {
@@ -4070,7 +4074,7 @@ function usePatientQuickCareBinding() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser?.id, patientProfile?.id, appointments]);
+  }, [currentUser?.id, patientProfile, appointments, dataLoading]);
   return quickCareBinding;
 }
 
@@ -4952,125 +4956,280 @@ const PatientHomeScreen = () => {
                 </Text>
                 {patientCareMode === CARE_MODE.PACKAGE ? (
                   <>
-                    <TouchableOpacity
-                      activeOpacity={0.9}
-                      onPress={() => setShowPackageJourney(true)}
-                      style={{
-                        backgroundColor: theme.accentLight,
-                        padding: RFValue(14),
-                        borderRadius: RFValue(14),
-                        marginBottom: RFValue(10),
-                        borderWidth: StyleSheet.hairlineWidth,
-                        borderColor: theme.cardBorder,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: RFValue(14),
-                          fontWeight: "800",
-                          color: theme.textPrimary,
-                          marginBottom: RFValue(6),
-                        }}
-                      >
-                        Quick Solve & Counselling locked
-                      </Text>
-                      <Text
-                        style={{
-                          fontSize: RFValue(11),
-                          color: theme.textSecondary,
-                          lineHeight: RFValue(16),
-                        }}
-                      >
-                        Select a doctor and activate a paid package (Basic, Gold,
-                        or Premium). They then run automatically with that doctor
-                        — no extra doctor picker.
-                      </Text>
-                      <Text
-                        style={{
-                          marginTop: RFValue(10),
-                          fontSize: RFValue(13),
-                          fontWeight: "800",
-                          color: theme.accent,
-                        }}
-                      >
-                        Open package journey →
-                      </Text>
-                    </TouchableOpacity>
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        gap: RFValue(8),
-                        alignItems: "stretch",
-                      }}
-                    >
-                      <TouchableOpacity
-                        onPress={() => setShowPackageJourney(true)}
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          backgroundColor: theme.accentLight,
-                          padding: RFValue(12),
-                          borderRadius: RFValue(14),
-                        }}
-                      >
-                        <Ionicons
-                          name="git-branch-outline"
-                          size={RFValue(22)}
-                          color={theme.accent}
-                          style={{ marginBottom: RFValue(6) }}
-                        />
-                        <Text
-                          style={{ fontWeight: "800", color: theme.accent }}
-                        >
-                          Package journey
-                        </Text>
+                    {patientQuickCareBinding?.doctorUserId ? (
+                      <>
                         <Text
                           style={{
-                            fontSize: RFValue(10),
+                            fontSize: RFValue(11),
                             color: theme.textSecondary,
-                            marginTop: 4,
+                            marginBottom: RFValue(10),
+                            lineHeight: RFValue(16),
                           }}
                         >
-                          Demo → pay
+                          Quick Solve & Quick Counselling use your package
+                          doctor — no separate doctor picker.
                         </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => setShowMedical(true)}
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          borderWidth: 1,
-                          borderColor: theme.cardBorder,
-                          padding: RFValue(12),
-                          borderRadius: RFValue(14),
-                          backgroundColor: theme.card,
-                        }}
-                      >
-                        <Ionicons
-                          name="document-text-outline"
-                          size={RFValue(22)}
-                          color={theme.textSecondary}
-                          style={{ marginBottom: RFValue(6) }}
-                        />
-                        <Text
+                        <View
                           style={{
-                            fontWeight: "800",
-                            color: theme.textPrimary,
+                            flexDirection: "row",
+                            flexWrap: "wrap",
+                            gap: RFValue(8),
+                            marginBottom: RFValue(10),
                           }}
                         >
-                          Medical records
-                        </Text>
-                        <Text
+                          <TouchableOpacity
+                            onPress={() => setShowQuickSol(true)}
+                            style={{
+                              flexGrow: 1,
+                              minWidth: "45%",
+                              backgroundColor: theme.accentLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Text
+                              style={{ fontWeight: "800", color: theme.accent }}
+                            >
+                              Quick Solution
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              ₹10 · Private mode available
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowQuickCounselling(true)}
+                            style={{
+                              flexGrow: 1,
+                              minWidth: "45%",
+                              backgroundColor: theme.successLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontWeight: "800",
+                                color: theme.success,
+                              }}
+                            >
+                              Quick Counselling
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              ₹25
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                        <View
                           style={{
-                            fontSize: RFValue(10),
-                            color: theme.textSecondary,
-                            marginTop: 4,
+                            flexDirection: "row",
+                            gap: RFValue(8),
+                            alignItems: "stretch",
                           }}
                         >
-                          Uploads for consults
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
+                          <TouchableOpacity
+                            onPress={() => setShowPackageJourney(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              backgroundColor: theme.accentLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Ionicons
+                              name="git-branch-outline"
+                              size={RFValue(22)}
+                              color={theme.accent}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{ fontWeight: "800", color: theme.accent }}
+                            >
+                              Package journey
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Demo → pay
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowMedical(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              borderWidth: 1,
+                              borderColor: theme.cardBorder,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                              backgroundColor: theme.card,
+                            }}
+                          >
+                            <Ionicons
+                              name="document-text-outline"
+                              size={RFValue(22)}
+                              color={theme.textSecondary}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{
+                                fontWeight: "800",
+                                color: theme.textPrimary,
+                              }}
+                            >
+                              Medical records
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Uploads for consults
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          activeOpacity={0.9}
+                          onPress={() => setShowPackageJourney(true)}
+                          style={{
+                            backgroundColor: theme.accentLight,
+                            padding: RFValue(14),
+                            borderRadius: RFValue(14),
+                            marginBottom: RFValue(10),
+                            borderWidth: StyleSheet.hairlineWidth,
+                            borderColor: theme.cardBorder,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: RFValue(14),
+                              fontWeight: "800",
+                              color: theme.textPrimary,
+                              marginBottom: RFValue(6),
+                            }}
+                          >
+                            Quick Solve & Counselling locked
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: RFValue(11),
+                              color: theme.textSecondary,
+                              lineHeight: RFValue(16),
+                            }}
+                          >
+                            Select a doctor and activate a paid package (Basic,
+                            Gold, or Premium). They then run automatically with
+                            that doctor — no extra doctor picker.
+                          </Text>
+                          <Text
+                            style={{
+                              marginTop: RFValue(10),
+                              fontSize: RFValue(13),
+                              fontWeight: "800",
+                              color: theme.accent,
+                            }}
+                          >
+                            Open package journey →
+                          </Text>
+                        </TouchableOpacity>
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            gap: RFValue(8),
+                            alignItems: "stretch",
+                          }}
+                        >
+                          <TouchableOpacity
+                            onPress={() => setShowPackageJourney(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              backgroundColor: theme.accentLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Ionicons
+                              name="git-branch-outline"
+                              size={RFValue(22)}
+                              color={theme.accent}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{ fontWeight: "800", color: theme.accent }}
+                            >
+                              Package journey
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Demo → pay
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowMedical(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              borderWidth: 1,
+                              borderColor: theme.cardBorder,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                              backgroundColor: theme.card,
+                            }}
+                          >
+                            <Ionicons
+                              name="document-text-outline"
+                              size={RFValue(22)}
+                              color={theme.textSecondary}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{
+                                fontWeight: "800",
+                                color: theme.textPrimary,
+                              }}
+                            >
+                              Medical records
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Uploads for consults
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    )}
                   </>
                 ) : (
                   <View

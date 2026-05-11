@@ -2323,7 +2323,14 @@ function isActivePaidPackageOffer(offer) {
   const status = String(offer?.status || "")
     .trim()
     .toLowerCase();
-  return status === "paid" || status === "active" || status === "started";
+  return (
+    status === "paid" ||
+    status === "active" ||
+    status === "started" ||
+    status === "completed" ||
+    status === "complete" ||
+    status === "confirmed"
+  );
 }
 
 function normalizeActivePackagePair(offer) {
