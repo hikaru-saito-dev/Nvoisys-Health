@@ -16089,23 +16089,6 @@ const DoctorDashboard = ({ wounds, patients }) => {
         <View
           style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
         >
-          <View
-            style={{
-              marginBottom: RFValue(16),
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(16),
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-            }}
-          >
-            <CoinWalletDoctorPanel theme={theme} />
-          </View>
           <PackageMeetingDoctorPanel theme={theme} />
           {quickServiceDoctor ? (
             <DoctorQuickRequestsPanel
@@ -17903,6 +17886,24 @@ const DoctorProfileScreen = ({ onLogout }) => {
                 Avg min
               </Text>
             </View>
+          </View>
+
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: RFValue(18),
+              padding: RFValue(16),
+              marginBottom: RFValue(16),
+              shadowColor: theme.shadowColor,
+              shadowOpacity: 0.06,
+              shadowOffset: { width: 0, height: 4 },
+              shadowRadius: 12,
+              elevation: 3,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <CoinWalletDoctorPanel theme={theme} />
           </View>
 
           <View

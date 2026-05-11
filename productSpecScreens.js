@@ -5642,7 +5642,7 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
       <Text
         style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 10 }}
       >
-        Payment history is on your Profile tab.
+        See Payment history below for ledger lines.
       </Text>
     </View>
   );
