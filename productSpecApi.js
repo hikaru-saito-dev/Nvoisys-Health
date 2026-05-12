@@ -68,6 +68,30 @@ export function packageSlotMinimumFeeInr(slotNum) {
 }
 
 /**
+ * Doctor-entered window for scheduled package consultation (12-hour clock).
+ * Expects two times with am/pm (e.g. "9:00 AM to 1:00 PM"). Premium may use
+ * "24/7" (or similar) instead of a daily window.
+ */
+export function consultationTimeWindowAcceptable(raw, slotNum) {
+  const t = String(raw || "").trim();
+  if (!t) return false;
+  const n = Number(slotNum) || 1;
+  if (n === 3) {
+    if (/\b24\s*[/\s.-]*\s*7\b/i.test(t)) return true;
+    if (
+      /\b(?:round[\s-]?the[\s-]?clock|always[\s-]?(?:on|available))\b/i.test(
+        t,
+      )
+    ) {
+      return true;
+    }
+  }
+  const re = /\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi;
+  const hits = t.match(re);
+  return Array.isArray(hits) && hits.length >= 2;
+}
+
+/**
  * Normalizes stored fee strings: empty stays empty; amounts below the tier
  * minimum are cleared so doctors must re-enter a valid fee (save stays blocked
  * until all slots meet minimums — see doctorPackageFeeErrors).
@@ -103,6 +127,18 @@ export function doctorPackageFeeErrors(slots) {
       errors.push(
         `${label}: minimum ₹${min.toLocaleString("en-IN")} (no maximum).`,
       );
+    }
+    if (Number(s.slot) !== 3) {
+      const tw = String(s.consultation_time_window || "").trim();
+      if (!tw) {
+        errors.push(
+          `${label}: add your usual consultation hours in 12-hour format (see example above the form).`,
+        );
+      } else if (!consultationTimeWindowAcceptable(tw, s.slot)) {
+        errors.push(
+          `${label}: use two times with am/pm (e.g. 9:00 AM to 1:00 PM).`,
+        );
+      }
     }
   }
   return errors;
@@ -309,7 +345,7 @@ export function pharmacyReceivesMedicineOrders(profileOrKind) {
   return true;
 }
 
-/** Three fixed catalogue slots - only `total_amount_inr` is doctor-editable; rest is app-defined. */
+/** Three fixed catalogue slots — doctors set fee + consultation window (Basic/Gold); Premium is 24/7. */
 export const DOCTOR_PACKAGE_SLOT_IDS = [1, 2, 3];
 
 const DEFAULT_PACKAGE_AMOUNT_INR = Math.max(
@@ -514,7 +550,7 @@ export async function writeLocalPackageSetupSkip(userId, skipped) {
   }
 }
 
-/** Overlay locally stored `{ slot, total_amount_inr }[]` onto normalized slots (device fallback). */
+/** Overlay locally stored package rows onto normalized slots (device fallback). */
 export function mergeLocalFeesOntoSlots(slots, localFees) {
   if (
     !Array.isArray(slots) ||
@@ -525,24 +561,26 @@ export function mergeLocalFeesOntoSlots(slots, localFees) {
   }
   return slots.map((s) => {
     const L = localFees.find((e) => Number(e?.slot) === Number(s.slot));
+    if (!L) return s;
+    const next = { ...s };
     if (
-      L &&
       L.total_amount_inr != null &&
       String(L.total_amount_inr).trim() !== ""
     ) {
-      return {
-        ...s,
-        total_amount_inr: coerceStoredPackageFeeInr(
-          s.slot,
-          L.total_amount_inr,
-        ),
-      };
+      next.total_amount_inr = coerceStoredPackageFeeInr(
+        s.slot,
+        L.total_amount_inr,
+      );
     }
-    return s;
+    const tw = L.consultation_time_window ?? L.consultation_hours;
+    if (tw != null && String(tw).trim() !== "") {
+      next.consultation_time_window = String(tw).trim();
+    }
+    return next;
   });
 }
 
-/** Merge app-fixed catalogue with doctor-stored fees only (`slot` + `total_amount_inr`). */
+/** Merge app-fixed catalogue with doctor-stored fee + optional consultation window. */
 export function normalizeDoctorPackageSlots(raw) {
   const arr = parsePackageTemplatesRaw(raw);
   return DOCTOR_PACKAGE_SLOT_IDS.map((slotNum) => {
@@ -556,10 +594,19 @@ export function normalizeDoctorPackageSlots(raw) {
     };
     const entry = arr.find((e) => Number(e?.slot) === slotNum);
     const feeRaw = entry?.total_amount_inr ?? entry?.amount_inr ?? "";
+    const windowRaw = String(
+      entry?.consultation_time_window ??
+        entry?.consultation_hours ??
+        entry?.scheduled_consultation_window ??
+        "",
+    ).trim();
+    const consultation_time_window =
+      slotNum === 3 ? windowRaw || "24/7" : windowRaw;
     return {
       ...fixed,
       slot: slotNum,
       total_amount_inr: coerceStoredPackageFeeInr(slotNum, feeRaw),
+      consultation_time_window,
     };
   });
 }
@@ -571,7 +618,7 @@ export function doctorPackagesSetupComplete(slots) {
 
 /**
  * Persists package fees for a doctor. Tries PocketBase first; if update is denied or fails and
- * `userId` is set, stores `{ slot, total_amount_inr }[]` on device so the app can unlock the dashboard.
+ * `userId` is set, stores package rows on device so the app can unlock the dashboard.
  * @returns {{ record: object|null, localOnly: boolean }}
  */
 export async function saveDoctorPackageTemplates(
@@ -580,7 +627,11 @@ export async function saveDoctorPackageTemplates(
   userId = null,
 ) {
   if (!profileId) throw new Error("Missing doctor profile.");
-  const normalized = normalizeDoctorPackageSlots(slots);
+  const normalized = normalizeDoctorPackageSlots(slots).map((s) =>
+    Number(s.slot) === 3
+      ? { ...s, consultation_time_window: "24/7" }
+      : s,
+  );
   const feeErrs = doctorPackageFeeErrors(normalized);
   if (feeErrs.length) {
     throw new Error(feeErrs.join("\n"));
@@ -589,6 +640,11 @@ export async function saveDoctorPackageTemplates(
   const package_templates = normalized.map((s) => ({
     slot: s.slot,
     total_amount_inr: String(s.total_amount_inr || "").trim(),
+    consultation_time_window: String(
+      Number(s.slot) === 3
+        ? "24/7"
+        : s.consultation_time_window || "",
+    ).trim(),
   }));
   const attempts = [
     {
