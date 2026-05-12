@@ -521,6 +521,17 @@ wss.on("connection", (ws) => {
           `[signaling] incoming_call → peer ${peerUserId} (subscribers: ${subs ? subs.size : 0}) room=${roomId}`,
         );
         notifyIncomingCallTargets(peerUserId, incoming);
+        // Callee may connect their subscribe socket slightly after the caller
+        // joins; a single delayed repeat reaches late subscribers.
+        setTimeout(() => {
+          const still = rooms.get(roomId) || [];
+          if (still.length === 1 && still[0] === ws) {
+            notifyIncomingCallTargets(peerUserId, {
+              ...incoming,
+              ts: Date.now(),
+            });
+          }
+        }, 2200);
       }
 
       if (updated.length === 2) {

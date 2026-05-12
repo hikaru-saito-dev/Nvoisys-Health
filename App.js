@@ -50,7 +50,11 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import { NotificationHost, installAlertOverride } from "./appNotify";
+import {
+  NotificationHost,
+  installAlertOverride,
+  notify,
+} from "./appNotify";
 import {
   decryptChatImagePayload,
   decryptChatText,
@@ -6679,12 +6683,25 @@ const CallScreen = ({
 
   const peerUserIdForCall = useMemo(() => {
     if (!currentUserId || !contact) return null;
-    const members = safeArray(contact.members);
-    if (members.length >= 2) {
-      return members.find((m) => m !== currentUserId) || null;
+    const self = String(currentUserId);
+    const memberIds = safeArray(contact.members);
+    if (memberIds.length >= 2) {
+      const other = memberIds.find((m) => String(m) !== self);
+      return other ? String(other) : null;
     }
-    if (members.length === 0 && contact.id) {
-      return contact.id !== currentUserId ? contact.id : null;
+    const expanded = safeArray(contact.memberUsers);
+    const fromExpand = expanded.find(
+      (u) => u?.id && String(u.id) !== self,
+    );
+    if (fromExpand?.id) return String(fromExpand.id);
+    const rawMembers = safeArray(contact.raw?.members);
+    if (rawMembers.length >= 2) {
+      const other = rawMembers.find((m) => String(m) !== self);
+      return other ? String(other) : null;
+    }
+    // Call directory uses `{ id, displayName }` with no PocketBase `raw`.
+    if (!contact.raw && contact.id && String(contact.id) !== self) {
+      return String(contact.id);
     }
     return null;
   }, [contact, currentUserId]);
@@ -29220,7 +29237,8 @@ export default function App() {
 
   const callInviteWsRef = useRef(null);
   const callInviteReconnectRef = useRef(null);
-  const lastIncomingCallSigRef = useRef("");
+  /** Dedupe rapid duplicate `incoming_call` frames ({ key, at }). */
+  const lastIncomingCallSigRef = useRef(null);
   const navigateToChatTabRef = useRef(null);
 
   const resolvedPaletteKey = useMemo(() => {
@@ -31744,19 +31762,14 @@ export default function App() {
     };
   }, [currentUser?.id, userRole, patientProfile?.status]);
 
-  // Incoming voice/video call alerts for patients and approved doctors: a
-  // lightweight WebSocket subscribes to the signaling server so the callee
-  // gets a local notification when the caller joins the direct room first.
+  // Incoming voice/video call alerts: a lightweight WebSocket subscribes to
+  // the signaling server so the callee gets alerts when the caller joins the
+  // room first. All signed-in doctors subscribe (not only "approved") so
+  // package/demo accounts still receive rings.
   useEffect(() => {
     if (typeof WebSocket === "undefined") return undefined;
     if (!currentUser?.id) return undefined;
     if (userRole !== "patient" && userRole !== "doctor") return undefined;
-    if (
-      userRole === "doctor" &&
-      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
-    ) {
-      return undefined;
-    }
 
     let cancelled = false;
     const wsUrl = SIGNALING_SERVER_URL;
@@ -31813,9 +31826,17 @@ export default function App() {
           try {
             const payload = JSON.parse(event.data);
             if (payload?.type !== "incoming_call") return;
-            const sig = `${payload.roomId || ""}|${payload.fromUserId || ""}|${payload.ts || 0}`;
-            if (lastIncomingCallSigRef.current === sig) return;
-            lastIncomingCallSigRef.current = sig;
+            const dedupeKey = `${payload.roomId || ""}|${payload.fromUserId || ""}`;
+            const now = Date.now();
+            const prev = lastIncomingCallSigRef.current;
+            if (
+              prev &&
+              prev.key === dedupeKey &&
+              now - prev.at < 1500
+            ) {
+              return;
+            }
+            lastIncomingCallSigRef.current = { key: dedupeKey, at: now };
             setPendingIncomingCallInvite({
               roomId: String(payload.roomId || ""),
               fromUserId: String(payload.fromUserId || ""),
@@ -31823,6 +31844,14 @@ export default function App() {
               callerName: String(payload.callerName || "").trim(),
               ts: payload.ts || Date.now(),
             });
+            const callerLabel =
+              String(payload.callerName || "").trim() || "Someone";
+            const isAudio = payload.callType === "audio";
+            notify.warning(
+              isAudio ? "Incoming audio call" : "Incoming video call",
+              `${callerLabel} is calling — open Chat to answer.`,
+              { duration: 14000 },
+            );
             void notifyIncomingCallLocal(payload);
           } catch {
             /* ignore */
@@ -31853,18 +31882,18 @@ export default function App() {
     };
 
     let startupTimer = null;
+    // Connect soon so callees register before the caller joins (Android had
+    // a 2s delay that caused missed first rings).
     if (Platform.OS === "android") {
       startupTimer = setTimeout(() => {
         InteractionManager.runAfterInteractions(() => {
-          if (!cancelled) {
-            openSocket();
-          }
+          if (!cancelled) openSocket();
         });
-      }, 2000);
+      }, 300);
     } else {
       startupTimer = setTimeout(() => {
         openSocket();
-      }, 500);
+      }, 300);
     }
 
     return () => {
