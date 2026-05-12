@@ -45,6 +45,7 @@ import {
   doctorTierEligibleForPackageMode,
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
+  getFixedPackageDefinitionForSlot,
   getAiAssistantUsageToday,
   getCoinBalanceForUser,
   incrementAiAssistantUsageToday,
@@ -2684,6 +2685,7 @@ export function PackageDoctorJourneyScreen({
   const [pickerMode, setPickerMode] = useState(null);
   const [meetingDesc, setMeetingDesc] = useState("");
   const [selectedSlot, setSelectedSlot] = useState(null);
+  const [packageDetailSlot, setPackageDetailSlot] = useState(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -3037,6 +3039,15 @@ export function PackageDoctorJourneyScreen({
               the fee is not configured. The paid doctor-patient pair is fixed
               for coin settlement.
             </Text>
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: 11,
+                marginBottom: 8,
+              }}
+            >
+              Tap a package to see what is included, then pay when you are ready.
+            </Text>
             {(selectedDoctor.packageSlots || []).map((slot) => {
               const amount = resolvePackageSlotAmountInr(slot);
               const selected = selectedSlot?.slot === slot.slot;
@@ -3044,7 +3055,10 @@ export function PackageDoctorJourneyScreen({
               return (
                 <TouchableOpacity
                   key={slot.slot}
-                  onPress={() => setSelectedSlot(slot)}
+                  onPress={() => {
+                    setSelectedSlot(slot);
+                    setPackageDetailSlot(Number(slot.slot) || 1);
+                  }}
                   style={{
                     padding: 12,
                     borderRadius: 12,
@@ -3297,6 +3311,111 @@ export function PackageDoctorJourneyScreen({
           ) : null}
         </View>
       </ScrollView>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={packageDetailSlot != null}
+        onRequestClose={() => setPackageDetailSlot(null)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            justifyContent: "center",
+            padding: 18,
+          }}
+        >
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => setPackageDetailSlot(null)}
+          />
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: 18,
+              padding: 16,
+              maxHeight: "88%",
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                marginBottom: 10,
+              }}
+            >
+              <Text
+                style={{
+                  flex: 1,
+                  paddingRight: 8,
+                  color: theme.textPrimary,
+                  fontSize: S.title,
+                  fontWeight: "900",
+                }}
+              >
+                {packageDetailSlot != null
+                  ? getFixedPackageDefinitionForSlot(packageDetailSlot).name
+                  : ""}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setPackageDetailSlot(null)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Close package details"
+              >
+                <Ionicons
+                  name="close-circle"
+                  size={28}
+                  color={theme.textTertiary}
+                />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
+              {packageDetailSlot != null ? (
+                <>
+                  <Text
+                    style={{
+                      color: theme.textSecondary,
+                      fontSize: S.small,
+                      lineHeight: 22,
+                      marginBottom: 12,
+                    }}
+                  >
+                    {
+                      getFixedPackageDefinitionForSlot(packageDetailSlot)
+                        .description
+                    }
+                  </Text>
+                  {(
+                    getFixedPackageDefinitionForSlot(packageDetailSlot)
+                      .features || []
+                  ).map((line, i) => (
+                    <Text
+                      key={i}
+                      style={{
+                        color: theme.textPrimary,
+                        fontSize: S.body,
+                        marginBottom: 8,
+                        lineHeight: 22,
+                      }}
+                    >
+                      • {line}
+                    </Text>
+                  ))}
+                </>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -4456,6 +4575,8 @@ export function DoctorQuickRequestsPanel({
   doctorUserId,
   onHelpPatient,
   onOpenHelpChat,
+  /** When true, hide the manual Refresh control and keep lists fresh via poll + PocketBase realtime. */
+  autoRefreshQuickQueues = false,
 }) {
   const user = getAuthUser();
   const effectiveDoctorId = doctorUserId || user?.id || "";
@@ -4472,10 +4593,13 @@ export function DoctorQuickRequestsPanel({
   const [helpMessage, setHelpMessage] = useState("");
   const [helpBusy, setHelpBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
     if (!effectiveDoctorId) return;
-    setErr("");
-    setLoading(true);
+    if (!silent) {
+      setErr("");
+      setLoading(true);
+    }
     const parts = [];
     let sol = [];
     let cou = [];
@@ -4533,12 +4657,44 @@ export function DoctorQuickRequestsPanel({
     setOfferMap(next);
 
     if (parts.length) setErr(parts.join("\n"));
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [effectiveDoctorId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!autoRefreshQuickQueues) return undefined;
+    const pollMs = 12000;
+    const poll = setInterval(() => void load({ silent: true }), pollMs);
+    let cancelled = false;
+    const bump = () => {
+      if (!cancelled) void load({ silent: true });
+    };
+    (async () => {
+      try {
+        await pb.collection("quick_solution_requests").subscribe("*", bump);
+        await pb.collection("quick_counselling_requests").subscribe("*", bump);
+      } catch (e) {
+        console.log("quick queue subscribe skipped:", e?.message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+      try {
+        pb.collection("quick_solution_requests").unsubscribe("*");
+      } catch {
+        // ignore
+      }
+      try {
+        pb.collection("quick_counselling_requests").unsubscribe("*");
+      } catch {
+        // ignore
+      }
+    };
+  }, [autoRefreshQuickQueues, load]);
 
   const openHelpModal = (record, kind) => {
     const patientUserId = quickRequestPatientUserId(record);
@@ -4761,7 +4917,8 @@ export function DoctorQuickRequestsPanel({
   return (
     <View
       style={{
-        marginTop: 12,
+        marginTop: 0,
+        marginBottom: 16,
         backgroundColor: theme.card,
         borderRadius: 16,
         padding: 14,
@@ -4802,22 +4959,24 @@ export function DoctorQuickRequestsPanel({
             Quick Queues
           </Text>
         </View>
-        <TouchableOpacity
-          onPress={() => void load()}
-          disabled={loading}
-          style={{
-            paddingHorizontal: 14,
-            paddingVertical: 8,
-            borderRadius: 12,
-            backgroundColor: theme.accentLight,
-          }}
-        >
-          <Text
-            style={{ color: theme.accent, fontWeight: "800", fontSize: 12 }}
+        {!autoRefreshQuickQueues ? (
+          <TouchableOpacity
+            onPress={() => void load()}
+            disabled={loading}
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 12,
+              backgroundColor: theme.accentLight,
+            }}
           >
-            {loading ? "…" : "Refresh"}
-          </Text>
-        </TouchableOpacity>
+            <Text
+              style={{ color: theme.accent, fontWeight: "800", fontSize: 12 }}
+            >
+              {loading ? "…" : "Refresh"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
       {err ? (
         <Text
@@ -4840,7 +4999,9 @@ export function DoctorQuickRequestsPanel({
             marginBottom: 14,
           }}
         >
-          No queued requests (or list blocked - see red message above).
+          {err
+            ? "No queued requests, or the list could not be loaded (see message above)."
+            : "No queued requests."}
         </Text>
       ) : (
         solutionRows.map(renderSolutionCard)
@@ -5470,7 +5631,7 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
   );
 
   return (
-    <View style={{ marginTop: 12 }}>
+    <View style={{ marginTop: 0 }}>
       <Text
         style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 8 }}
       >
@@ -5615,7 +5776,7 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
       <Text
         style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 10 }}
       >
-        Payment history is on your Profile tab.
+        See Payment history below for ledger lines.
       </Text>
     </View>
   );

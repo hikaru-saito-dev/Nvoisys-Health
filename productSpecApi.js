@@ -117,8 +117,11 @@ export function entitlementsForConsumerPlan(plan) {
   return {
     plan: p,
     /** null = unlimited daily AI assistant messages */
-    aiChatDailyLimit: isBasic ? 25 : null,
-    /** Rolling 7-day cap on doctor consultation time (minutes) with the package doctor. */
+    aiChatDailyLimit: isBasic ? 20 : null,
+    /**
+     * Rolling 7-day cap on doctor consultation minutes with the package doctor
+     * (Basic ≈ 3h, Gold ≈ 5h; Premium ≈ open access for 24/7 tier).
+     */
     consultationMinutesPerWeek: isBasic ? 180 : isGold ? 300 : 10080,
     sideEffectAi: isPremium,
     emergencyAssistant: isPremium,
@@ -279,6 +282,33 @@ export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
   return !doctorTierEligibleForPackageMode(tier);
 }
 
+/** PocketBase `pharmacy_profile.provider_kind` — drives medicine orders vs quick queues only. */
+export const PHARMACY_PROVIDER_KIND = Object.freeze({
+  RMP_DOCTOR: "rmp_doctor",
+  CLINIC: "clinic",
+});
+
+export function normalizePharmacyProviderKind(raw) {
+  const t = String(raw || "").toLowerCase().trim();
+  if (t === "rmp_doctor" || t === "rmp" || t === "gp" || t === "general_physician") {
+    return PHARMACY_PROVIDER_KIND.RMP_DOCTOR;
+  }
+  if (t === "clinic" || t === "pharmacy") {
+    return PHARMACY_PROVIDER_KIND.CLINIC;
+  }
+  return "";
+}
+
+/** RMP / general physicians do not take medicine orders; clinics do. Unknown → treat as clinic (legacy). */
+export function pharmacyReceivesMedicineOrders(profileOrKind) {
+  const k =
+    typeof profileOrKind === "string" || typeof profileOrKind === "number"
+      ? normalizePharmacyProviderKind(profileOrKind)
+      : normalizePharmacyProviderKind(profileOrKind?.provider_kind);
+  if (k === PHARMACY_PROVIDER_KIND.RMP_DOCTOR) return false;
+  return true;
+}
+
 /** Three fixed catalogue slots - only `total_amount_inr` is doctor-editable; rest is app-defined. */
 export const DOCTOR_PACKAGE_SLOT_IDS = [1, 2, 3];
 
@@ -320,47 +350,52 @@ export const FIXED_PACKAGE_DEFINITIONS = [
     slot: 1,
     name: "Basic — Essential Care",
     total_period: "90 days",
-    treatment_type: "Structured follow-up & remote support",
+    treatment_type: "Core care & limited AI",
     description:
-      "Entry-level packaged care with core monitoring and safety checks. Ideal for stable conditions with periodic doctor oversight.",
+      "Core subscription with limited AI chat, scheduled doctor time, and medication adherence support.",
     features: [
-      "Scheduled video or chat consults",
-      "24/7 app-guided monitoring prompts",
-      "AI medication interaction checks",
-      "Care plan & dose reminders in-app",
+      "Limited AI chat access",
+      "3 hours of doctor consultation time (scheduled by the doctor)",
+      "Daily medication reminders",
     ],
   },
   {
     slot: 2,
     name: "Gold — Active Care",
     total_period: "120 days",
-    treatment_type: "Ongoing condition management",
+    treatment_type: "Expanded AI & more doctor time",
     description:
-      "Step-up support for patients who need closer follow-up between visits, with richer monitoring and AI-assisted reviews.",
+      "Includes unlimited AI chat, more scheduled doctor consultation time, and daily medication reminders.",
     features: [
-      "Everything in Basic",
-      "More frequent touchpoints with your care team",
-      "Enhanced 24/7 monitoring workflows",
-      "Expanded AI med checks & adherence insights",
-      "Priority messaging window",
+      "Unlimited AI chat access",
+      "5 hours of doctor consultation time (scheduled by the doctor)",
+      "Daily medication reminders",
     ],
   },
   {
     slot: 3,
     name: "Premium — Comprehensive Care",
     total_period: "180 days",
-    treatment_type: "High-touch / complex care paths",
+    treatment_type: "Full access, safety, diet & emergency support",
     description:
-      "Full-feature packaged programme for complex or high-risk journeys. Feature set is defined by the app and updated centrally.",
+      "Full AI and safety tools, 24/7 doctor access, diet review by your doctor, and a personal assistant for emergencies and logistics.",
     features: [
-      "Everything in Gold",
-      "Maximum tier 24/7 monitoring pathways",
-      "Full AI-assisted medication & symptom reviews",
-      "Care coordination summaries for your records",
-      "Highest-priority routing for package consults",
+      "Unlimited AI chat access",
+      "AI-powered side effects checker",
+      "Daily medication reminders",
+      "24/7 doctor consultation access at any time of the day",
+      "Diet checking by doctor",
+      "Personal assistant for emergencies (e.g. finding hospitals and reducing hassle)",
     ],
   },
 ];
+
+/** Canonical catalogue row for a slot (1–3). Used by doctor setup, find-doctor, and patient modals. */
+export function getFixedPackageDefinitionForSlot(slotNum) {
+  const n = Number(slotNum) || 1;
+  const idx = Math.min(Math.max(n, 1), 3) - 1;
+  return FIXED_PACKAGE_DEFINITIONS[idx] || FIXED_PACKAGE_DEFINITIONS[0];
+}
 
 function parsePackageTemplatesRaw(raw) {
   if (Array.isArray(raw)) return raw;
@@ -2657,6 +2692,51 @@ export async function recordTrialCoinTopup({
     ref_id: providerOrderId || providerPaymentId || providerReferenceId || "",
     meta: { provider, amount_inr: amount },
   });
+}
+
+/**
+ * Stub wallet top-up (1 coin = ₹1): logs `payment_transactions` when possible,
+ * then credits `coin_ledger`. Replace with Cashfree when deposits go live.
+ */
+export async function recordPatientWalletDepositStub(
+  patientUserId,
+  amountInr,
+) {
+  const userId = String(patientUserId || getAuthUser()?.id || "").trim();
+  const amount = Math.floor(Number(amountInr));
+  if (!userId) throw new Error("Sign in required.");
+  if (!Number.isFinite(amount) || amount < 1) {
+    throw new Error("Enter a valid whole number of rupees (minimum 1).");
+  }
+  const refId = `wd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    await recordPaymentTransaction({
+      patientUserId: userId,
+      sourceCollection: "wallet_deposit",
+      sourceId: refId,
+      kind: "wallet_deposit_stub",
+      provider: "stub",
+      providerOrderId: refId,
+      amountInr: amount,
+      currency: "INR",
+      status: "success",
+      description: `Wallet deposit (stub): ${amount} coins`,
+    });
+  } catch (e) {
+    console.log(
+      "recordPatientWalletDepositStub payment_transactions:",
+      e?.message,
+    );
+  }
+  await createCoinLedgerLine({
+    user: userId,
+    delta: amount,
+    reason: "wallet_deposit_stub",
+    ref_collection: "wallet_deposit",
+    ref_id: refId,
+    meta: { amount_inr: amount, at: new Date().toISOString() },
+  });
+  return getCoinBalanceForUser(userId);
 }
 
 async function findDoctorCoinBalanceRow(doctorUserId) {
