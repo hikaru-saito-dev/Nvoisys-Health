@@ -6,6 +6,8 @@ import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import * as SystemUI from "expo-system-ui";
 import * as WebBrowser from "expo-web-browser";
+import * as Print from "expo-print";
+import * as FileSystem from "expo-file-system/legacy";
 import React, {
   createContext,
   useCallback,
@@ -505,7 +507,7 @@ const MEDICINE_PRICE_MAP = {
 const PB_APPOINTMENTS_COLLECTION = getPbAppointmentsCollection();
 const PB_APPOINTMENT_DOCTOR_IS_PROFILE = isPbAppointmentDoctorProfileRelation();
 
-const CALL_DIRECTORY_ALLOWED_ROLES = ["doctor", "pharmacy", "staff", "admin"];
+const CALL_DIRECTORY_ALLOWED_ROLES = ["doctor", "pharmacy"];
 
 const DEFAULT_WOUND_SYSTEM_MESSAGE =
   "Wound report submitted. Doctor will review shortly.";
@@ -1505,7 +1507,7 @@ const FOOD_LOG_DRAFTS_STORAGE_PREFIX = "nvhs_food_drafts";
 
 let notificationsHandlerConfigured = false;
 const configureNotificationsHandler = () => {
-  if (notificationsHandlerConfigured) return;cd
+  if (notificationsHandlerConfigured) return;
   notificationsHandlerConfigured = true;
   try {
     Notifications.setNotificationHandler({
@@ -6992,6 +6994,7 @@ const CallScreen = ({
 
 const StartCallScreen = ({ callType = "video", onBack }) => {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const {
     userRole,
     currentUserId,
@@ -7156,14 +7159,17 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right", "bottom"]}
+    >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
 
       <View
         style={{
           backgroundColor: theme.card,
           padding: RFValue(16),
-          paddingTop: safeHeaderPaddingTop(),
+          paddingTop: safeTopContentPadding(insets),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -7254,8 +7260,6 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
               filterChip("all", "All"),
               filterChip("doctor", "Doctors"),
               filterChip("pharmacy", "Pharmacies"),
-              filterChip("staff", "Staff"),
-              filterChip("admin", "Admins"),
             ]}
           </ScrollView>
         </View>
@@ -20840,18 +20844,6 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                         ₹{pkg.total_amount_inr} · {pkg.total_period} ·{" "}
                         {pkg.treatment_type}
                       </Text>
-                      {pkg.consultation_time_window ? (
-                        <Text
-                          style={{
-                            fontSize: RFValue(11),
-                            color: theme.accent,
-                            marginTop: 6,
-                            fontWeight: "800",
-                          }}
-                        >
-                          Scheduled hours: {pkg.consultation_time_window}
-                        </Text>
-                      ) : null}
                       {pkg.description ? (
                         <Text
                           style={{
@@ -20871,11 +20863,9 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                             <Text
                               key={`${pkg.slot}-${fi}`}
                               style={{
-                                fontSize: RFValue(12),
-                                color: theme.textPrimary,
-                                fontWeight: "600",
-                                marginBottom: 4,
-                                lineHeight: RFValue(18),
+                                fontSize: RFValue(11),
+                                color: theme.textTertiary,
+                                marginBottom: 3,
                               }}
                             >
                               • {f}
@@ -21509,6 +21499,158 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   );
 };
 
+const escapeHtmlForPdf = (value) => {
+  const s = String(value ?? "");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+};
+
+const buildPrescriptionPdfHtml = (rx, sideWarnings) => {
+  const warnings = Array.isArray(sideWarnings) ? sideWarnings : [];
+  const medRows = (rx.medicines || [])
+    .map(
+      (m) => `
+    <tr>
+      <td style="padding:8px;border:1px solid #ccc;vertical-align:top;">
+        <strong>${escapeHtmlForPdf(m.name)}</strong><br/>
+        <span style="color:#555;font-size:11px;">Dosage: ${escapeHtmlForPdf(m.dosage)}</span>
+      </td>
+      <td style="padding:8px;border:1px solid #ccc;">
+        When to take: ${escapeHtmlForPdf(m.whenToTake)}<br/>
+        How long: ${escapeHtmlForPdf(m.duration)}
+      </td>
+    </tr>`,
+    )
+    .join("");
+  const warnBlock =
+    warnings.length > 0
+      ? `<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:12px;margin-bottom:14px;">
+      <div style="font-weight:800;color:#B45309;margin-bottom:6px;">AI side-effect check (${warnings.length})</div>
+      <ul style="margin:0;padding-left:18px;color:#1f2937;font-size:12px;">
+        ${warnings
+          .map(
+            (w) =>
+              `<li style="margin-bottom:4px;"><strong>${escapeHtmlForPdf(w.medicine)}</strong>: ${escapeHtmlForPdf(w.message)}</li>`,
+          )
+          .join("")}
+      </ul>
+      <p style="margin:8px 0 0;font-size:10px;color:#6b7280;">Ask your doctor or pharmacist if you have questions.</p>
+    </div>`
+      : "";
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; color: #111; font-size: 13px; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    .muted { color: #6b7280; font-size: 12px; }
+    table { width:100%; border-collapse: collapse; margin-top: 10px; }
+    </style></head><body>
+    <h1>Prescription</h1>
+    <p class="muted">${escapeHtmlForPdf(rx.doctor)} · ${escapeHtmlForPdf(rx.date)} · Rx #${escapeHtmlForPdf(String(rx.id))}</p>
+    ${
+      rx.woundId && rx.woundDescription
+        ? `<p><strong>Related wound:</strong> ${escapeHtmlForPdf(rx.woundDescription)}</p>`
+        : ""
+    }
+    ${
+      rx.diagnosis
+        ? `<p><strong>Condition / diagnosis:</strong><br/>${escapeHtmlForPdf(rx.diagnosis)}</p>`
+        : ""
+    }
+    ${warnBlock}
+    <h2 style="font-size:14px;margin:16px 0 8px;">Medicines</h2>
+    <table>${
+      medRows ||
+      "<tr><td colspan=\"2\" style=\"padding:8px;border:1px solid #ccc;\">No medicine lines.</td></tr>"
+    }</table>
+    </body></html>`;
+};
+
+const savePrescriptionPdfToDevice = async (rx, sideWarnings) => {
+  if (Platform.OS === "web") {
+    Alert.alert(
+      "PDF download",
+      "Saving as a PDF is available in the mobile app (iOS or Android).",
+    );
+    return;
+  }
+  const html = buildPrescriptionPdfHtml(rx, sideWarnings);
+  const safeSlug = String(rx.id || "rx").replace(/[^a-zA-Z0-9_-]/g, "") || "rx";
+  const baseFileName = `Prescription_${safeSlug}_${Date.now()}`;
+
+  let uri;
+  let base64;
+  try {
+    const printed = await Print.printToFileAsync({
+      html,
+      base64: Platform.OS === "android",
+    });
+    uri = printed?.uri;
+    base64 = printed?.base64;
+  } catch (err) {
+    Alert.alert(
+      "Could not create PDF",
+      err?.message || "Something went wrong while building the prescription PDF.",
+    );
+    return;
+  }
+
+  if (Platform.OS === "android" && base64) {
+    try {
+      const perm =
+        await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          "Save cancelled",
+          "To save the PDF, allow folder access and choose a location such as Downloads.",
+        );
+        return;
+      }
+      const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+        perm.directoryUri,
+        baseFileName,
+        "application/pdf",
+      );
+      await FileSystem.writeAsStringAsync(fileUri, base64, {
+        encoding: "base64",
+      });
+      Alert.alert("Saved", "Your prescription PDF was saved to the folder you selected.");
+    } catch (err) {
+      Alert.alert(
+        "Save failed",
+        err?.message ||
+          "Could not write the PDF. Try again or pick a different folder.",
+      );
+    }
+    return;
+  }
+
+  if (Platform.OS === "ios" && uri && FileSystem.documentDirectory) {
+    try {
+      const dest = `${FileSystem.documentDirectory}${baseFileName}.pdf`;
+      await FileSystem.copyAsync({ from: uri, to: dest });
+      Alert.alert(
+        "Saved",
+        `Prescription saved as ${baseFileName}.pdf. Open the Files app → On My iPhone → this app's folder to view or share it.`,
+      );
+    } catch (err) {
+      Alert.alert(
+        "Save failed",
+        err?.message || "Could not copy the PDF to your device storage.",
+      );
+    }
+    return;
+  }
+
+  Alert.alert(
+    "PDF ready",
+    uri
+      ? "The PDF was created but could not be placed in a default folder on this device."
+      : "Could not generate a PDF file.",
+  );
+};
+
 const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   const { theme } = useTheme();
   const {
@@ -21523,6 +21665,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   const [rxSideLoading, setRxSideLoading] = useState(false);
   const [rxScrollViewportH, setRxScrollViewportH] = useState(0);
   const [rxScrollContentH, setRxScrollContentH] = useState(0);
+  const [savingPdfRxId, setSavingPdfRxId] = useState(null);
 
   const cards = React.useMemo(() => {
     const list = [...(prescriptionRecords || [])].sort(
@@ -21633,6 +21776,16 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
     rxScrollViewportH > 0 &&
     rxScrollContentH > 0 &&
     rxScrollContentH < rxScrollViewportH - 2;
+
+  const handleDownloadPrescriptionPdf = async (rx) => {
+    if (savingPdfRxId) return;
+    setSavingPdfRxId(rx.id);
+    try {
+      await savePrescriptionPdfToDevice(rx, rxSideWarnings[rx.id] || []);
+    } finally {
+      setSavingPdfRxId(null);
+    }
+  };
 
   return (
     <SafeAreaView
@@ -22033,6 +22186,8 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                 }}
               >
                 <TouchableOpacity
+                  onPress={() => handleDownloadPrescriptionPdf(rx)}
+                  disabled={savingPdfRxId === rx.id}
                   style={{
                     flex: 1,
                     flexDirection: "row",
@@ -22042,14 +22197,23 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     backgroundColor: theme.successLight,
                     borderRadius: RFValue(10),
                     marginRight: RFValue(8),
+                    opacity: savingPdfRxId === rx.id ? 0.65 : 1,
                   }}
                 >
-                  <Ionicons
-                    name="download-outline"
-                    size={RFValue(16)}
-                    color={theme.success}
-                    style={{ marginRight: RFValue(6) }}
-                  />
+                  {savingPdfRxId === rx.id ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={theme.success}
+                      style={{ marginRight: RFValue(8) }}
+                    />
+                  ) : (
+                    <Ionicons
+                      name="download-outline"
+                      size={RFValue(16)}
+                      color={theme.success}
+                      style={{ marginRight: RFValue(6) }}
+                    />
+                  )}
                   <Text
                     style={{
                       color: theme.success,
@@ -22061,6 +22225,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  disabled={!!savingPdfRxId}
                   style={{
                     flex: 1,
                     flexDirection: "row",
@@ -22070,6 +22235,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     backgroundColor: theme.accentLight,
                     borderRadius: RFValue(10),
                     marginLeft: RFValue(8),
+                    opacity: savingPdfRxId ? 0.45 : 1,
                   }}
                 >
                   <Ionicons
