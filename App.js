@@ -7,6 +7,7 @@ import * as Notifications from "expo-notifications";
 import * as SystemUI from "expo-system-ui";
 import * as WebBrowser from "expo-web-browser";
 import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system/legacy";
 import React, {
   createContext,
@@ -145,6 +146,105 @@ const getLivekitWebRTC = () => {
     livekitWebRtcModule = require("@livekit/react-native-webrtc");
   }
   return livekitWebRtcModule;
+};
+
+/**
+ * Switch the local video between front ("user") and back ("environment") cameras.
+ * On P2P calls, uses getUserMedia + RTCRtpSender.replaceTrack so the remote side
+ * gets the new camera (native track.switchCamera can mirror or no-op on some builds).
+ */
+const switchLocalVideoFacingAsync = async ({
+  isFrontCamera,
+  setIsFrontCamera,
+  localStream,
+  localStreamRef,
+  setLocalStream,
+  peerConnection,
+  preferNativeSwitch = true,
+}) => {
+  if (!localStream) return false;
+  const oldVideo = localStream.getVideoTracks()[0];
+  if (!oldVideo) return false;
+
+  const wrtc = getLivekitWebRTC();
+  const { mediaDevices, MediaStream: WRTCStream } = wrtc;
+  const nextIsFront = !isFrontCamera;
+
+  if (preferNativeSwitch) {
+    try {
+      if (typeof oldVideo.switchCamera === "function") {
+        oldVideo.switchCamera();
+        setIsFrontCamera(nextIsFront);
+        return true;
+      }
+      if (typeof oldVideo._switchCamera === "function") {
+        oldVideo._switchCamera();
+        setIsFrontCamera(nextIsFront);
+        return true;
+      }
+    } catch (e) {
+      console.log("native switchCamera:", e?.message);
+    }
+  }
+
+  const facingVideo = nextIsFront
+    ? { facingMode: "user" }
+    : { facingMode: { ideal: "environment" } };
+
+  let newVideoTrack;
+  try {
+    const tmp = await mediaDevices.getUserMedia({
+      audio: false,
+      video: facingVideo,
+    });
+    newVideoTrack = tmp.getVideoTracks()[0];
+  } catch (e1) {
+    try {
+      const tmp = await mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: nextIsFront ? "user" : "environment" },
+      });
+      newVideoTrack = tmp.getVideoTracks()[0];
+    } catch (e2) {
+      console.log("switchLocalVideoFacing getUserMedia:", e2?.message || e2);
+      return false;
+    }
+  }
+  if (!newVideoTrack) return false;
+
+  if (peerConnection) {
+    const sender = peerConnection
+      .getSenders()
+      .find((s) => s.track?.kind === "video");
+    if (!sender) {
+      newVideoTrack.stop();
+      console.log("switchLocalVideoFacing: no video sender on peer connection");
+      return false;
+    }
+    try {
+      await sender.replaceTrack(newVideoTrack);
+    } catch (e) {
+      newVideoTrack.stop();
+      console.log("replaceTrack:", e?.message || e);
+      return false;
+    }
+  }
+
+  const audioTracks = [...localStream.getAudioTracks()];
+  try {
+    localStream.removeTrack(oldVideo);
+  } catch {
+    // ignore
+  }
+  oldVideo.stop();
+
+  const nextStream = new WRTCStream([...audioTracks, newVideoTrack]);
+  if (localStreamRef) {
+    localStreamRef.current = nextStream;
+  }
+  setLocalStream(nextStream);
+  setIsFrontCamera(nextIsFront);
+  return true;
 };
 
 // Upgrade every two-arg `Alert.alert(title, message)` call across the app
@@ -1511,13 +1611,19 @@ const configureNotificationsHandler = () => {
   notificationsHandlerConfigured = true;
   try {
     Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: notificationDisplayPrefs.enabled,
-        shouldShowBanner: notificationDisplayPrefs.enabled,
-        shouldShowList: notificationDisplayPrefs.enabled,
-        shouldPlaySound: notificationDisplayPrefs.enabled,
-        shouldSetBadge: false,
-      }),
+      handleNotification: async (notification) => {
+        const isIncomingCall =
+          notification?.request?.content?.data?.kind === "incoming_call";
+        const enabled =
+          notificationDisplayPrefs.enabled || isIncomingCall;
+        return {
+          shouldShowAlert: enabled,
+          shouldShowBanner: enabled,
+          shouldShowList: enabled,
+          shouldPlaySound: enabled,
+          shouldSetBadge: false,
+        };
+      },
     });
   } catch (error) {
     console.log("Notifications handler setup skipped:", error?.message);
@@ -1540,6 +1646,36 @@ const ensureReminderPermissions = async () => {
   } catch (error) {
     console.log("ensureReminderPermissions error:", error?.message);
     return false;
+  }
+};
+
+const notifyIncomingCallLocal = async (payload) => {
+  const callType = payload?.callType === "audio" ? "audio" : "video";
+  const callerName = String(payload?.callerName || "").trim();
+  const title =
+    callType === "audio" ? "Incoming audio call" : "Incoming video call";
+  const body = callerName
+    ? `${callerName} is calling you now.`
+    : "Someone is calling you now.";
+  try {
+    configureNotificationsHandler();
+    const granted = await ensureReminderPermissions();
+    if (!granted) return;
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        data: {
+          kind: "incoming_call",
+          roomId: payload?.roomId || "",
+          fromUserId: payload?.fromUserId || "",
+          callType,
+        },
+      },
+      trigger: null,
+    });
+  } catch (error) {
+    console.log("notifyIncomingCallLocal:", error?.message);
   }
 };
 
@@ -6527,7 +6663,7 @@ const CallScreen = ({
   contact,
 }) => {
   const { theme } = useTheme();
-  const { currentUserId } = useAppData();
+  const { currentUserId, currentUser } = useAppData();
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [status, setStatus] = useState("Connecting...");
@@ -6540,6 +6676,18 @@ const CallScreen = ({
   const wsRef = useRef(null);
   const roleRef = useRef("receiver");
   const { RTCView: LkRTCView } = useMemo(() => getLivekitWebRTC(), []);
+
+  const peerUserIdForCall = useMemo(() => {
+    if (!currentUserId || !contact) return null;
+    const members = safeArray(contact.members);
+    if (members.length >= 2) {
+      return members.find((m) => m !== currentUserId) || null;
+    }
+    if (members.length === 0 && contact.id) {
+      return contact.id !== currentUserId ? contact.id : null;
+    }
+    return null;
+  }, [contact, currentUserId]);
 
   const cleanupStreams = (resetState = true) => {
     const stream = localStreamRef.current;
@@ -6650,6 +6798,11 @@ const CallScreen = ({
               type: "join",
               roomId: conversationId,
               userId: currentUserId || null,
+              peerUserId: peerUserIdForCall,
+              callType: callType === "audio" ? "audio" : "video",
+              callerName: String(
+                currentUser?.name || currentUser?.email || "",
+              ).trim(),
             }),
           );
         };
@@ -6750,7 +6903,7 @@ const CallScreen = ({
       mounted = false;
       closeConnection(false);
     };
-  }, [callType, conversationId, currentUserId]);
+  }, [callType, conversationId, currentUserId, currentUser, contact, peerUserIdForCall]);
 
   const toggleMute = () => {
     if (!localStream) return;
@@ -6771,24 +6924,19 @@ const CallScreen = ({
     setIsVideoEnabled(videoTracks.length > 0 ? videoTracks[0].enabled : false);
   };
 
-  const switchCamera = () => {
-    if (callType !== "video" || !localStream) return;
-    const videoTrack = localStream.getVideoTracks()[0];
-    if (!videoTrack) return;
-
+  const switchCamera = async () => {
+    if (callType !== "video" || !localStream || !isVideoEnabled) return;
     try {
-      if (videoTrack.switchCamera) {
-        videoTrack.switchCamera();
-      } else if (videoTrack._switchCamera) {
-        videoTrack._switchCamera();
-      } else if (videoTrack.applyConstraints) {
-        void videoTrack.applyConstraints({
-          facingMode: isFrontCamera ? "environment" : "user",
-        });
-      } else {
-        return;
-      }
-      setIsFrontCamera((prev) => !prev);
+      await switchLocalVideoFacingAsync({
+        isFrontCamera,
+        setIsFrontCamera,
+        localStream,
+        localStreamRef,
+        setLocalStream,
+        peerConnection: pcRef.current,
+        // Native track.switchCamera often mirrors or no-ops; replaceTrack sends real front/back to the peer.
+        preferNativeSwitch: false,
+      });
     } catch (error) {
       console.log("switchCamera error:", error?.message || error);
     }
@@ -19269,19 +19417,21 @@ const VideoCallScreen = ({ onBack }) => {
     setIsVideoOff(!nextEnabled);
   };
 
-  const handleSwitchCamera = () => {
+  const handleSwitchCamera = async () => {
     if (!localStreamRef.current) return;
-    const videoTrack = localStreamRef.current.getVideoTracks()[0];
-    if (videoTrack?.switchCamera) {
-      videoTrack.switchCamera();
-    } else if (videoTrack?._switchCamera) {
-      videoTrack._switchCamera();
-    } else if (videoTrack?.applyConstraints) {
-      videoTrack.applyConstraints({
-        facingMode: isFrontCamera ? "environment" : "user",
+    try {
+      await switchLocalVideoFacingAsync({
+        isFrontCamera,
+        setIsFrontCamera,
+        localStream: localStreamRef.current,
+        localStreamRef,
+        setLocalStream,
+        peerConnection: null,
+        preferNativeSwitch: true,
       });
+    } catch (e) {
+      console.log("handleSwitchCamera:", e?.message || e);
     }
-    setIsFrontCamera((prev) => !prev);
   };
 
   return (
@@ -21567,6 +21717,20 @@ const buildPrescriptionPdfHtml = (rx, sideWarnings) => {
     </body></html>`;
 };
 
+const trySharePrescriptionPdf = async (fileUri) => {
+  if (!fileUri) return false;
+  try {
+    if (!(await Sharing.isAvailableAsync())) return false;
+    await Sharing.shareAsync(fileUri, {
+      mimeType: "application/pdf",
+      dialogTitle: "Save or share prescription",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const savePrescriptionPdfToDevice = async (rx, sideWarnings) => {
   if (Platform.OS === "web") {
     Alert.alert(
@@ -21588,6 +21752,15 @@ const savePrescriptionPdfToDevice = async (rx, sideWarnings) => {
     });
     uri = printed?.uri;
     base64 = printed?.base64;
+    if (Platform.OS === "android" && uri && !base64) {
+      try {
+        base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: "base64",
+        });
+      } catch {
+        base64 = undefined;
+      }
+    }
   } catch (err) {
     Alert.alert(
       "Could not create PDF",
@@ -21598,12 +21771,40 @@ const savePrescriptionPdfToDevice = async (rx, sideWarnings) => {
 
   if (Platform.OS === "android" && base64) {
     try {
+      let initialDirUri = null;
+      try {
+        initialDirUri =
+          FileSystem.StorageAccessFramework.getUriForDirectoryInRoot(
+            "Download",
+          );
+      } catch {
+        initialDirUri = null;
+      }
       const perm =
-        await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+        await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync(
+          initialDirUri,
+        );
       if (!perm.granted) {
         Alert.alert(
-          "Save cancelled",
-          "To save the PDF, allow folder access and choose a location such as Downloads.",
+          "Folder not selected",
+          "To save the PDF into Downloads (or another folder), tap Download again when the system asks, then pick a folder and confirm (Allow / Use this folder).\n\nIf you prefer not to grant folder access, use Share PDF to save via another app (Files, Drive, email, etc.).",
+          [
+            { text: "OK", style: "cancel" },
+            {
+              text: "Share PDF",
+              onPress: () => {
+                void (async () => {
+                  const ok = await trySharePrescriptionPdf(uri);
+                  if (!ok) {
+                    Alert.alert(
+                      "Could not open share",
+                      "Try Download again and allow folder access, or update the app if sharing stays unavailable.",
+                    );
+                  }
+                })();
+              },
+            },
+          ],
         );
         return;
       }
@@ -21621,6 +21822,35 @@ const savePrescriptionPdfToDevice = async (rx, sideWarnings) => {
         "Save failed",
         err?.message ||
           "Could not write the PDF. Try again or pick a different folder.",
+        [
+          { text: "OK", style: "cancel" },
+          {
+            text: "Share PDF",
+            onPress: () => {
+              void (async () => {
+                const ok = await trySharePrescriptionPdf(uri);
+                if (!ok) {
+                  Alert.alert(
+                    "Could not open share",
+                    err?.message ||
+                      "Try Download again and pick a writable folder.",
+                  );
+                }
+              })();
+            },
+          },
+        ],
+      );
+    }
+    return;
+  }
+
+  if (Platform.OS === "android" && uri && !base64) {
+    const shared = await trySharePrescriptionPdf(uri);
+    if (!shared) {
+      Alert.alert(
+        "Could not save PDF",
+        "The PDF was created but could not be read for saving. Try Download again.",
       );
     }
     return;
@@ -26173,134 +26403,6 @@ const PharmacyProfileScreen = ({ onLogout }) => {
   );
 };
 
-const StaffManagementScreen = () => {
-  const { theme } = useTheme();
-  const staff = [
-    {
-      id: 1,
-      name: "Dr. Neha Kapoor",
-      role: "Chief surgeon",
-      status: "On Duty",
-    },
-    { id: 2, name: "Nurse Rahul", role: "Emergency Lead", status: "On Duty" },
-    { id: 3, name: "Vikas Admin", role: "Clinic Manager", status: "Off Duty" },
-  ];
-
-  return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["top", "left", "right"]}
-    >
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
-      <View
-        style={{
-          backgroundColor: theme.card,
-          padding: RFValue(20),
-          paddingTop: safeHeaderPaddingTop(),
-          borderBottomWidth: 1,
-          borderBottomColor: theme.cardBorder,
-        }}
-      >
-        <Text
-          style={{
-            fontSize: RFValue(20),
-            fontWeight: "800",
-            color: theme.textPrimary,
-          }}
-        >
-          Staff Management
-        </Text>
-      </View>
-      <ScrollView
-        contentContainerStyle={{
-          padding: RFValue(16),
-          paddingBottom: tabScrollBottomPadding(),
-        }}
-      >
-        {staff.map((s, idx) => (
-          <View
-            key={idx}
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(16),
-              padding: RFValue(16),
-              marginBottom: 12,
-              shadowColor: "#000",
-              shadowOpacity: 0.05,
-              elevation: 2,
-              flexDirection: "row",
-              alignItems: "center",
-            }}
-          >
-            <View
-              style={{
-                width: RFValue(44),
-                height: RFValue(44),
-                borderRadius: RFValue(22),
-                backgroundColor: theme.accentLight,
-                justifyContent: "center",
-                alignItems: "center",
-                marginRight: 12,
-              }}
-            >
-              <Ionicons name="person" size={RFValue(20)} color={theme.accent} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text
-                style={{
-                  fontWeight: "700",
-                  fontSize: RFValue(15),
-                  color: theme.textPrimary,
-                }}
-              >
-                {s.name}
-              </Text>
-              <Text
-                style={{ color: theme.textSecondary, fontSize: RFValue(12) }}
-              >
-                {s.role}
-              </Text>
-            </View>
-            <View
-              style={{
-                backgroundColor:
-                  s.status === "On Duty" ? theme.successLight : theme.bg,
-                paddingHorizontal: 10,
-                paddingVertical: 4,
-                borderRadius: 10,
-              }}
-            >
-              <Text
-                style={{
-                  color:
-                    s.status === "On Duty" ? theme.success : theme.textTertiary,
-                  fontSize: RFValue(10),
-                  fontWeight: "700",
-                }}
-              >
-                {s.status}
-              </Text>
-            </View>
-          </View>
-        ))}
-        <TouchableOpacity
-          style={{
-            marginTop: 20,
-            backgroundColor: theme.accent,
-            padding: 16,
-            borderRadius: 12,
-            alignItems: "center",
-          }}
-        >
-          <Text style={{ color: "#FFF", fontWeight: "800" }}>
-            Add New Staff Member
-          </Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
-  );
-};
-
 // ========================================
 // WOUND MANAGEMENT SCREENS
 // ========================================
@@ -29076,6 +29178,10 @@ export default function App() {
   ]);
   const [localCareMode, setLocalCareMode] = useState("");
 
+  const callInviteWsRef = useRef(null);
+  const callInviteReconnectRef = useRef(null);
+  const lastIncomingCallSigRef = useRef("");
+
   const resolvedPaletteKey = useMemo(() => {
     if (followSystem) return systemScheme === "dark" ? "dark" : "light";
     return THEMES[paletteKey] ? paletteKey : "light";
@@ -31597,6 +31703,138 @@ export default function App() {
     };
   }, [currentUser?.id, userRole, patientProfile?.status]);
 
+  // Incoming voice/video call alerts for patients and approved doctors: a
+  // lightweight WebSocket subscribes to the signaling server so the callee
+  // gets a local notification when the caller joins the direct room first.
+  useEffect(() => {
+    if (typeof WebSocket === "undefined") return undefined;
+    if (!currentUser?.id) return undefined;
+    if (userRole !== "patient" && userRole !== "doctor") return undefined;
+    if (
+      userRole === "doctor" &&
+      normalizeDoctorApplicationStatus(patientProfile?.status) !== "approved"
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const wsUrl = SIGNALING_SERVER_URL;
+
+    const clearReconnect = () => {
+      if (callInviteReconnectRef.current) {
+        clearTimeout(callInviteReconnectRef.current);
+        callInviteReconnectRef.current = null;
+      }
+    };
+
+    const scheduleReconnect = (delayMs) => {
+      clearReconnect();
+      callInviteReconnectRef.current = setTimeout(() => {
+        if (!cancelled) {
+          openSocket();
+        }
+      }, delayMs);
+    };
+
+    const openSocket = () => {
+      if (cancelled) return;
+      clearReconnect();
+      try {
+        const prev = callInviteWsRef.current;
+        if (prev) {
+          try {
+            prev.close();
+          } catch {
+            /* ignore */
+          }
+          callInviteWsRef.current = null;
+        }
+
+        const ws = new WebSocket(wsUrl);
+        callInviteWsRef.current = ws;
+
+        ws.onopen = () => {
+          if (cancelled) return;
+          try {
+            ws.send(
+              JSON.stringify({
+                type: "subscribe_calls",
+                userId: currentUser.id,
+              }),
+            );
+          } catch {
+            /* ignore */
+          }
+        };
+
+        ws.onmessage = (event) => {
+          if (cancelled) return;
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload?.type !== "incoming_call") return;
+            const sig = `${payload.roomId || ""}|${payload.fromUserId || ""}|${payload.ts || 0}`;
+            if (lastIncomingCallSigRef.current === sig) return;
+            lastIncomingCallSigRef.current = sig;
+            void notifyIncomingCallLocal(payload);
+          } catch {
+            /* ignore */
+          }
+        };
+
+        ws.onclose = () => {
+          if (callInviteWsRef.current === ws) {
+            callInviteWsRef.current = null;
+          }
+          if (!cancelled) {
+            scheduleReconnect(4500);
+          }
+        };
+
+        ws.onerror = () => {
+          try {
+            ws.close();
+          } catch {
+            /* ignore */
+          }
+        };
+      } catch {
+        if (!cancelled) {
+          scheduleReconnect(8000);
+        }
+      }
+    };
+
+    let startupTimer = null;
+    if (Platform.OS === "android") {
+      startupTimer = setTimeout(() => {
+        InteractionManager.runAfterInteractions(() => {
+          if (!cancelled) {
+            openSocket();
+          }
+        });
+      }, 2000);
+    } else {
+      startupTimer = setTimeout(() => {
+        openSocket();
+      }, 500);
+    }
+
+    return () => {
+      cancelled = true;
+      if (startupTimer) {
+        clearTimeout(startupTimer);
+      }
+      clearReconnect();
+      const w = callInviteWsRef.current;
+      callInviteWsRef.current = null;
+      try {
+        w?.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [currentUser?.id, userRole, patientProfile?.status]);
+
   // Step 9: give every patient a pinned "Health Assistant" conversation the
   // first time they sign in. The call is best-effort - if PocketBase doesn't
   // have the `kind` field or blocks the create, login still proceeds.
@@ -32716,18 +32954,6 @@ const AppContent = ({
               icon: ({ color, focused }) => (
                 <Ionicons
                   name={focused ? "chatbubble" : "chatbubble-outline"}
-                  size={RFValue(22)}
-                  color={color}
-                />
-              ),
-            },
-            {
-              name: "Staff",
-              label: "Staff",
-              component: StaffManagementScreen,
-              icon: ({ color, focused }) => (
-                <Ionicons
-                  name={focused ? "briefcase" : "briefcase-outline"}
                   size={RFValue(22)}
                   color={color}
                 />

@@ -417,6 +417,8 @@ const server = http.createServer(handleHttpRequest);
 const wss = new WebSocketServer({ server });
 
 const rooms = new Map();
+/** userId -> Set<WebSocket> — lightweight listeners for incoming-call alerts (no WebRTC). */
+const callSubscribers = new Map();
 
 const sendJson = (client, payload) => {
   if (!client || client.readyState !== client.OPEN) return;
@@ -428,6 +430,29 @@ const broadcastRoom = (roomId, payload, exceptClient = null) => {
   clients.forEach((client) => {
     if (client === exceptClient) return;
     sendJson(client, payload);
+  });
+};
+
+const removeCallSubscriber = (client) => {
+  const userId = client.callListenUserId;
+  if (!userId) return;
+  const set = callSubscribers.get(userId);
+  if (set) {
+    set.delete(client);
+    if (set.size === 0) {
+      callSubscribers.delete(userId);
+    }
+  }
+  client.callListenUserId = undefined;
+};
+
+const notifyIncomingCallTargets = (targetUserId, message) => {
+  const id = String(targetUserId || "").trim();
+  if (!id) return;
+  const set = callSubscribers.get(id);
+  if (!set || !set.size) return;
+  set.forEach((socket) => {
+    sendJson(socket, message);
   });
 };
 
@@ -452,6 +477,20 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    if (payload.type === "subscribe_calls") {
+      const userId = String(payload.userId || "").trim();
+      if (!userId) return;
+      removeCallSubscriber(ws);
+      ws.callListenUserId = userId;
+      let set = callSubscribers.get(userId);
+      if (!set) {
+        set = new Set();
+        callSubscribers.set(userId, set);
+      }
+      set.add(ws);
+      return;
+    }
+
     if (payload.type === "join") {
       const roomId = payload.roomId;
       if (!roomId) return;
@@ -465,6 +504,19 @@ wss.on("connection", (ws) => {
       rooms.set(roomId, updated);
 
       sendJson(ws, { type: "joined", role });
+
+      const peerUserId = String(payload.peerUserId || "").trim();
+      const callerUserId = String(payload.userId || "").trim();
+      if (peerUserId && callerUserId && peerUserId !== callerUserId && updated.length === 1) {
+        notifyIncomingCallTargets(peerUserId, {
+          type: "incoming_call",
+          roomId,
+          fromUserId: callerUserId,
+          callType: payload.callType === "audio" ? "audio" : "video",
+          callerName: String(payload.callerName || "").trim(),
+          ts: Date.now(),
+        });
+      }
 
       if (updated.length === 2) {
         broadcastRoom(roomId, { type: "ready" });
@@ -483,6 +535,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    removeCallSubscriber(ws);
     removeClientFromRoom(ws);
   });
 });
