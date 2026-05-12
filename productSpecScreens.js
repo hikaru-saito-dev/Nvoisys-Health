@@ -1799,7 +1799,7 @@ export function QuickSolutionScreen({
   const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
   const consultHint =
     ent && consultMinutesLimit > 0
-      ? `Consultation time this week with ${quickCareBinding.doctorName || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
+      ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
       : "";
 
   return (
@@ -1845,7 +1845,7 @@ export function QuickSolutionScreen({
           }}
         >
           Package: {planLabel} · Routed to{" "}
-          {quickCareBinding.doctorName || "your doctor"} (no doctor picker
+          {quickCareBinding.doctor || "your doctor"} (no doctor picker
           here).
         </Text>
         {consultHint ? (
@@ -2197,7 +2197,7 @@ export function QuickCounsellingScreen({
             }}
           >
             {planLabel} plan · ₹25 (25 coins) — queued for{" "}
-            {quickCareBinding.doctorName || "your package doctor"}.
+            {quickCareBinding.doctor || "your package doctor"}.
           </Text>
         
         <TextInput
@@ -2380,7 +2380,7 @@ export function PatientPackageMeetingsPanel({
       const paid = await onPayAppointment?.({
         id: meeting.id,
         statusKey: "approved",
-        doctorName: doctorName(meeting.doctor_user_id),
+        doctor: doctorName(meeting.doctor_user_id),
         doctorUserId: meeting.doctor_user_id,
         consultationType: meeting.call_kind || "video",
         consultationFee: meeting.consultation_fee || meeting.fee || 500,
@@ -5524,7 +5524,7 @@ export function PatientQuickRequestsTrackerPanel({
 
   const renderOffer = (offer) => {
     const doctor = offer?.expand?.doctor;
-    const doctorName = doctor?.name || doctor?.email || "Doctor";
+    const doctorName = resolveListingDisplayName({}, doctor) || "Doctor";
     return (
       <View
         key={offer.id}
@@ -5850,7 +5850,7 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
               userId: merged.user || merged.expand?.user?.id || "",
               name:
                 resolveListingDisplayName(merged, merged.expand?.user) ||
-                "Healthcare provider",
+                "Doctor",
               specialty: spec,
               practitionerTier: String(
                 merged.practitioner_tier ||

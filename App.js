@@ -1131,7 +1131,7 @@ const formatPrescriptionsForPrompt = (prescriptions) => {
   const lines = ["── ACTIVE PRESCRIPTIONS (Nvoisys) ──"];
   list.forEach((rx, idx) => {
     const meds = Array.isArray(rx?.medicines) ? rx.medicines : [];
-    const header = `  Rx ${idx + 1} (${rx?.date || "date n/a"}, ${rx?.doctorName || "Doctor"})`;
+    const header = `  Rx ${idx + 1} (${rx?.date || "date n/a"}, ${rx?.doctor || "Doctor"})`;
     lines.push(header);
     if (rx?.diagnosis) lines.push(`    Diagnosis: ${rx.diagnosis}`);
     meds.forEach((m) => {
@@ -1957,7 +1957,7 @@ const buildPrescriptionsContextForAI = (prescriptionRecords) => {
           ];
     return {
       id: rx.id,
-      doctorName: rx.doctorName || "Doctor",
+      doctor: rx.doctor || "Doctor",
       date: rx.date || null,
       diagnosis: String(rx.diagnosis || "").trim() || null,
       medicines: lines
@@ -1991,7 +1991,7 @@ const formatAssistantPrescriptionInsightMessage = (rx, warnings) => {
   const medBlock = meds
     .map((m) => (m.dosage ? `• ${m.name} (${m.dosage})` : `• ${m.name}`))
     .join("\n");
-  let text = `Your doctor ${rx.doctorName || "your care team"} sent a new prescription (${rx.date || "recent"}):\n${medBlock}`;
+  let text = `Your doctor ${rx.doctor || "your care team"} sent a new prescription (${rx.date || "recent"}):\n${medBlock}`;
   const note = String(rx.diagnosis || "").trim();
   if (note) {
     text += `\n\nNote on file: ${note}`;
@@ -2428,9 +2428,7 @@ const PatientHealthProfileFields = ({
 const mapWoundRecord = (record) => {
   const p = record.expand?.patient;
   const patientName =
-    resolveListingDisplayName(p, p?.expand?.user) ||
-    String(record.patientName || "").trim() ||
-    "Patient";
+    resolveListingDisplayName(p, p?.expand?.user) || "Patient";
   return {
     id: record.id,
     patient: record.patient || null,
@@ -2575,7 +2573,7 @@ const mapDoctorListingRecord = (record) => {
   }
   const resolvedName = resolveListingDisplayName(record, user);
   // Never use specialty (e.g. "General Physician") as the person's name — only real auth/profile names.
-  const listingName = resolvedName || "Healthcare provider";
+  const listingName = resolvedName || "Doctor";
   return {
     profileId: record.id,
     userId,
@@ -2780,12 +2778,7 @@ const mapPharmacyListingRecord = (record) => {
     userId,
     providerKind,
     receivesMedicineOrders: pharmacyReceivesMedicineOrders(providerKind),
-    name:
-      record.store_name ||
-      record.name ||
-      user?.name ||
-      record.display_name ||
-      "Pharmacy",
+    name: record.store_name || user?.name || "Pharmacy",
     tagline: String(record.tagline || record.description || "").trim(),
     address: String(record.address || record.location || "").trim(),
     district: String(record.district || "").trim(),
@@ -2844,7 +2837,6 @@ const collectAppointmentRelatedAuthUserIds = (record) => {
 const looksLikePatientProfileRow = (p) => {
   if (!p || typeof p !== "object") return false;
   if (p.user != null) return true;
-  if (String(p.full_name || "").trim()) return true;
   if (p.primary_condition != null) return true;
   if (p.medical_conditions != null) return true;
   return false;
@@ -2931,8 +2923,8 @@ const mergeAppointmentPatientProfiles = (record, profById) => {
 
 const mapAppointmentRecord = (record) => {
   const norm = (u) => (Array.isArray(u) ? u[0] : u);
-  const doctor = record.expand?.doctor;
-  const nestedDoctorUser = norm(doctor?.expand?.user);
+  const doctorRecord = record.expand?.doctor;
+  const nestedDoctorUser = norm(doctorRecord?.expand?.user);
   const patient = record.expand?.patient;
   const nestedPatientUser = norm(patient?.expand?.user);
   const scheduledAt =
@@ -2940,7 +2932,9 @@ const mapAppointmentRecord = (record) => {
   const rawStatus = record.status || "scheduled";
   const doctorUserIdFromExpand =
     nestedDoctorUser?.id ||
-    (typeof doctor?.user === "string" ? doctor.user : doctor?.user?.id) ||
+    (typeof doctorRecord?.user === "string"
+      ? doctorRecord.user
+      : doctorRecord?.user?.id) ||
     null;
   const doctorUserIdFromRecord =
     typeof record.doctor === "string" ? record.doctor : null;
@@ -2966,13 +2960,11 @@ const mapAppointmentRecord = (record) => {
   }
   const patientName =
     resolveListingDisplayName(patient, nestedPatientUser) ||
-    String(record.patient_name || "").trim() ||
     "Patient";
   const doctorName =
     (PB_APPOINTMENT_DOCTOR_IS_PROFILE
-      ? resolveListingDisplayName(doctor, nestedDoctorUser)
-      : resolveListingDisplayName({}, doctor)) ||
-    String(record.doctor_name || "").trim() ||
+      ? resolveListingDisplayName(doctorRecord, nestedDoctorUser)
+      : resolveListingDisplayName({}, doctorRecord)) ||
     "Doctor";
   return {
     id: record.id,
@@ -2996,14 +2988,14 @@ const mapAppointmentRecord = (record) => {
     patientId: record.patient || null,
     patientName,
     doctorUserId: doctorUserIdFromExpand || doctorUserIdFromRecord,
-    doctorName,
+    doctor: doctorName,
     doctorId: record.doctor || null,
     consultationFee:
       Number(
         record.consultation_fee ??
           record.fee ??
-          doctor?.consultation_fee ??
-          doctor?.fee ??
+          doctorRecord?.consultation_fee ??
+          doctorRecord?.fee ??
           500,
       ) || 500,
     raw: record,
@@ -3026,7 +3018,7 @@ const mapOrderRecord = (record) => {
     woundExpand?.expand?.assigned_doctor ||
     record.expand?.doctor;
   const doctorProfile = record.expand?.doctor_profile;
-  const doctorName =
+  const doctor =
     resolveListingDisplayName(doctorUser, doctorUser?.expand?.user) ||
     resolveListingDisplayName(doctorProfile, doctorProfile?.expand?.user) ||
     "Attending physician";
@@ -3064,7 +3056,7 @@ const mapOrderRecord = (record) => {
     itemsList,
     items: itemsText,
     diagnosis: diagnosis || null,
-    doctorName,
+    doctor,
     totalAmount: Number(record.totalAmount || 0),
     total: formatCurrency(record.totalAmount || 0),
     status: humanizeOrderStatus(record.status),
@@ -3078,7 +3070,7 @@ const mapPrescriptionRecord = (record) => {
   const itemsList = normalizeOrderItemsList(record);
   const diagnosis = String(record?.notes || "").trim();
   const doctorUser = record?.expand?.doctor;
-  const doctorName =
+  const doctor =
     resolveListingDisplayName(doctorUser, doctorUser?.expand?.user) ||
     "Attending physician";
   const itemsText =
@@ -3098,7 +3090,7 @@ const mapPrescriptionRecord = (record) => {
     itemsList,
     items: itemsText,
     diagnosis: diagnosis || null,
-    doctorName,
+    doctor,
     date: formatDateValue(record.created),
     time: formatTimeValue(record.created),
     raw: record,
@@ -4395,7 +4387,7 @@ function usePatientQuickCareBinding() {
         const match = (appointments || []).find(
           (a) => String(a.doctorUserId || "") === String(base.doctorUserId),
         );
-        const doctorName = match?.doctorName || "";
+        const doctor = match?.doctor || "";
         const ent = entitlementsForConsumerPlan(base.consumerPlan);
         const consultMinutesLimit = ent?.consultationMinutesPerWeek ?? 0;
         const consultMinutesUsed = minutesUsedWithDoctorThisRollingWeek(
@@ -4405,7 +4397,7 @@ function usePatientQuickCareBinding() {
         );
         setQuickCareBinding({
           ...base,
-          doctorName,
+          doctor,
           consultMinutesUsed,
           consultMinutesLimit,
         });
@@ -4445,7 +4437,7 @@ const PatientHomeScreen = () => {
   } = useAppData();
   const patientQuickCareBinding = usePatientQuickCareBinding();
   const patientFirstName =
-    String(patientProfile?.full_name || currentUser?.name || "")
+    String(currentUser?.name || "")
       .trim()
       .split(/\s+/)[0] || "Patient";
   const tabNav = useMainTabNav();
@@ -5927,7 +5919,7 @@ const PatientHomeScreen = () => {
                         marginTop: RFValue(2),
                       }}
                     >
-                      {upcomingAppointments[0].doctorName}
+                      {upcomingAppointments[0].doctor}
                     </Text>
                     <Text
                       style={{
@@ -9806,9 +9798,7 @@ const PatientEditProfileScreen = ({
   }, []);
 
   useEffect(() => {
-    setFullName(
-      String(patientProfile?.full_name || currentUser?.name || "").trim(),
-    );
+    setFullName(String(currentUser?.name || "").trim());
     setPhone(String(patientProfilePhoneRaw(patientProfile) || ""));
     setCondition(
       String(
@@ -9885,7 +9875,6 @@ const PatientEditProfileScreen = ({
       setSaving(true);
       setError("");
       await pb.collection("patient_profile").update(patientProfile.id, {
-        full_name: fullName.trim(),
         phone: phoneDigits,
         primary_condition: condition.trim(),
         gender: gender.trim(),
@@ -9922,7 +9911,7 @@ const PatientEditProfileScreen = ({
       setError(
         saveError?.data?.message ||
           saveError?.message ||
-          "Could not save. Required patient_profile fields in PocketBase: full_name, phone, primary_condition, gender, avatar, plus optional: language, age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies.",
+          "Could not save. Required patient_profile fields in PocketBase: phone, primary_condition, gender, avatar, plus optional: language, age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies. Display name is saved on UsersAuth.name.",
       );
     } finally {
       setSaving(false);
@@ -10555,7 +10544,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                       }}
                       numberOfLines={1}
                     >
-                      {appointment.doctorName || "Doctor"}
+                      {appointment.doctor || "Doctor"}
                     </Text>
                     <View
                       style={{
@@ -11583,7 +11572,7 @@ const PatientProfileScreen = ({
               color: theme.textPrimary,
             }}
           >
-            {patientProfile?.full_name || currentUser?.name || "Profile Name"}
+            {currentUser?.name || "Profile Name"}
           </Text>
           <Text
             style={{
@@ -22372,7 +22361,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
       const linkedWound = record.wound ? woundLookup.get(record.wound) : null;
       return {
         id: record.id,
-        doctor: record.doctorName || "Doctor",
+        doctor: record.doctor || "Doctor",
         date: record.date || formatDateValue(record.raw?.created),
         diagnosis: record.diagnosis,
         woundId: record.wound || null,
@@ -31562,10 +31551,10 @@ export default function App() {
       appointmentId: appointment.id,
       amountPaise,
       currency: "INR",
-      description: `Nvoisys appointment with ${appointment.doctorName || "doctor"}`,
+      description: `Nvoisys appointment with ${appointment.doctor || "doctor"}`,
       returnUrl: PAYMENT_CASHFREE_RETURN_URL,
       customer: {
-        name: currentUser?.name || patientProfile?.name || "Patient",
+        name: currentUser?.name || "Patient",
         email: currentUser?.email || "",
         phone: customerPhone,
       },
@@ -31644,7 +31633,7 @@ export default function App() {
       description: `Nvoisys package: ${offer?.title || "Care package"}`,
       returnUrl: PAYMENT_CASHFREE_RETURN_URL,
       customer: {
-        name: currentUser?.name || patientProfile?.name || "Patient",
+        name: currentUser?.name || "Patient",
         email: currentUser?.email || "",
         phone: customerPhone,
       },
@@ -31742,8 +31731,8 @@ export default function App() {
       amountPaise,
       currency: "INR",
       status: "success",
-      description: `Appointment payment with ${appointment.doctorName || "doctor"}`,
-      customerName: currentUser?.name || patientProfile?.name || "Patient",
+      description: `Appointment payment with ${appointment.doctor || "doctor"}`,
+      customerName: currentUser?.name || "Patient",
       customerEmail: currentUser?.email || "",
       customerPhone:
         appointment.customerPhone || patientProfilePhoneRaw(patientProfile),
@@ -31787,7 +31776,7 @@ export default function App() {
         paymentResult?.reference_id ||
         paymentResult?.bankReference ||
         paymentResult?.bank_reference,
-      customerName: currentUser?.name || patientProfile?.name || "Patient",
+      customerName: currentUser?.name || "Patient",
       customerEmail: currentUser?.email || "",
       customerPhone:
         paymentResult?.customerPhone || patientProfilePhoneRaw(patientProfile),

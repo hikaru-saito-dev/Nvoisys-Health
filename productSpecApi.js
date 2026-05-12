@@ -74,8 +74,6 @@ export function resolveListingDisplayName(profileRecord, authUserRecord) {
   const firstLast = [
     pick(u.first_name),
     pick(u.last_name),
-    pick(r.first_name),
-    pick(r.last_name),
   ]
     .filter(Boolean)
     .join(" ")
@@ -83,20 +81,8 @@ export function resolveListingDisplayName(profileRecord, authUserRecord) {
   const candidates = [
     pick(u.name),
     firstLast,
-    pick(u.full_name),
-    pick(u.displayName),
-    pick(u.display_name),
     pick(u.username),
-    pick(u.userName),
-    pick(u.user_name),
-    pick(u.nickname),
-    pick(r.full_name),
-    pick(r.display_name),
-    pick(r.name),
-    pick(r.doctor_name),
-    pick(r.preferred_name),
     pick(r.store_name),
-    pick(r.title),
   ];
   for (const c of candidates) {
     if (c) return c;
