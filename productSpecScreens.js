@@ -30,6 +30,7 @@ import {
   cancelQuickRequest,
   CARE_MODE,
   closeQuickRequest,
+  consumerPlanDisplayName,
   createPatientSelectedPackageOffer,
   createPackageMeetingRequest,
   createQuickCounsellingRequest,

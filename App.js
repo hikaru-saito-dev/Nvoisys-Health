@@ -4915,7 +4915,105 @@ const PatientHomeScreen = () => {
                 </View>
               </View>
 
-              {/* Product spec: quick services + package journey */}
+              {/* General: Quick Solve & Quick Counselling (separate from package journey) */}
+              <View
+                style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(20),
+                  padding: RFValue(16),
+                  marginBottom: RFValue(16),
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    fontWeight: "800",
+                    color: theme.textPrimary,
+                    marginBottom: RFValue(6),
+                  }}
+                >
+                  General
+                </Text>
+                <Text
+                  style={{
+                    fontSize: RFValue(11),
+                    color: theme.textSecondary,
+                    marginBottom: RFValue(12),
+                    lineHeight: RFValue(16),
+                  }}
+                >
+                  {patientCareMode === CARE_MODE.PACKAGE &&
+                  patientQuickCareBinding?.doctorUserId
+                    ? "Quick Solve and Quick Counselling go to your package doctor (no separate picker)."
+                    : patientCareMode === CARE_MODE.PACKAGE
+                      ? "Quick Solve and Quick Counselling unlock after you choose a doctor and activate a package."
+                      : patientCareMode === CARE_MODE.CASUAL
+                        ? "RMP / clinic doctors (1 coin = ₹1)."
+                        : "Available anytime; switch care mode in Profile if needed."}
+                </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    gap: RFValue(8),
+                  }}
+                >
+                  <TouchableOpacity
+                    onPress={() => setShowQuickSol(true)}
+                    style={{
+                      flexGrow: 1,
+                      minWidth: "45%",
+                      backgroundColor: theme.accentLight,
+                      padding: RFValue(12),
+                      borderRadius: RFValue(14),
+                    }}
+                  >
+                    <Text style={{ fontWeight: "800", color: theme.accent }}>
+                      Quick Solution
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(10),
+                        color: theme.textSecondary,
+                        marginTop: 4,
+                      }}
+                    >
+                      {patientCareMode === CARE_MODE.PACKAGE
+                        ? "10 coin · Private mode available"
+                        : "₹10 · Private mode available"}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setShowQuickCounselling(true)}
+                    style={{
+                      flexGrow: 1,
+                      minWidth: "45%",
+                      backgroundColor: theme.successLight,
+                      padding: RFValue(12),
+                      borderRadius: RFValue(14),
+                    }}
+                  >
+                    <Text
+                      style={{ fontWeight: "800", color: theme.success }}
+                    >
+                      Quick Counselling
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(10),
+                        color: theme.textSecondary,
+                        marginTop: 4,
+                      }}
+                    >
+                      {patientCareMode === CARE_MODE.PACKAGE ? "25 coin" : "₹25"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Product spec: care mode + package journey */}
               <View
                 style={{
                   backgroundColor: theme.card,
@@ -4951,93 +5049,21 @@ const PatientHomeScreen = () => {
                   }}
                 >
                   {patientCareMode === CARE_MODE.PACKAGE
-                    ? "Demos and paid packages with your doctor."
+                    ? "Demos, paid packages, and your package journey live here."
                     : patientCareMode === CARE_MODE.CASUAL
-                      ? "Quick Solution and Quick Counselling use RMP/clinic doctors (1 coin = ₹1)."
+                      ? "Medical records for consults."
                       : "Explore the app; switch care mode anytime from Profile."}
                 </Text>
                 {patientCareMode === CARE_MODE.PACKAGE ? (
                   <>
                     {patientQuickCareBinding?.doctorUserId ? (
                       <>
-                        <Text
-                          style={{
-                            fontSize: RFValue(11),
-                            color: theme.textSecondary,
-                            marginBottom: RFValue(10),
-                            lineHeight: RFValue(16),
-                          }}
-                        >
-                          Quick Solve & Quick Counselling use your package
-                          doctor — no separate doctor picker.
-                        </Text>
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            flexWrap: "wrap",
-                            gap: RFValue(8),
-                            marginBottom: RFValue(10),
-                          }}
-                        >
-                          <TouchableOpacity
-                            onPress={() => setShowQuickSol(true)}
-                            style={{
-                              flexGrow: 1,
-                              minWidth: "45%",
-                              backgroundColor: theme.accentLight,
-                              padding: RFValue(12),
-                              borderRadius: RFValue(14),
-                            }}
-                          >
-                            <Text
-                              style={{ fontWeight: "800", color: theme.accent }}
-                            >
-                              Quick Solution
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: RFValue(10),
-                                color: theme.textSecondary,
-                                marginTop: 4,
-                              }}
-                            >
-                              ₹10 · Private mode available
-                            </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => setShowQuickCounselling(true)}
-                            style={{
-                              flexGrow: 1,
-                              minWidth: "45%",
-                              backgroundColor: theme.successLight,
-                              padding: RFValue(12),
-                              borderRadius: RFValue(14),
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontWeight: "800",
-                                color: theme.success,
-                              }}
-                            >
-                              Quick Counselling
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: RFValue(10),
-                                color: theme.textSecondary,
-                                marginTop: 4,
-                              }}
-                            >
-                              ₹25
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
                         <View
                           style={{
                             flexDirection: "row",
                             gap: RFValue(8),
                             alignItems: "stretch",
+                            marginBottom: RFValue(0),
                           }}
                         >
                           <TouchableOpacity
@@ -5242,61 +5268,10 @@ const PatientHomeScreen = () => {
                     }}
                   >
                     <TouchableOpacity
-                      onPress={() => setShowQuickSol(true)}
-                      style={{
-                        flexGrow: 1,
-                        minWidth: "45%",
-                        backgroundColor: theme.accentLight,
-                        padding: RFValue(12),
-                        borderRadius: RFValue(14),
-                      }}
-                    >
-                      <Text
-                        style={{ fontWeight: "800", color: theme.accent }}
-                      >
-                        Quick Solution
-                      </Text>
-                      <Text
-                        style={{
-                          fontSize: RFValue(10),
-                          color: theme.textSecondary,
-                          marginTop: 4,
-                        }}
-                      >
-                        ₹10 · Private mode available
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setShowQuickCounselling(true)}
-                      style={{
-                        flexGrow: 1,
-                        minWidth: "45%",
-                        backgroundColor: theme.successLight,
-                        padding: RFValue(12),
-                        borderRadius: RFValue(14),
-                      }}
-                    >
-                      <Text
-                        style={{ fontWeight: "800", color: theme.success }}
-                      >
-                        Quick Counselling
-                      </Text>
-                      <Text
-                        style={{
-                          fontSize: RFValue(10),
-                          color: theme.textSecondary,
-                          marginTop: 4,
-                        }}
-                      >
-                        ₹25
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
                       onPress={() => setShowMedical(true)}
                       style={{
                         flexBasis: "100%",
                         width: "100%",
-                        marginTop: RFValue(4),
                         borderWidth: 1,
                         borderColor: theme.cardBorder,
                         padding: RFValue(12),
