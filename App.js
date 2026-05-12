@@ -4422,6 +4422,7 @@ const PatientHomeScreen = () => {
     fetchHospitals,
     patientProfile,
     fetchApprovedDoctors,
+    fetchPharmacies,
     patientCareMode,
     patientPrimaryCarePaths,
     dataLoading,
@@ -4846,10 +4847,10 @@ const PatientHomeScreen = () => {
         }}
         patientUserId={currentUser?.id}
         quickCareBinding={patientQuickCareBinding}
-        onOpenPackageJourney={() => {
-          setShowQuickSol(false);
-          setShowPackageJourney(true);
-        }}
+        loadQuickPickDoctors={() =>
+          fetchApprovedDoctors({ quickServiceOnly: true })
+        }
+        loadQuickPickPharmacies={fetchPharmacies}
         onAskAi={runQuickSolveAi}
         consultMinutesUsed={
           patientQuickCareBinding?.consultMinutesUsed ?? 0
@@ -4870,10 +4871,10 @@ const PatientHomeScreen = () => {
         }}
         patientUserId={currentUser?.id}
         quickCareBinding={patientQuickCareBinding}
-        onOpenPackageJourney={() => {
-          setShowQuickCounselling(false);
-          setShowPackageJourney(true);
-        }}
+        loadQuickPickDoctors={() =>
+          fetchApprovedDoctors({ quickServiceOnly: true })
+        }
+        loadQuickPickPharmacies={fetchPharmacies}
         consultMinutesUsed={
           patientQuickCareBinding?.consultMinutesUsed ?? 0
         }
@@ -5655,12 +5656,12 @@ const PatientHomeScreen = () => {
                 >
                   {patientCareMode === CARE_MODE.PACKAGE &&
                   patientQuickCareBinding?.doctorUserId
-                    ? "Quick Solve and Quick Counselling go to your package doctor (no separate picker)."
+                    ? "Quick Solve and Quick Counselling go to your package doctor by default (change recipient on each send if needed)."
                     : patientCareMode === CARE_MODE.PACKAGE
-                      ? "Quick Solve and Quick Counselling unlock after you choose a doctor and activate a package."
+                      ? "Quick Solve and Quick Counselling: pick a doctor or pharmacy on each request."
                       : patientCareMode === CARE_MODE.CASUAL
-                        ? "RMP / clinic doctors (1 coin = ₹1)."
-                        : "Available anytime; switch care mode in Profile if needed."}
+                        ? "Pick one doctor or one pharmacy each time (1 coin = ₹1)."
+                        : "Available anytime; pick one doctor or one pharmacy per request."}
                 </Text>
                 <TouchableOpacity
                   onPress={() => setShowQuickSol(true)}
@@ -5679,6 +5680,7 @@ const PatientHomeScreen = () => {
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
+                    zIndex: 2,
                   }}
                 >
                   <View
@@ -5743,6 +5745,7 @@ const PatientHomeScreen = () => {
                     shadowOffset: { width: 0, height: 4 },
                     shadowRadius: 12,
                     elevation: 3,
+                    zIndex: 2,
                   }}
                 >
                   <View
@@ -27112,6 +27115,8 @@ const PatientWoundScreen = () => {
     currentUser,
     refreshAllData,
     requestOpenConversation,
+    fetchApprovedDoctors,
+    fetchPharmacies,
   } = useAppData();
   const patientQuickCareBinding = usePatientQuickCareBinding();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
@@ -27145,10 +27150,10 @@ const PatientWoundScreen = () => {
         }}
         patientUserId={currentUser?.id}
         quickCareBinding={patientQuickCareBinding}
-        onOpenPackageJourney={() => {
-          setShowWoundTabQuickCounselling(false);
-          tabNav?.navigateTab?.("Home");
-        }}
+        loadQuickPickDoctors={() =>
+          fetchApprovedDoctors({ quickServiceOnly: true })
+        }
+        loadQuickPickPharmacies={fetchPharmacies}
         consultMinutesUsed={
           patientQuickCareBinding?.consultMinutesUsed ?? 0
         }
@@ -33616,6 +33621,115 @@ const AppContent = ({
     ],
   );
 
+  const patientMainTabRoutes = useMemo(() => {
+    const packageShell =
+      effectiveCareMode(patientProfile, localCareMode) === CARE_MODE.PACKAGE;
+    const home = {
+      name: "Home",
+      label: "Home",
+      component: PatientHomeScreen,
+      icon: ({ color, focused }) => (
+        <Ionicons
+          name={focused ? "home" : "home-outline"}
+          size={RFValue(22)}
+          color={color}
+        />
+      ),
+    };
+    const wound = {
+      name: "Wound",
+      label: "Wound",
+      component: (props) => (
+        <PatientWoundScreen {...props} wounds={wounds} setWounds={setWounds} />
+      ),
+      icon: ({ color, focused }) => (
+        <Ionicons
+          name={focused ? "bandage" : "bandage-outline"}
+          size={RFValue(22)}
+          color={color}
+        />
+      ),
+    };
+    const chat = {
+      name: "Chat",
+      label: "Chat",
+      component: PatientChatScreen,
+      icon: ({ color, focused }) => (
+        <Ionicons
+          name={focused ? "chatbubble" : "chatbubble-outline"}
+          size={RFValue(22)}
+          color={color}
+        />
+      ),
+    };
+    const profile = {
+      name: "Profile",
+      label: "Profile",
+      component: renderPatientProfileTab,
+      icon: ({ color, focused }) => (
+        <Ionicons
+          name={focused ? "person" : "person-outline"}
+          size={RFValue(22)}
+          color={color}
+        />
+      ),
+    };
+    if (!packageShell) {
+      return [home, wound, chat, profile];
+    }
+    return [
+      home,
+      wound,
+      {
+        name: "Appts",
+        label: "Appts",
+        component: () => <PatientAppointmentsScreen />,
+        icon: ({ color, focused }) => (
+          <Ionicons
+            name={focused ? "calendar" : "calendar-outline"}
+            size={RFValue(22)}
+            color={color}
+          />
+        ),
+      },
+      {
+        name: "Pharmacy",
+        label: "Orders",
+        component: (props) => (
+          <PharmacyOrdersScreen {...props} orders={medOrders} />
+        ),
+        icon: ({ color, focused }) => (
+          <Ionicons
+            name={focused ? "cart" : "cart-outline"}
+            size={RFValue(22)}
+            color={color}
+          />
+        ),
+      },
+      {
+        name: "Food",
+        label: "Food",
+        component: PatientFoodLogScreen,
+        icon: ({ color, focused }) => (
+          <Ionicons
+            name={focused ? "restaurant" : "restaurant-outline"}
+            size={RFValue(22)}
+            color={color}
+          />
+        ),
+      },
+      chat,
+      profile,
+    ];
+  }, [
+    patientProfile,
+    localCareMode,
+    medOrders,
+    wounds,
+    setWounds,
+    renderPatientProfileTab,
+  ]);
+
   const handleMandatoryNameSaved = async (updatedUser) => {
     setCurrentUser(updatedUser);
     try {
@@ -34125,101 +34239,13 @@ const AppContent = ({
         backgroundColor={theme.statusBarBg}
       />
       <CustomTabNavigator
+        key={
+          effectiveCareMode(patientProfile, localCareMode) === CARE_MODE.PACKAGE
+            ? "patient-tabs-7"
+            : "patient-tabs-4"
+        }
         activeColor={theme.accent}
-        routes={[
-          {
-            name: "Home",
-            label: "Home",
-            component: PatientHomeScreen,
-            icon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "home" : "home-outline"}
-                size={RFValue(22)}
-                color={color}
-              />
-            ),
-          },
-          {
-            name: "Wound",
-            label: "Wound",
-            component: (props) => (
-              <PatientWoundScreen
-                {...props}
-                wounds={wounds}
-                setWounds={setWounds}
-              />
-            ),
-            icon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "bandage" : "bandage-outline"}
-                size={RFValue(22)}
-                color={color}
-              />
-            ),
-          },
-          {
-            name: "Appts",
-            label: "Appts",
-            component: () => <PatientAppointmentsScreen />,
-            icon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "calendar" : "calendar-outline"}
-                size={RFValue(22)}
-                color={color}
-              />
-            ),
-          },
-          {
-            name: "Pharmacy",
-            label: "Orders",
-            component: (props) => (
-              <PharmacyOrdersScreen {...props} orders={medOrders} />
-            ),
-            icon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "cart" : "cart-outline"}
-                size={RFValue(22)}
-                color={color}
-              />
-            ),
-          },
-          {
-            name: "Food",
-            label: "Food",
-            component: PatientFoodLogScreen,
-            icon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "restaurant" : "restaurant-outline"}
-                size={RFValue(22)}
-                color={color}
-              />
-            ),
-          },
-          {
-            name: "Chat",
-            label: "Chat",
-            component: PatientChatScreen,
-            icon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "chatbubble" : "chatbubble-outline"}
-                size={RFValue(22)}
-                color={color}
-              />
-            ),
-          },
-          {
-            name: "Profile",
-            label: "Profile",
-            component: renderPatientProfileTab,
-            icon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "person" : "person-outline"}
-                size={RFValue(22)}
-                color={color}
-              />
-            ),
-          },
-        ]}
+        routes={patientMainTabRoutes}
       />
     </SafeAreaView>
   );

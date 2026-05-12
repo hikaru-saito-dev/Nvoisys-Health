@@ -3653,16 +3653,37 @@ export async function createQuickSolutionRequest({
   notes,
   privateMode,
   imagePart,
+  /** Exactly one of these should be set — UI enforces mutual exclusion. */
+  targetDoctorUserId,
+  targetPharmacyUserId,
 }) {
   await assertUserHasCoins(patientUserId, 10);
+  const td = String(targetDoctorUserId || "").trim();
+  const tp = String(targetPharmacyUserId || "").trim();
+  if (!td && !tp) {
+    throw new Error("Select one doctor or one pharmacy before sending.");
+  }
+  if (td && tp) {
+    throw new Error("Choose only one recipient (doctor or pharmacy).");
+  }
+  const routingNote = td
+    ? `\n\n— Recipient: doctor user id ${td}`
+    : `\n\n— Recipient: pharmacy user id ${tp}`;
+  const mergedNotes = `${String(notes || "").trim()}${routingNote}`.trim();
   const base = {
     patient: patientUserId,
-    notes: String(notes || ""),
+    notes: mergedNotes,
     private_mode: Boolean(privateMode),
     patient_cost_coins: 10,
     platform_fee_coins: 5,
     provider_coins: 5,
     status: "queued",
+  };
+  const coinMeta = {
+    platform_fee_coins: 5,
+    provider_coins: 5,
+    target_doctor: td || null,
+    target_pharmacy: tp || null,
   };
   try {
     let row;
@@ -3686,7 +3707,7 @@ export async function createQuickSolutionRequest({
       reason: "quick_solution_patient_spent",
       ref_collection: "quick_solution_requests",
       ref_id: row.id,
-      meta: { platform_fee_coins: 5, provider_coins: 5 },
+      meta: coinMeta,
     });
     await notifyLocal(
       "Quick Solution submitted",
@@ -3731,12 +3752,36 @@ export async function createEmergencyAssistantRequest({
   return { ok: true };
 }
 
-export async function createQuickCounsellingRequest({ patientUserId, topic }) {
+export async function createQuickCounsellingRequest({
+  patientUserId,
+  topic,
+  targetDoctorUserId,
+  targetPharmacyUserId,
+}) {
   await assertUserHasCoins(patientUserId, 25);
+  const td = String(targetDoctorUserId || "").trim();
+  const tp = String(targetPharmacyUserId || "").trim();
+  if (!td && !tp) {
+    throw new Error("Select one doctor or one pharmacy before sending.");
+  }
+  if (td && tp) {
+    throw new Error("Choose only one recipient (doctor or pharmacy).");
+  }
+  const routingNote = td
+    ? `\n\n— Recipient: doctor user id ${td}`
+    : `\n\n— Recipient: pharmacy user id ${tp}`;
+  const mergedTopic =
+    `${String(topic || "").trim() || "General"}${routingNote}`.trim();
+  const coinMeta = {
+    platform_fee_coins: 10,
+    provider_coins: 15,
+    target_doctor: td || null,
+    target_pharmacy: tp || null,
+  };
   try {
     const row = await pb.collection("quick_counselling_requests").create({
       patient: patientUserId,
-      topic: String(topic || "").trim() || "General",
+      topic: mergedTopic,
       patient_cost_coins: 25,
       platform_fee_coins: 10,
       provider_coins: 15,
@@ -3748,7 +3793,7 @@ export async function createQuickCounsellingRequest({ patientUserId, topic }) {
       reason: "quick_counselling_patient_spent",
       ref_collection: "quick_counselling_requests",
       ref_id: row.id,
-      meta: { platform_fee_coins: 10, provider_coins: 15 },
+      meta: coinMeta,
     });
     await notifyLocal(
       "Quick Counselling",

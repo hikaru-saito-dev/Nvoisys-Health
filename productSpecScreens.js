@@ -8,6 +8,7 @@ import {
   AppState,
   Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
   Platform,
   RefreshControl,
@@ -16,6 +17,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  UIManager,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -1423,13 +1425,300 @@ export function DietMonitoringScreen({
   );
 }
 
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+function QuickRecipientPickerPanel({
+  theme,
+  doctors,
+  pharmacies,
+  listsLoading,
+  selectedDoctorUserId,
+  selectedPharmacyUserId,
+  onSelectDoctor,
+  onSelectPharmacy,
+  onClearSelection,
+}) {
+  const [doctorOpen, setDoctorOpen] = useState(true);
+  const [pharmacyOpen, setPharmacyOpen] = useState(false);
+
+  const toggleDoctors = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setDoctorOpen((o) => !o);
+  };
+  const togglePharmacies = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setPharmacyOpen((o) => !o);
+  };
+
+  const doctorLocked = Boolean(selectedPharmacyUserId);
+  const pharmacyLocked = Boolean(selectedDoctorUserId);
+
+  const sectionShell = {
+    backgroundColor: theme.card,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.cardBorder,
+    marginBottom: 12,
+    overflow: "hidden",
+  };
+
+  return (
+    <View style={{ marginBottom: 4 }}>
+      <Text
+        style={{
+          color: theme.textPrimary,
+          fontWeight: "800",
+          marginBottom: 6,
+          fontSize: S.body,
+        }}
+      >
+        Recipient
+      </Text>
+      <Text
+        style={{
+          color: theme.textSecondary,
+          fontSize: S.small,
+          marginBottom: 12,
+          lineHeight: 18,
+        }}
+      >
+        Choose one verified doctor or one pharmacy. Only one recipient is
+        allowed — use Clear recipient before switching from doctor to pharmacy
+        (or the other way around).
+      </Text>
+      {listsLoading ? (
+        <ActivityIndicator
+          style={{ marginVertical: 16 }}
+          color={theme.accent}
+        />
+      ) : null}
+
+      <View style={sectionShell}>
+        <TouchableOpacity
+          onPress={toggleDoctors}
+          activeOpacity={0.85}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: 14,
+            backgroundColor: doctorLocked
+              ? theme.bgSolid || theme.bg
+              : theme.card,
+            opacity: doctorLocked ? 0.55 : 1,
+          }}
+        >
+          <View style={{ flex: 1, paddingRight: 10 }}>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "800",
+                fontSize: S.body,
+              }}
+            >
+              Doctors (RMP / clinic)
+            </Text>
+            <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 4 }}>
+              {doctors.length} available
+            </Text>
+          </View>
+          <Ionicons
+            name={doctorOpen ? "chevron-up" : "chevron-down"}
+            size={22}
+            color={theme.textSecondary}
+          />
+        </TouchableOpacity>
+        {doctorOpen ? (
+          <View
+            style={{
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderTopColor: theme.cardBorder,
+              paddingBottom: 8,
+            }}
+          >
+            {doctors.length === 0 ? (
+              <Text
+                style={{
+                  padding: 14,
+                  color: theme.textSecondary,
+                  fontSize: S.small,
+                }}
+              >
+                No doctors matched this filter yet.
+              </Text>
+            ) : (
+              doctors.map((d) => {
+                const id = String(d.userId || "").trim();
+                const active = selectedDoctorUserId === id;
+                return (
+                  <TouchableOpacity
+                    key={id || d.profileId}
+                    disabled={doctorLocked}
+                    onPress={() => onSelectDoctor(id)}
+                    style={{
+                      marginHorizontal: 10,
+                      marginTop: 8,
+                      padding: 12,
+                      borderRadius: 12,
+                      borderWidth: 2,
+                      borderColor: active ? theme.accent : theme.cardBorder,
+                      backgroundColor: active ? theme.accentLight : theme.bg,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: theme.textPrimary,
+                        fontWeight: "800",
+                        fontSize: S.small,
+                      }}
+                    >
+                      {d.name || "Doctor"}
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.textSecondary,
+                        fontSize: 11,
+                        marginTop: 4,
+                      }}
+                    >
+                      {d.specialty || "General"} · {d.practitionerTier || ""}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        ) : null}
+      </View>
+
+      <View style={sectionShell}>
+        <TouchableOpacity
+          onPress={togglePharmacies}
+          activeOpacity={0.85}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: 14,
+            backgroundColor: pharmacyLocked
+              ? theme.bgSolid || theme.bg
+              : theme.card,
+            opacity: pharmacyLocked ? 0.55 : 1,
+          }}
+        >
+          <View style={{ flex: 1, paddingRight: 10 }}>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "800",
+                fontSize: S.body,
+              }}
+            >
+              Pharmacies
+            </Text>
+            <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 4 }}>
+              {pharmacies.length} nearby / listed
+            </Text>
+          </View>
+          <Ionicons
+            name={pharmacyOpen ? "chevron-up" : "chevron-down"}
+            size={22}
+            color={theme.textSecondary}
+          />
+        </TouchableOpacity>
+        {pharmacyOpen ? (
+          <View
+            style={{
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderTopColor: theme.cardBorder,
+              paddingBottom: 8,
+            }}
+          >
+            {pharmacies.length === 0 ? (
+              <Text
+                style={{
+                  padding: 14,
+                  color: theme.textSecondary,
+                  fontSize: S.small,
+                }}
+              >
+                No pharmacy profiles found yet.
+              </Text>
+            ) : (
+              pharmacies.map((p) => {
+                const id = String(p.userId || "").trim();
+                const active = selectedPharmacyUserId === id;
+                return (
+                  <TouchableOpacity
+                    key={id || p.profileId}
+                    disabled={pharmacyLocked}
+                    onPress={() => onSelectPharmacy(id)}
+                    style={{
+                      marginHorizontal: 10,
+                      marginTop: 8,
+                      padding: 12,
+                      borderRadius: 12,
+                      borderWidth: 2,
+                      borderColor: active ? theme.accent : theme.cardBorder,
+                      backgroundColor: active ? theme.accentLight : theme.bg,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: theme.textPrimary,
+                        fontWeight: "800",
+                        fontSize: S.small,
+                      }}
+                    >
+                      {p.name || "Pharmacy"}
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.textSecondary,
+                        fontSize: 11,
+                        marginTop: 4,
+                      }}
+                    >
+                      {[p.district, p.state].filter(Boolean).join(", ") ||
+                        p.address ||
+                        ""}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        ) : null}
+      </View>
+
+      {selectedDoctorUserId || selectedPharmacyUserId ? (
+        <TouchableOpacity
+          onPress={onClearSelection}
+          style={{ alignSelf: "flex-start", marginTop: 4, paddingVertical: 8 }}
+        >
+          <Text style={{ color: theme.accent, fontWeight: "800" }}>
+            Clear recipient
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
 export function QuickSolutionScreen({
   theme,
   onBack,
   patientUserId,
-  /** Active paid package binding; Quick Solve is disabled without it. */
   quickCareBinding = null,
-  onOpenPackageJourney,
+  /** Return approved doctors for quick queues (RMP / clinic). */
+  loadQuickPickDoctors,
+  /** Return pharmacy listings (patient browse list). */
+  loadQuickPickPharmacies,
   /** async (question: string) => reply text */
   onAskAi,
   consultMinutesUsed = 0,
@@ -1445,6 +1734,39 @@ export function QuickSolutionScreen({
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiReply, setAiReply] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [pickDoctors, setPickDoctors] = useState([]);
+  const [pickPharmacies, setPickPharmacies] = useState([]);
+  const [pickListsLoading, setPickListsLoading] = useState(true);
+  const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
+  const [selectedPharmacyUserId, setSelectedPharmacyUserId] = useState(null);
+  const [imagePart, setImagePart] = useState(null);
+
+  useEffect(() => {
+    const id = quickCareBinding?.doctorUserId;
+    if (id) setSelectedDoctorUserId(String(id));
+  }, [quickCareBinding?.doctorUserId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setPickListsLoading(true);
+      try {
+        const [d, p] = await Promise.all([
+          loadQuickPickDoctors?.().catch(() => []),
+          loadQuickPickPharmacies?.().catch(() => []),
+        ]);
+        if (!cancelled) {
+          setPickDoctors(Array.isArray(d) ? d : []);
+          setPickPharmacies(Array.isArray(p) ? p : []);
+        }
+      } finally {
+        if (!cancelled) setPickListsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadQuickPickDoctors, loadQuickPickPharmacies]);
 
   const ent = useMemo(
     () =>
@@ -1498,14 +1820,87 @@ export function QuickSolutionScreen({
     }
   };
 
+  const onSelectDoctor = (uid) => {
+    const id = String(uid || "").trim();
+    if (!id) return;
+    if (selectedPharmacyUserId) {
+      Alert.alert(
+        "Already using a pharmacy",
+        "Clear your pharmacy choice first, or keep sending to that pharmacy only.",
+      );
+      return;
+    }
+    setSelectedPharmacyUserId(null);
+    setSelectedDoctorUserId(id);
+  };
+
+  const onSelectPharmacy = (uid) => {
+    const id = String(uid || "").trim();
+    if (!id) return;
+    if (selectedDoctorUserId) {
+      Alert.alert(
+        "Already using a doctor",
+        "Clear your doctor choice first, or keep sending to that doctor only.",
+      );
+      return;
+    }
+    setSelectedDoctorUserId(null);
+    setSelectedPharmacyUserId(id);
+  };
+
+  const onClearSelection = () => {
+    setSelectedDoctorUserId(null);
+    setSelectedPharmacyUserId(null);
+  };
+
+  const pickOptionalImage = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission", "Photo access is needed to attach an image.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      const asset = res.assets[0];
+      const uri = asset.uri;
+      const nameGuess = uri.split("/").pop() || "upload.jpg";
+      const lower = nameGuess.toLowerCase();
+      const mime = lower.endsWith(".png")
+        ? "image/png"
+        : lower.endsWith(".webp")
+          ? "image/webp"
+          : "image/jpeg";
+      setImagePart({ uri, name: nameGuess, type: mime });
+    } catch (e) {
+      Alert.alert("Image", e?.message || "Could not pick a photo.");
+    }
+  };
+
   const submit = async () => {
+    const doc = String(selectedDoctorUserId || "").trim();
+    const ph = String(selectedPharmacyUserId || "").trim();
+    if (!doc && !ph) {
+      Alert.alert("Recipient", "Select one doctor or one pharmacy first.");
+      return;
+    }
+    const body = String(notes || "").trim();
+    if (!body && !imagePart?.uri) {
+      Alert.alert("Details", "Add a short description or attach a photo.");
+      return;
+    }
     try {
       setBusy(true);
       await createQuickSolutionRequest({
         patientUserId,
         notes,
         privateMode,
-        imagePart: null,
+        imagePart,
+        targetDoctorUserId: doc || null,
+        targetPharmacyUserId: ph || null,
       });
       Alert.alert(
         "Submitted",
@@ -1525,76 +1920,16 @@ export function QuickSolutionScreen({
   const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
   const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
 
-  if (!quickCareBinding?.doctorUserId) {
-    return (
-      <View style={{ flex: 1, backgroundColor: theme.bg }}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: S.pad,
-            paddingBottom: S.pad,
-            paddingTop: (insets.top || 0) + 12,
-          }}
-        >
-          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
-            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
-          </TouchableOpacity>
-          <Text
-            style={{
-              color: theme.textPrimary,
-              fontSize: S.title,
-              fontWeight: "800",
-            }}
-          >
-            Quick Solve
-          </Text>
-        </View>
-        <ScrollView
-          style={{ flex: 1 }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-          contentContainerStyle={{
-            padding: S.pad,
-            paddingBottom: scrollBottomPad,
-          }}
-        >
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.body,
-              lineHeight: 22,
-              marginBottom: 16,
-            }}
-          >
-            Choose a doctor and complete a paid package (Basic, Gold, or Premium)
-            first. Quick Solve and Quick Counselling then work automatically with
-            that doctor — you will not pick a doctor again here.
-          </Text>
-          <TouchableOpacity
-            onPress={() => onOpenPackageJourney?.()}
-            style={{
-              backgroundColor: theme.accent,
-              padding: 16,
-              borderRadius: 16,
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Open package journey
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
   const consultHint =
-    ent && consultMinutesLimit > 0
+    ent && consultMinutesLimit > 0 && quickCareBinding?.doctorUserId
       ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
       : "";
+
+  const hasRecipient = Boolean(
+    selectedDoctorUserId || selectedPharmacyUserId,
+  );
+  const hasBody = Boolean(String(notes || "").trim() || imagePart?.uri);
+  const canSubmit = hasRecipient && hasBody && !busy;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -1631,17 +1966,65 @@ export function QuickSolutionScreen({
           paddingBottom: scrollBottomPad,
         }}
       >
-        <Text
-          style={{
-            color: theme.textSecondary,
-            marginBottom: 10,
-            fontSize: S.small,
-          }}
-        >
-          Package: {planLabel} · Routed to{" "}
-          {quickCareBinding.doctor || "your doctor"} (no doctor picker
-          here).
-        </Text>
+        {quickCareBinding?.doctorUserId ? (
+          <View
+            style={{
+              backgroundColor: theme.accentLight,
+              padding: 12,
+              borderRadius: 14,
+              marginBottom: 12,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontSize: S.small,
+                fontWeight: "800",
+              }}
+            >
+              Package doctor pre-selected
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: 11,
+                marginTop: 4,
+                lineHeight: 16,
+              }}
+            >
+              {quickCareBinding?.doctor
+                ? `${quickCareBinding.doctor} is the default recipient. Clear below to choose a pharmacy instead.`
+                : "Your linked package doctor is the default recipient."}
+            </Text>
+          </View>
+        ) : (
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginBottom: 12,
+              lineHeight: 18,
+            }}
+          >
+            Pick one doctor or one pharmacy, add details (and an optional photo),
+            then send (10 coins).
+          </Text>
+        )}
+
+        <QuickRecipientPickerPanel
+          theme={theme}
+          doctors={pickDoctors}
+          pharmacies={pickPharmacies}
+          listsLoading={pickListsLoading}
+          selectedDoctorUserId={selectedDoctorUserId}
+          selectedPharmacyUserId={selectedPharmacyUserId}
+          onSelectDoctor={onSelectDoctor}
+          onSelectPharmacy={onSelectPharmacy}
+          onClearSelection={onClearSelection}
+        />
+
         {consultHint ? (
           <Text
             style={{
@@ -1660,6 +2043,132 @@ export function QuickSolutionScreen({
             color: theme.textPrimary,
             fontWeight: "800",
             marginBottom: 8,
+            fontSize: S.body,
+          }}
+        >
+          Doctor review (10 coins)
+        </Text>
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 12,
+            fontSize: S.small,
+          }}
+        >
+          ₹10 (10 coins) per snap or query — platform 5 coins, clinic 5 coins.
+          Verified clinics and RMP doctors only.
+        </Text>
+        <TouchableOpacity
+          onPress={() => setPrivateMode((v) => !v)}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: privateMode ? theme.accentLight : theme.card,
+            padding: 14,
+            borderRadius: 14,
+            marginBottom: 8,
+            borderWidth: 2,
+            borderColor: privateMode ? theme.accent : theme.cardBorder,
+          }}
+        >
+          <Ionicons
+            name={privateMode ? "eye-off" : "eye"}
+            size={22}
+            color={theme.accent}
+            style={{ marginRight: 10 }}
+          />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+              Private mode
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginTop: 4,
+              }}
+            >
+              Hide your name, photo, and contact info from the clinic for
+              sensitive issues. You still see the provider details.
+            </Text>
+          </View>
+        </TouchableOpacity>
+        <TextInput
+          placeholder="Describe your question or symptom…"
+          placeholderTextColor={theme.textTertiary}
+          multiline
+          value={notes}
+          onChangeText={setNotes}
+          onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
+          style={{
+            minHeight: 72,
+            backgroundColor: theme.card,
+            borderRadius: 14,
+            padding: 14,
+            color: theme.textPrimary,
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            textAlignVertical: "top",
+          }}
+        />
+        <TouchableOpacity
+          onPress={pickOptionalImage}
+          style={{
+            marginTop: 10,
+            padding: 14,
+            borderRadius: 14,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+            backgroundColor: theme.card,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
+            {imagePart?.uri ? "Change attached photo" : "Attach photo (optional)"}
+          </Text>
+          <Ionicons name="image-outline" size={22} color={theme.accent} />
+        </TouchableOpacity>
+        {imagePart?.uri ? (
+          <Text
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              color: theme.textTertiary,
+            }}
+            numberOfLines={2}
+          >
+            {imagePart.name || "Image selected"}
+          </Text>
+        ) : null}
+        <TouchableOpacity
+          onPress={submit}
+          disabled={!canSubmit}
+          style={{
+            marginTop: 12,
+            backgroundColor: theme.success || "#059669",
+            padding: 16,
+            borderRadius: 16,
+            alignItems: "center",
+            opacity: canSubmit ? 1 : 0.45,
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Submit (10 coins)
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+            marginTop: 28,
             fontSize: S.body,
           }}
         >
@@ -1745,99 +2254,6 @@ export function QuickSolutionScreen({
             </Text>
           </View>
         ) : null}
-
-        <Text
-          style={{
-            color: theme.textPrimary,
-            fontWeight: "800",
-            marginBottom: 8,
-            fontSize: S.body,
-          }}
-        >
-          Doctor review (10 coins)
-        </Text>
-        <Text
-          style={{
-            color: theme.textSecondary,
-            marginBottom: 12,
-            fontSize: S.small,
-          }}
-        >
-          ₹10 (10 coins) per snap or query - platform 5 coins, clinic 5 coins.
-          Verified clinics and RMP doctors only.
-        </Text>
-        <TouchableOpacity
-          onPress={() => setPrivateMode((v) => !v)}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: privateMode ? theme.accentLight : theme.card,
-            padding: 14,
-            borderRadius: 14,
-            marginBottom: 8,
-            borderWidth: 2,
-            borderColor: privateMode ? theme.accent : theme.cardBorder,
-          }}
-        >
-          <Ionicons
-            name={privateMode ? "eye-off" : "eye"}
-            size={22}
-            color={theme.accent}
-            style={{ marginRight: 10 }}
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
-              Private mode
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: S.small,
-                marginTop: 4,
-              }}
-            >
-              Hide your name, photo, and contact info from the clinic for
-              sensitive issues. You still see the provider details.
-            </Text>
-          </View>
-        </TouchableOpacity>
-        <TextInput
-          placeholder="Describe your question or symptom…"
-          placeholderTextColor={theme.textTertiary}
-          multiline
-          value={notes}
-          onChangeText={setNotes}
-          onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
-          style={{
-            minHeight: 72,
-            backgroundColor: theme.card,
-            borderRadius: 14,
-            padding: 14,
-            color: theme.textPrimary,
-            borderWidth: 1,
-            borderColor: theme.cardBorder,
-            textAlignVertical: "top",
-          }}
-        />
-        <TouchableOpacity
-          onPress={submit}
-          disabled={busy}
-          style={{
-            marginTop: 12,
-            backgroundColor: theme.success || "#059669",
-            padding: 16,
-            borderRadius: 16,
-            alignItems: "center",
-          }}
-        >
-          {busy ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Submit (10 coins)
-            </Text>
-          )}
-        </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -1847,10 +2263,10 @@ export function QuickCounsellingScreen({
   theme,
   onBack,
   patientUserId,
-  /** When true, show copy tuned for Wound tab entry (same API, no image). */
   fromWoundTracker = false,
   quickCareBinding = null,
-  onOpenPackageJourney,
+  loadQuickPickDoctors,
+  loadQuickPickPharmacies,
   consultMinutesUsed = 0,
   consultMinutesLimit = 0,
   scrollContentBottomInset = 100,
@@ -1863,10 +2279,104 @@ export function QuickCounsellingScreen({
   const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pickDoctors, setPickDoctors] = useState([]);
+  const [pickPharmacies, setPickPharmacies] = useState([]);
+  const [pickListsLoading, setPickListsLoading] = useState(true);
+  const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
+  const [selectedPharmacyUserId, setSelectedPharmacyUserId] = useState(null);
+
+  useEffect(() => {
+    const id = quickCareBinding?.doctorUserId;
+    if (id) setSelectedDoctorUserId(String(id));
+  }, [quickCareBinding?.doctorUserId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setPickListsLoading(true);
+      try {
+        const [d, p] = await Promise.all([
+          loadQuickPickDoctors?.().catch(() => []),
+          loadQuickPickPharmacies?.().catch(() => []),
+        ]);
+        if (!cancelled) {
+          setPickDoctors(Array.isArray(d) ? d : []);
+          setPickPharmacies(Array.isArray(p) ? p : []);
+        }
+      } finally {
+        if (!cancelled) setPickListsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadQuickPickDoctors, loadQuickPickPharmacies]);
+
+  const ent = useMemo(
+    () =>
+      quickCareBinding?.consumerPlan != null
+        ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
+        : null,
+    [quickCareBinding?.consumerPlan],
+  );
+
+  const consultHint =
+    ent && consultMinutesLimit > 0 && quickCareBinding?.doctorUserId
+      ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
+      : "";
+
+  const onSelectDoctor = (uid) => {
+    const id = String(uid || "").trim();
+    if (!id) return;
+    if (selectedPharmacyUserId) {
+      Alert.alert(
+        "Already using a pharmacy",
+        "Clear your pharmacy choice first, or keep sending to that pharmacy only.",
+      );
+      return;
+    }
+    setSelectedPharmacyUserId(null);
+    setSelectedDoctorUserId(id);
+  };
+
+  const onSelectPharmacy = (uid) => {
+    const id = String(uid || "").trim();
+    if (!id) return;
+    if (selectedDoctorUserId) {
+      Alert.alert(
+        "Already using a doctor",
+        "Clear your doctor choice first, or keep sending to that doctor only.",
+      );
+      return;
+    }
+    setSelectedDoctorUserId(null);
+    setSelectedPharmacyUserId(id);
+  };
+
+  const onClearSelection = () => {
+    setSelectedDoctorUserId(null);
+    setSelectedPharmacyUserId(null);
+  };
+
   const submit = async () => {
+    const doc = String(selectedDoctorUserId || "").trim();
+    const ph = String(selectedPharmacyUserId || "").trim();
+    if (!doc && !ph) {
+      Alert.alert("Recipient", "Select one doctor or one pharmacy first.");
+      return;
+    }
+    if (!String(topic || "").trim()) {
+      Alert.alert("Description", "Please describe what you would like to discuss.");
+      return;
+    }
     try {
       setBusy(true);
-      await createQuickCounsellingRequest({ patientUserId, topic });
+      await createQuickCounsellingRequest({
+        patientUserId,
+        topic,
+        targetDoctorUserId: doc || null,
+        targetPharmacyUserId: ph || null,
+      });
       Alert.alert(
         "Queued",
         fromWoundTracker
@@ -1881,72 +2391,15 @@ export function QuickCounsellingScreen({
     }
   };
 
-  if (!quickCareBinding?.doctorUserId) {
-    return (
-      <View style={{ flex: 1, backgroundColor: theme.bg }}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: S.pad,
-            paddingBottom: S.pad,
-            paddingTop: (insets.top || 0) + 12,
-          }}
-        >
-          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
-            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
-          </TouchableOpacity>
-          <Text
-            style={{
-              color: theme.textPrimary,
-              fontSize: S.title,
-              fontWeight: "800",
-            }}
-          >
-            Quick Counselling
-          </Text>
-        </View>
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-          contentContainerStyle={{
-            padding: S.pad,
-            paddingBottom: scrollBottomPad,
-          }}
-        >
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.body,
-              lineHeight: 22,
-              marginBottom: 16,
-            }}
-          >
-            Activate a paid doctor package first. Quick Counselling then queues
-            directly with that doctor — no separate doctor selection here.
-          </Text>
-          <TouchableOpacity
-            onPress={() => onOpenPackageJourney?.()}
-            style={{
-              backgroundColor: theme.success,
-              padding: 16,
-              borderRadius: 16,
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Open package journey
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-    );
-  }
+  const hasRecipient = Boolean(
+    selectedDoctorUserId || selectedPharmacyUserId,
+  );
+  const hasTopic = Boolean(String(topic || "").trim());
+  const canSubmit = hasRecipient && hasTopic && !busy;
 
-  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
+  const planLabel = quickCareBinding?.consumerPlan
+    ? consumerPlanDisplayName(quickCareBinding.consumerPlan)
+    : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -1983,17 +2436,79 @@ export function QuickCounsellingScreen({
           paddingBottom: scrollBottomPad,
         }}
       >
+        {quickCareBinding?.doctorUserId ? (
+          <View
+            style={{
+              backgroundColor: theme.successLight || theme.accentLight,
+              padding: 12,
+              borderRadius: 14,
+              marginBottom: 12,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontSize: S.small,
+                fontWeight: "800",
+              }}
+            >
+              Package doctor pre-selected
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: 11,
+                marginTop: 4,
+                lineHeight: 16,
+              }}
+            >
+              {planLabel ? `${planLabel} · ` : ""}
+              {quickCareBinding?.doctor
+                ? `${quickCareBinding.doctor} is the default recipient. Clear below to choose a pharmacy instead.`
+                : "Your linked package doctor is the default recipient."}
+            </Text>
+          </View>
+        ) : (
           <Text
             style={{
               color: theme.textSecondary,
               marginBottom: 12,
               fontSize: S.small,
+              lineHeight: 18,
             }}
           >
-            {planLabel} plan · ₹25 (25 coins) — queued for{" "}
-            {quickCareBinding.doctor || "your package doctor"}.
+            Pick one doctor or one pharmacy, describe your request, then send (25
+            coins).
           </Text>
-        
+        )}
+
+        <QuickRecipientPickerPanel
+          theme={theme}
+          doctors={pickDoctors}
+          pharmacies={pickPharmacies}
+          listsLoading={pickListsLoading}
+          selectedDoctorUserId={selectedDoctorUserId}
+          selectedPharmacyUserId={selectedPharmacyUserId}
+          onSelectDoctor={onSelectDoctor}
+          onSelectPharmacy={onSelectPharmacy}
+          onClearSelection={onClearSelection}
+        />
+
+        {consultHint ? (
+          <Text
+            style={{
+              color: theme.textTertiary,
+              marginBottom: 12,
+              fontSize: 11,
+              lineHeight: 16,
+            }}
+          >
+            {consultHint}
+          </Text>
+        ) : null}
+
         <TextInput
           placeholder={
             fromWoundTracker
@@ -2005,6 +2520,7 @@ export function QuickCounsellingScreen({
           onChangeText={setTopic}
           multiline
           textAlignVertical="top"
+          onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
           style={{
             minHeight: fromWoundTracker ? 140 : 88,
             backgroundColor: theme.card,
@@ -2017,13 +2533,14 @@ export function QuickCounsellingScreen({
         />
         <TouchableOpacity
           onPress={submit}
-          disabled={busy}
+          disabled={!canSubmit}
           style={{
             marginTop: 20,
             backgroundColor: theme.success,
             padding: 16,
             borderRadius: 16,
             alignItems: "center",
+            opacity: canSubmit ? 1 : 0.45,
           }}
         >
           {busy ? (
