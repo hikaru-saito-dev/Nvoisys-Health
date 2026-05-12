@@ -7695,12 +7695,35 @@ const PatientChatScreen = () => {
     if (!currentUserId) return;
     let cancelled = false;
     const run = async () => {
-      const { conversationId, patientUserId } = pendingChatRequest;
+      const { conversationId, patientUserId, autoStartCall } =
+        pendingChatRequest;
+
+      const queueAutoAnswer = (contactRow) => {
+        if (cancelled || !autoStartCall?.roomId || !contactRow) return;
+        const expected = String(autoStartCall.roomId).trim();
+        if (!expected) return;
+        const actual = String(resolveCallRoomId(contactRow)).trim();
+        if (actual !== expected) return;
+        const ct =
+          autoStartCall.callType === "audio" ? "audio" : "video";
+        setTimeout(() => {
+          if (cancelled) return;
+          setActiveCall({
+            conversationId: expected,
+            callType: ct,
+            contact: contactRow,
+          });
+        }, 200);
+      };
+
       try {
         if (conversationId) {
           const match = conversations.find((c) => c.id === conversationId);
           if (match) {
-            if (!cancelled) setSelectedContact(match);
+            if (!cancelled) {
+              setSelectedContact(match);
+              queueAutoAnswer(match);
+            }
             return;
           }
           // The id was provided but our local conversations cache hasn't
@@ -7715,9 +7738,13 @@ const PatientChatScreen = () => {
                 expand: "members,linkedWound",
               });
             if (!cancelled && hydrated) {
-              setSelectedContact(
-                mapConversationRecord(hydrated, currentUserId, {}),
+              const mapped = mapConversationRecord(
+                hydrated,
+                currentUserId,
+                {},
               );
+              setSelectedContact(mapped);
+              queueAutoAnswer(mapped);
               return;
             }
           } catch (fetchErr) {
@@ -7735,7 +7762,9 @@ const PatientChatScreen = () => {
             const refreshed = conversations.find(
               (c) => c.id === conversation.id,
             );
-            setSelectedContact(refreshed || conversation);
+            const opened = refreshed || conversation;
+            setSelectedContact(opened);
+            queueAutoAnswer(opened);
           }
         }
       } catch (error) {
@@ -25798,6 +25827,15 @@ const CustomTabNavigator = ({ routes, activeColor }) => {
   const [activeIndex, setActiveIndex] = useState(0);
   const routesRef = useRef(routes);
   routesRef.current = routes;
+  const { registerNavigateToChatTab } = useAppData();
+
+  useEffect(() => {
+    registerNavigateToChatTab?.(() => {
+      const idx = routesRef.current.findIndex((r) => r.name === "Chat");
+      if (idx !== -1) setActiveIndex(idx);
+    });
+    return () => registerNavigateToChatTab?.(null);
+  }, [registerNavigateToChatTab]);
 
   useEffect(() => {
     const handleBack = () => {
@@ -29134,6 +29172,8 @@ export default function App() {
   // "Help" modal, patient quick-request offer arrow); consumed by
   // `PatientChatScreen` once it has the conversation in state, then cleared.
   const [pendingChatRequest, setPendingChatRequest] = useState(null);
+  const [pendingIncomingCallInvite, setPendingIncomingCallInvite] =
+    useState(null);
   const [hospitals, setHospitals] = useState([]);
   const [hospitalsLoading, setHospitalsLoading] = useState(false);
   const [pharmacies, setPharmacies] = useState([]);
@@ -29181,6 +29221,7 @@ export default function App() {
   const callInviteWsRef = useRef(null);
   const callInviteReconnectRef = useRef(null);
   const lastIncomingCallSigRef = useRef("");
+  const navigateToChatTabRef = useRef(null);
 
   const resolvedPaletteKey = useMemo(() => {
     if (followSystem) return systemScheme === "dark" ? "dark" : "light";
@@ -31775,6 +31816,13 @@ export default function App() {
             const sig = `${payload.roomId || ""}|${payload.fromUserId || ""}|${payload.ts || 0}`;
             if (lastIncomingCallSigRef.current === sig) return;
             lastIncomingCallSigRef.current = sig;
+            setPendingIncomingCallInvite({
+              roomId: String(payload.roomId || ""),
+              fromUserId: String(payload.fromUserId || ""),
+              callType: payload.callType === "audio" ? "audio" : "video",
+              callerName: String(payload.callerName || "").trim(),
+              ts: payload.ts || Date.now(),
+            });
             void notifyIncomingCallLocal(payload);
           } catch {
             /* ignore */
@@ -32049,6 +32097,40 @@ export default function App() {
     };
   }, [currentUser?.id, userRole, patientProfile?.status]);
 
+  const registerNavigateToChatTab = useCallback((fn) => {
+    navigateToChatTabRef.current = typeof fn === "function" ? fn : null;
+  }, []);
+
+  const requestChatTabAndAnswerCall = useCallback(
+    ({ patientUserId, roomId, callType }) => {
+      const uid = String(patientUserId || "").trim();
+      const rid = String(roomId || "").trim();
+      if (!uid || !rid) return;
+      navigateToChatTabRef.current?.();
+      setTimeout(() => {
+        setPendingChatRequest({
+          patientUserId: uid,
+          autoStartCall: {
+            roomId: rid,
+            callType: callType === "audio" ? "audio" : "video",
+          },
+          ts: Date.now(),
+        });
+      }, 120);
+    },
+    [],
+  );
+
+  const clearPendingIncomingCallInvite = useCallback(() => {
+    setPendingIncomingCallInvite(null);
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setPendingIncomingCallInvite(null);
+    }
+  }, [currentUser?.id]);
+
   if (loadingAuth) {
     return (
       <SafeAreaView
@@ -32152,6 +32234,10 @@ export default function App() {
       });
     },
     consumePendingChatRequest: () => setPendingChatRequest(null),
+    pendingIncomingCallInvite,
+    clearPendingIncomingCallInvite,
+    registerNavigateToChatTab,
+    requestChatTabAndAnswerCall,
     createWoundReport,
     prescribeForWound,
     updateOrderStatus,
@@ -32214,12 +32300,120 @@ export default function App() {
               setPatients={setPatients}
             />
           </RootErrorBoundary>
+          <IncomingCallInviteOverlay />
           <NotificationHost />
         </AppDataContext.Provider>
       </ThemeContext.Provider>
     </SafeAreaProvider>
   );
 }
+
+const IncomingCallInviteOverlay = () => {
+  const { theme } = useTheme();
+  const {
+    pendingIncomingCallInvite,
+    clearPendingIncomingCallInvite,
+    requestChatTabAndAnswerCall,
+  } = useAppData();
+
+  if (!pendingIncomingCallInvite) return null;
+
+  const { callerName, callType, fromUserId, roomId } =
+    pendingIncomingCallInvite;
+  const title =
+    callType === "audio" ? "Incoming audio call" : "Incoming video call";
+  const body = callerName
+    ? `${callerName} is calling you.`
+    : "You have an incoming call.";
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      presentationStyle="overFullScreen"
+      statusBarTranslucent
+      onRequestClose={clearPendingIncomingCallInvite}
+    >
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "rgba(0,0,0,0.55)",
+          justifyContent: "center",
+          padding: RFValue(24),
+        }}
+      >
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(20),
+            padding: RFValue(22),
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: RFValue(18),
+              fontWeight: "800",
+              color: theme.textPrimary,
+              marginBottom: RFValue(8),
+            }}
+          >
+            {title}
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(14),
+              color: theme.textSecondary,
+              marginBottom: RFValue(20),
+            }}
+          >
+            {body}
+          </Text>
+          <View style={{ flexDirection: "row" }}>
+            <TouchableOpacity
+              onPress={clearPendingIncomingCallInvite}
+              style={{
+                flex: 1,
+                paddingVertical: RFValue(12),
+                borderRadius: RFValue(12),
+                borderWidth: 1,
+                borderColor: theme.cardBorder,
+                alignItems: "center",
+                marginRight: RFValue(10),
+              }}
+            >
+              <Text style={{ fontWeight: "700", color: theme.textSecondary }}>
+                Decline
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                clearPendingIncomingCallInvite();
+                requestChatTabAndAnswerCall({
+                  patientUserId: fromUserId,
+                  roomId,
+                  callType,
+                });
+              }}
+              style={{
+                flex: 1,
+                paddingVertical: RFValue(12),
+                borderRadius: RFValue(12),
+                backgroundColor: theme.accent,
+                alignItems: "center",
+                marginLeft: RFValue(10),
+              }}
+            >
+              <Text style={{ fontWeight: "800", color: "#FFF" }}>Answer</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
 
 const MandatoryNameScreen = ({ currentUser, theme, onSaved, onLogout }) => {
   const insets = useSafeAreaInsets();

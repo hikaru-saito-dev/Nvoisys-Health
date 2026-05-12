@@ -508,14 +508,19 @@ wss.on("connection", (ws) => {
       const peerUserId = String(payload.peerUserId || "").trim();
       const callerUserId = String(payload.userId || "").trim();
       if (peerUserId && callerUserId && peerUserId !== callerUserId && updated.length === 1) {
-        notifyIncomingCallTargets(peerUserId, {
+        const incoming = {
           type: "incoming_call",
           roomId,
           fromUserId: callerUserId,
           callType: payload.callType === "audio" ? "audio" : "video",
           callerName: String(payload.callerName || "").trim(),
           ts: Date.now(),
-        });
+        };
+        const subs = callSubscribers.get(peerUserId);
+        console.log(
+          `[signaling] incoming_call → peer ${peerUserId} (subscribers: ${subs ? subs.size : 0}) room=${roomId}`,
+        );
+        notifyIncomingCallTargets(peerUserId, incoming);
       }
 
       if (updated.length === 2) {
