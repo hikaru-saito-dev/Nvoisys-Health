@@ -145,6 +145,7 @@ import {
   PatientPackageMeetingsPanel,
   PatientQuickRequestsTrackerPanel,
   QuickCounsellingScreen,
+  QuickRecipientPickerPanel,
   QuickSolutionScreen,
 } from "./productSpecScreens";
 import {
@@ -4922,7 +4923,6 @@ const PatientHomeScreen = () => {
         loadQuickPickDoctors={() =>
           fetchApprovedDoctors({ quickServiceOnly: true })
         }
-        loadQuickPickPharmacies={fetchPharmacies}
         onAskAi={runQuickSolveAi}
         consultMinutesUsed={
           patientQuickCareBinding?.consultMinutesUsed ?? 0
@@ -4947,7 +4947,6 @@ const PatientHomeScreen = () => {
         loadQuickPickDoctors={() =>
           fetchApprovedDoctors({ quickServiceOnly: true })
         }
-        loadQuickPickPharmacies={fetchPharmacies}
         consultMinutesUsed={
           patientQuickCareBinding?.consultMinutesUsed ?? 0
         }
@@ -27332,7 +27331,6 @@ const PatientWoundScreen = () => {
         loadQuickPickDoctors={() =>
           fetchApprovedDoctors({ quickServiceOnly: true })
         }
-        loadQuickPickPharmacies={fetchPharmacies}
         consultMinutesUsed={
           patientQuickCareBinding?.consultMinutesUsed ?? 0
         }
@@ -27581,27 +27579,46 @@ const PatientWoundScreen = () => {
 
 const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const [desc, setDesc] = useState("");
   const [image, setImage] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [doctors, setDoctors] = useState([]);
-  const [doctorsLoading, setDoctorsLoading] = useState(true);
+  const [pickDoctors, setPickDoctors] = useState([]);
+  const [pickPharmacies, setPickPharmacies] = useState([]);
+  const [pickListsLoading, setPickListsLoading] = useState(true);
   const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
+  const [selectedPharmacyUserId, setSelectedPharmacyUserId] = useState(null);
   const submitInFlightRef = useRef(false);
-  const { createWoundReport, fetchApprovedDoctors } = useAppData();
+  const { createWoundReport, fetchApprovedDoctors, fetchPharmacies } =
+    useAppData();
+
+  const fetchDoctorsRef = useRef(fetchApprovedDoctors);
+  const fetchPharmaciesRef = useRef(fetchPharmacies);
+  fetchDoctorsRef.current = fetchApprovedDoctors;
+  fetchPharmaciesRef.current = fetchPharmacies;
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setPickListsLoading(true);
       try {
-        const list = await fetchApprovedDoctors();
-        if (!cancelled) setDoctors(Array.isArray(list) ? list : []);
+        const [d, p] = await Promise.all([
+          fetchDoctorsRef.current().catch(() => []),
+          fetchPharmaciesRef.current().catch(() => []),
+        ]);
+        if (!cancelled) {
+          setPickDoctors(Array.isArray(d) ? d : []);
+          setPickPharmacies(Array.isArray(p) ? p : []);
+        }
       } catch (error) {
-        console.log("load doctors for wound report:", error);
-        if (!cancelled) setDoctors([]);
+        console.log("load lists for wound report:", error);
+        if (!cancelled) {
+          setPickDoctors([]);
+          setPickPharmacies([]);
+        }
       } finally {
-        if (!cancelled) setDoctorsLoading(false);
+        if (!cancelled) setPickListsLoading(false);
       }
     })();
     return () => {
@@ -27614,6 +27631,39 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
     return () => sub.remove();
   }, [submitting]);
+
+  const onSelectDoctor = (uid) => {
+    const id = String(uid || "").trim();
+    if (!id) return;
+    if (selectedPharmacyUserId) {
+      Alert.alert(
+        "Already using a pharmacy",
+        "Clear your pharmacy choice first, or keep sending to that pharmacy only.",
+      );
+      return;
+    }
+    setSelectedPharmacyUserId(null);
+    setSelectedDoctorUserId(id);
+  };
+
+  const onSelectPharmacy = (uid) => {
+    const id = String(uid || "").trim();
+    if (!id) return;
+    if (selectedDoctorUserId) {
+      Alert.alert(
+        "Already using a doctor",
+        "Clear your doctor choice first, or keep sending to that doctor only.",
+      );
+      return;
+    }
+    setSelectedDoctorUserId(null);
+    setSelectedPharmacyUserId(id);
+  };
+
+  const onClearSelection = () => {
+    setSelectedDoctorUserId(null);
+    setSelectedPharmacyUserId(null);
+  };
 
   const pickWoundPhoto = async (source) => {
     try {
@@ -27656,11 +27706,14 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
 
   const handleSubmit = async () => {
     if (submitInFlightRef.current || submitting) return;
-    if (!desc.trim()) return;
-    if (!selectedDoctorUserId) {
+    if (!desc.trim()) {
+      Alert.alert("Description", "Please describe the wound.");
+      return;
+    }
+    if (!selectedDoctorUserId && !selectedPharmacyUserId) {
       Alert.alert(
-        "Select a doctor",
-        "Choose which doctor should receive this wound report.",
+        "Recipient",
+        "Select one doctor or one pharmacy to receive this report.",
       );
       return;
     }
@@ -27671,7 +27724,8 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
       await createWoundReport({
         description: desc.trim(),
         image,
-        doctorUserId: selectedDoctorUserId,
+        doctorUserId: selectedDoctorUserId || undefined,
+        pharmacyUserId: selectedPharmacyUserId || undefined,
       });
       onBack();
     } catch (error) {
@@ -27686,6 +27740,11 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
     if (submitInFlightRef.current || submitting) return;
     onBack();
   };
+
+  const canSubmit =
+    Boolean(desc.trim()) &&
+    Boolean(selectedDoctorUserId || selectedPharmacyUserId) &&
+    !submitting;
 
   return (
     <SafeAreaView
@@ -27737,11 +27796,13 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
       </Modal>
       <View
         style={{
-          padding: RFValue(20),
           flexDirection: "row",
           alignItems: "center",
-          borderBottomWidth: 1,
-          borderBottomColor: "#F3F4F6",
+          paddingHorizontal: RFValue(20),
+          paddingBottom: RFValue(12),
+          paddingTop: (insets.top || 0) + RFValue(8),
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: theme.cardBorder,
         }}
       >
         <TouchableOpacity
@@ -27751,7 +27812,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
         >
           <Ionicons
             name="arrow-back"
-            size={RFValue(26)}
+            size={RFValue(24)}
             color={theme.textPrimary}
           />
         </TouchableOpacity>
@@ -27777,13 +27838,38 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
       >
         <Text
           style={{
-            fontSize: RFValue(14),
-            fontWeight: "700",
-            color: theme.textPrimary,
-            marginBottom: RFValue(10),
+            color: theme.textSecondary,
+            fontSize: RFValue(13),
+            lineHeight: RFValue(20),
+            marginBottom: RFValue(14),
           }}
         >
-          Wound Photo
+          Pick one doctor or one pharmacy, add an optional photo, describe the
+          wound, then submit — same flow as Quick Solution.
+        </Text>
+
+        <QuickRecipientPickerPanel
+          theme={theme}
+          doctors={pickDoctors}
+          pharmacies={pickPharmacies}
+          listsLoading={pickListsLoading}
+          selectedDoctorUserId={selectedDoctorUserId}
+          selectedPharmacyUserId={selectedPharmacyUserId}
+          onSelectDoctor={onSelectDoctor}
+          onSelectPharmacy={onSelectPharmacy}
+          onClearSelection={onClearSelection}
+        />
+
+        <Text
+          style={{
+            fontSize: RFValue(15),
+            fontWeight: "800",
+            color: theme.textPrimary,
+            marginBottom: RFValue(8),
+            marginTop: RFValue(8),
+          }}
+        >
+          Wound photo (optional)
         </Text>
         <TouchableOpacity
           disabled={submitting}
@@ -27794,10 +27880,9 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
             borderRadius: RFValue(16),
             justifyContent: "center",
             alignItems: "center",
-            marginBottom: RFValue(20),
-            borderWidth: 2,
+            marginBottom: RFValue(18),
+            borderWidth: StyleSheet.hairlineWidth,
             borderColor: theme.cardBorder,
-            borderStyle: "dashed",
             overflow: "hidden",
             opacity: submitting ? 0.55 : 1,
           }}
@@ -27826,7 +27911,7 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
             <View style={{ alignItems: "center", padding: RFValue(16) }}>
               <Ionicons
                 name="camera"
-                size={RFValue(52)}
+                size={RFValue(48)}
                 color={theme.textTertiary}
               />
               <Text
@@ -27840,10 +27925,10 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
 
         <Text
           style={{
-            fontSize: RFValue(14),
-            fontWeight: "700",
+            fontSize: RFValue(15),
+            fontWeight: "800",
             color: theme.textPrimary,
-            marginBottom: RFValue(10),
+            marginBottom: RFValue(8),
           }}
         >
           Description
@@ -27853,87 +27938,19 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           placeholder="Describe how it happened, pain level, etc."
           style={{
             backgroundColor: theme.card,
-            borderRadius: RFValue(16),
-            padding: RFValue(16),
-            height: RFValue(120),
+            borderRadius: RFValue(14),
+            padding: RFValue(14),
+            minHeight: RFValue(120),
             textAlignVertical: "top",
             fontSize: RFValue(14),
             color: theme.textPrimary,
-            borderWidth: 1,
+            borderWidth: StyleSheet.hairlineWidth,
             borderColor: theme.cardBorder,
           }}
           value={desc}
           onChangeText={setDesc}
           editable={!submitting}
         />
-
-        <Text
-          style={{
-            fontSize: RFValue(14),
-            fontWeight: "700",
-            color: theme.textPrimary,
-            marginBottom: RFValue(10),
-            marginTop: RFValue(8),
-          }}
-        >
-          Select doctor
-        </Text>
-        {doctorsLoading ? (
-          <View
-            style={{
-              paddingVertical: RFValue(20),
-              alignItems: "center",
-            }}
-          >
-            <ActivityIndicator color={theme.accent} />
-            <Text style={{ color: theme.textTertiary, marginTop: RFValue(8) }}>
-              Loading doctors…
-            </Text>
-          </View>
-        ) : doctors.length === 0 ? (
-          <Text style={{ color: theme.danger, marginBottom: RFValue(12) }}>
-            No approved doctors are available. Try again later.
-          </Text>
-        ) : (
-          doctors.map((d) => {
-            const selected = selectedDoctorUserId === d.userId;
-            return (
-              <TouchableOpacity
-                key={d.userId || d.profileId}
-                disabled={submitting}
-                onPress={() => !submitting && setSelectedDoctorUserId(d.userId)}
-                activeOpacity={0.85}
-                style={{
-                  padding: RFValue(14),
-                  borderRadius: RFValue(14),
-                  borderWidth: 2,
-                  borderColor: selected ? theme.accent : theme.cardBorder,
-                  backgroundColor: selected ? theme.accentLight : theme.card,
-                  marginBottom: RFValue(10),
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: RFValue(15),
-                    fontWeight: "700",
-                    color: theme.textPrimary,
-                  }}
-                >
-                  {d.name}
-                </Text>
-                <Text
-                  style={{
-                    fontSize: RFValue(12),
-                    color: theme.textSecondary,
-                    marginTop: RFValue(4),
-                  }}
-                >
-                  {d.specialty}
-                </Text>
-              </TouchableOpacity>
-            );
-          })
-        )}
 
         {submitError ? (
           <Text
@@ -27949,14 +27966,14 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
 
         <TouchableOpacity
           onPress={handleSubmit}
-          disabled={submitting}
+          disabled={!canSubmit}
           style={{
-            backgroundColor: submitting ? theme.accentBg : theme.accent,
+            backgroundColor: theme.accent,
             borderRadius: RFValue(16),
             paddingVertical: RFValue(16),
             alignItems: "center",
-            marginTop: RFValue(30),
-            opacity: submitting ? 0.92 : 1,
+            marginTop: RFValue(22),
+            opacity: canSubmit ? 1 : 0.45,
             flexDirection: "row",
             justifyContent: "center",
           }}
@@ -27970,11 +27987,11 @@ const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
           <Text
             style={{
               color: "#FFF",
-              fontWeight: "700",
+              fontWeight: "800",
               fontSize: RFValue(16),
             }}
           >
-            {submitting ? "Submitting…" : "Submit to Doctor"}
+            {submitting ? "Submitting…" : "Submit report"}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -30372,7 +30389,7 @@ export default function App() {
     }
   };
 
-  // Lazy loader for pharmacies (reads `pharmacy_profile` with expanded user).
+  // Reads full `pharmacy_profile` (expanded user) for dashboards and patient pickers — no client-side filter.
   const fetchPharmacies = async () => {
     try {
       setPharmaciesLoading(true);
@@ -31077,6 +31094,7 @@ export default function App() {
     return mappedMessage;
   };
 
+  /** PocketBase `doctor_profile` with status=approved only. Omit options for every tier (RMP/clinic + package). */
   const fetchApprovedDoctors = async (opts = {}) => {
     try {
       const records = await pb.collection("doctor_profile").getFullList({
@@ -31431,28 +31449,52 @@ export default function App() {
     );
   };
 
-  const createWoundReport = async ({ description, image, doctorUserId }) => {
+  const createWoundReport = async ({
+    description,
+    image,
+    doctorUserId,
+    pharmacyUserId,
+  }) => {
     if (!currentUser?.id) {
       throw new Error("Please login again");
     }
+    const duid = String(doctorUserId || "").trim();
+    const puid = String(pharmacyUserId || "").trim();
+    if (!duid && !puid) {
+      throw new Error("Select a doctor or a pharmacy for this wound report.");
+    }
+    if (duid && puid) {
+      throw new Error("Choose only one recipient (doctor or pharmacy).");
+    }
+
     const doctorUsers = await fetchUsersByRole("doctor");
-    const conversationDoctorIds = doctorUserId
-      ? uniqueIds([doctorUserId])
-      : doctorUsers.map((user) => user.id);
+    const conversationPeerIds = duid
+      ? uniqueIds([duid])
+      : puid
+        ? uniqueIds([puid])
+        : doctorUsers.map((user) => user.id);
+
+    const routingLine =
+      puid && !duid ? `\n\n— Recipient: pharmacy user id ${puid}` : "";
+    const descriptionFinal =
+      `${String(description || "").trim()}${routingLine}`.trim();
+    const woundNotesField =
+      puid && !duid ? `pharmacy_recipient_user=${puid}` : "";
+
     const filePart = image?.uri ? pickerAssetToUploadPart(image) : null;
 
     const appendDoctorRelation = (formData) => {
-      if (doctorUserId) formData.append("doctor", doctorUserId);
+      if (duid) formData.append("doctor", duid);
     };
 
     let woundRecord;
     if (filePart) {
       const formData = new FormData();
       formData.append("patient", currentUser.id);
-      formData.append("description", description?.trim() || "");
+      formData.append("description", descriptionFinal);
       formData.append("severity", "moderate");
       formData.append("status", "review_pending");
-      formData.append("notes", "");
+      formData.append("notes", woundNotesField);
       appendDoctorRelation(formData);
       formData.append("image", filePart);
       try {
@@ -31461,10 +31503,10 @@ export default function App() {
         console.log("wounds create with image failed, retrying:", imageError);
         const fallbackData = new FormData();
         fallbackData.append("patient", currentUser.id);
-        fallbackData.append("description", description?.trim() || "");
+        fallbackData.append("description", descriptionFinal);
         fallbackData.append("severity", "moderate");
         fallbackData.append("status", "review_pending");
-        fallbackData.append("notes", "");
+        fallbackData.append("notes", woundNotesField);
         appendDoctorRelation(fallbackData);
         fallbackData.append("photo", filePart);
         try {
@@ -31476,32 +31518,32 @@ export default function App() {
           );
           const jsonPayload = {
             patient: currentUser.id,
-            description: description?.trim() || "",
+            description: descriptionFinal,
             severity: "moderate",
             status: "review_pending",
-            notes: "",
-            hasPharmacy: false,
+            notes: woundNotesField,
+            hasPharmacy: Boolean(puid),
           };
-          if (doctorUserId) jsonPayload.doctor = doctorUserId;
+          if (duid) jsonPayload.doctor = duid;
           woundRecord = await pb.collection("wounds").create(jsonPayload);
         }
       }
     } else {
       const jsonPayload = {
         patient: currentUser.id,
-        description: description?.trim() || "",
+        description: descriptionFinal,
         severity: "moderate",
         status: "review_pending",
-        notes: "",
-        hasPharmacy: false,
+        notes: woundNotesField,
+        hasPharmacy: Boolean(puid),
       };
-      if (doctorUserId) jsonPayload.doctor = doctorUserId;
+      if (duid) jsonPayload.doctor = duid;
       woundRecord = await pb.collection("wounds").create(jsonPayload);
     }
     const conversation = await pb.collection("conversations").create({
       title: buildConversationTitle(woundRecord),
       linkedWound: woundRecord.id,
-      members: uniqueIds([currentUser.id, ...conversationDoctorIds]),
+      members: uniqueIds([currentUser.id, ...conversationPeerIds]),
       lastMessageAt: new Date().toISOString(),
     });
     await pb.collection("wounds").update(woundRecord.id, {

@@ -3933,22 +3933,15 @@ export async function createQuickSolutionRequest({
   notes,
   privateMode,
   imagePart,
-  /** Exactly one of these should be set — UI enforces mutual exclusion. */
+  /** RMP / clinic / general doctor only (not package-tier). */
   targetDoctorUserId,
-  targetPharmacyUserId,
 }) {
   await assertUserHasCoins(patientUserId, 10);
   const td = String(targetDoctorUserId || "").trim();
-  const tp = String(targetPharmacyUserId || "").trim();
-  if (!td && !tp) {
-    throw new Error("Select one doctor or one pharmacy before sending.");
+  if (!td) {
+    throw new Error("Select an RMP or clinic doctor before sending.");
   }
-  if (td && tp) {
-    throw new Error("Choose only one recipient (doctor or pharmacy).");
-  }
-  const routingNote = td
-    ? `\n\n— Recipient: doctor user id ${td}`
-    : `\n\n— Recipient: pharmacy user id ${tp}`;
+  const routingNote = `\n\n— Recipient: doctor user id ${td}`;
   const mergedNotes = `${String(notes || "").trim()}${routingNote}`.trim();
   const base = {
     patient: patientUserId,
@@ -3962,8 +3955,8 @@ export async function createQuickSolutionRequest({
   const coinMeta = {
     platform_fee_coins: 5,
     provider_coins: 5,
-    target_doctor: td || null,
-    target_pharmacy: tp || null,
+    target_doctor: td,
+    target_pharmacy: null,
   };
   try {
     let row;
@@ -4047,27 +4040,20 @@ export async function createQuickCounsellingRequest({
   patientUserId,
   topic,
   targetDoctorUserId,
-  targetPharmacyUserId,
 }) {
   await assertUserHasCoins(patientUserId, 25);
   const td = String(targetDoctorUserId || "").trim();
-  const tp = String(targetPharmacyUserId || "").trim();
-  if (!td && !tp) {
-    throw new Error("Select one doctor or one pharmacy before sending.");
+  if (!td) {
+    throw new Error("Select an RMP or clinic doctor before sending.");
   }
-  if (td && tp) {
-    throw new Error("Choose only one recipient (doctor or pharmacy).");
-  }
-  const routingNote = td
-    ? `\n\n— Recipient: doctor user id ${td}`
-    : `\n\n— Recipient: pharmacy user id ${tp}`;
+  const routingNote = `\n\n— Recipient: doctor user id ${td}`;
   const mergedTopic =
     `${String(topic || "").trim() || "General"}${routingNote}`.trim();
   const coinMeta = {
     platform_fee_coins: 10,
     provider_coins: 15,
-    target_doctor: td || null,
-    target_pharmacy: tp || null,
+    target_doctor: td,
+    target_pharmacy: null,
   };
   try {
     const row = await pb.collection("quick_counselling_requests").create({
