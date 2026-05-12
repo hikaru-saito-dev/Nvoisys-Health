@@ -162,16 +162,41 @@ export function CareModeOnboardingScreen({
   currentUser,
   onDone,
   onCommitPackageDoctor,
+  onLoadPackageDoctors,
+  onPaySelectedPackage,
   onWalletTopUp,
   paymentMode,
 }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [packageStep, setPackageStep] = useState(false);
+  const [packageDoctors, setPackageDoctors] = useState([]);
+  const [doctorSearch, setDoctorSearch] = useState("");
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [loadingDoctors, setLoadingDoctors] = useState(false);
   const [casualStep, setCasualStep] = useState(false);
   const [casualAmount, setCasualAmount] = useState(
     String(WALLET_TOPUP_MIN_INR),
   );
+
+  const loadPackageDoctors = useCallback(async () => {
+    if (typeof onLoadPackageDoctors !== "function") return [];
+    setLoadingDoctors(true);
+    try {
+      const list = await onLoadPackageDoctors();
+      const next = Array.isArray(list) ? list : [];
+      setPackageDoctors(next);
+      return next;
+    } catch (e) {
+      Alert.alert("Doctors", e?.message || "Could not load package doctors.");
+      setPackageDoctors([]);
+      return [];
+    } finally {
+      setLoadingDoctors(false);
+    }
+  }, [onLoadPackageDoctors]);
 
   const confirm = async () => {
     if (!selected) {
@@ -182,14 +207,8 @@ export function CareModeOnboardingScreen({
       return;
     }
     if (selected === "package") {
-      setBusy(true);
-      try {
-        await onCommitPackageDoctor?.();
-      } catch (e) {
-        Alert.alert("Could not continue", e?.message || "Try again.");
-      } finally {
-        setBusy(false);
-      }
+      setPackageStep(true);
+      void loadPackageDoctors();
       return;
     }
     if (selected === "casual") {
@@ -211,6 +230,58 @@ export function CareModeOnboardingScreen({
       setBusy(false);
     }
   };
+
+  const paySelectedPackage = async () => {
+    if (!currentUser?.id) {
+      Alert.alert("Sign in", "Please sign in again before paying.");
+      return;
+    }
+    if (!selectedDoctor?.userId || !selectedSlot) {
+      Alert.alert("Package", "Choose a doctor and one package.");
+      return;
+    }
+    try {
+      setBusy(true);
+      const offer = await createPatientSelectedPackageOffer({
+        patientUserId: currentUser.id,
+        doctorUserId: selectedDoctor.userId,
+        slot: selectedSlot,
+        packageSlotIndex: selectedSlot.slot,
+      });
+      if (typeof onPaySelectedPackage === "function") {
+        await onPaySelectedPackage(offer, selectedDoctor.userId);
+      } else {
+        await patientPayPackageOfferStub(offer.id, selectedDoctor.userId);
+      }
+      await persistPatientCareMode({
+        profileId: patientProfile?.id,
+        userId: currentUser?.id,
+        mode: CARE_MODE.PACKAGE,
+      });
+      onDone?.(CARE_MODE.PACKAGE, {
+        offer,
+        doctor: selectedDoctor,
+        slot: selectedSlot,
+      });
+      Alert.alert(
+        "Package active",
+        "Payment confirmed. This doctor is fixed for structured care.",
+      );
+    } catch (e) {
+      Alert.alert("Package payment", e?.message || "Could not start package.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const filteredPackageDoctors = useMemo(() => {
+    const q = doctorSearch.trim().toLowerCase();
+    const base = packageDoctors || [];
+    if (!q) return base;
+    return base.filter((d) =>
+      `${d.name || ""} ${d.specialty || ""}`.toLowerCase().includes(q),
+    );
+  }, [packageDoctors, doctorSearch]);
 
   const payCasualTopup = async () => {
     const amount = Math.floor(Number(String(casualAmount || "").trim()));
@@ -335,6 +406,172 @@ export function CareModeOnboardingScreen({
               </Text>
             )}
           </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  if (packageStep) {
+    const slots = Array.isArray(selectedDoctor?.packageSlots)
+      ? selectedDoctor.packageSlots
+      : [];
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: theme.bg,
+          paddingTop: insets.top + 12,
+        }}
+      >
+        <ScrollView
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: insets.bottom + 24,
+          }}
+        >
+          <TouchableOpacity
+            onPress={() => setPackageStep(false)}
+            disabled={busy}
+            style={{ marginBottom: 14, alignSelf: "flex-start" }}
+          >
+            <Text style={{ color: theme.accent, fontWeight: "800" }}>Back</Text>
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 24,
+              fontWeight: "800",
+            }}
+          >
+            Choose your package doctor
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              marginTop: 8,
+              marginBottom: 14,
+              lineHeight: 20,
+            }}
+          >
+            Package mode is for professional or specialist doctors only. Pick a
+            doctor, choose Basic / Gold / Premium, then pay with Cashfree.
+          </Text>
+          <TextInput
+            placeholder="Search package doctors"
+            placeholderTextColor={theme.textTertiary}
+            value={doctorSearch}
+            onChangeText={setDoctorSearch}
+            style={slotInput(theme)}
+          />
+          {loadingDoctors ? (
+            <ActivityIndicator color={theme.accent} style={{ margin: 12 }} />
+          ) : null}
+          {!loadingDoctors && filteredPackageDoctors.length === 0 ? (
+            <Text style={{ color: theme.warning, fontSize: S.small }}>
+              No package doctors are available right now.
+            </Text>
+          ) : null}
+          {filteredPackageDoctors.map((d) => {
+            const active = selectedDoctor?.userId === d.userId;
+            return (
+              <TouchableOpacity
+                key={d.profileId || d.userId}
+                onPress={() => {
+                  setSelectedDoctor(d);
+                  const firstSlot = Array.isArray(d.packageSlots)
+                    ? d.packageSlots[0]
+                    : null;
+                  setSelectedSlot(firstSlot || null);
+                }}
+                style={{
+                  ...card,
+                  borderColor: active ? theme.accent : theme.cardBorder,
+                  backgroundColor: active ? theme.accentLight : theme.card,
+                }}
+              >
+                <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                  {d.name || "Doctor"}
+                </Text>
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    fontSize: S.small,
+                    marginTop: 4,
+                  }}
+                >
+                  {d.specialty || "Package doctor"}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+          {selectedDoctor ? (
+            <View style={{ marginTop: 8 }}>
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontWeight: "900",
+                  marginBottom: 8,
+                }}
+              >
+                Select package
+              </Text>
+              {slots.map((slot) => {
+                const active = selectedSlot?.slot === slot.slot;
+                const amount = resolvePackageSlotAmountInr(slot);
+                const usesDefault = packageSlotUsesDefaultAmount(slot);
+                return (
+                  <TouchableOpacity
+                    key={slot.slot}
+                    onPress={() => setSelectedSlot(slot)}
+                    style={{
+                      padding: 12,
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: active ? theme.accent : theme.cardBorder,
+                      backgroundColor: active ? theme.accentLight : theme.card,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <Text
+                      style={{ color: theme.textPrimary, fontWeight: "800" }}
+                    >
+                      {slot.name || packageSlotDisplayName(slot.slot)}
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.textSecondary,
+                        fontSize: S.small,
+                        marginTop: 4,
+                      }}
+                    >
+                      Pay ₹{amount}
+                      {usesDefault ? " · default amount" : " · doctor fee"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                onPress={paySelectedPackage}
+                disabled={busy || !selectedSlot}
+                style={{
+                  backgroundColor: theme.success,
+                  borderRadius: 16,
+                  padding: 16,
+                  alignItems: "center",
+                  opacity: busy || !selectedSlot ? 0.55 : 1,
+                }}
+              >
+                {busy ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: "#fff", fontWeight: "900" }}>
+                    Pay package with Cashfree
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </ScrollView>
       </View>
     );

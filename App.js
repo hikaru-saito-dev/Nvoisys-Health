@@ -34250,6 +34250,10 @@ const AppContent = ({
         currentUser={currentUser}
         onWalletTopUp={topUpPatientWallet}
         paymentMode={PAYMENT_MODE}
+        onLoadPackageDoctors={() =>
+          fetchApprovedDoctors?.({ packageModeOnly: true })
+        }
+        onPaySelectedPackage={payForPackageOffer}
         onCommitPackageDoctor={async () => {
           if (!currentUser?.id) return;
           await persistPatientCareMode({
@@ -34281,14 +34285,31 @@ const AppContent = ({
           }
           await reloadPatientPrimaryCarePaths();
         }}
-        onDone={async (mode) => {
+        onDone={async (mode, packageSelection = null) => {
           await persistPatientCareMode({
             profileId: patientProfile?.id,
             userId: currentUser?.id,
             mode,
           });
           setLocalCareMode(mode);
-          if (mode === CARE_MODE.CASUAL || mode === CARE_MODE.SKIP) {
+          if (mode === CARE_MODE.PACKAGE && packageSelection?.doctor?.userId) {
+            try {
+              await writePatientPrimaryCarePaths(currentUser.id, {
+                completed: true,
+                wantsGeneral: false,
+                wantsSpecialist: true,
+                generalDoctorUserId: null,
+                specialistDoctorUserId: packageSelection.doctor.userId,
+                specialistPackageSlot: packageSelection.slot?.slot || null,
+                specialistOfferId: packageSelection.offer?.id || null,
+                pharmacyUserId: null,
+                pharmacyName: null,
+                casualDashboard: false,
+              });
+            } catch (_) {
+              /* ignore */
+            }
+          } else if (mode === CARE_MODE.CASUAL || mode === CARE_MODE.SKIP) {
             try {
               await writePatientPrimaryCarePaths(currentUser.id, {
                 completed: true,
