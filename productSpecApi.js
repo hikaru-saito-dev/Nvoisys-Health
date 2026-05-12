@@ -4,6 +4,7 @@
  * keep working. Create matching collections in PocketBase Admin when ready.
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import {
   pb,
@@ -18,6 +19,8 @@ export const CARE_MODE = {
   PACKAGE: "package_doctor",
   CASUAL: "casual",
   SKIP: "not_planning",
+  /** Patient chose "General doctor" at primary onboarding — book paid appts to reach that doctor. */
+  GENERAL: "general_doctor",
 };
 
 /**
@@ -42,6 +45,187 @@ export function consumerPlanDisplayName(plan) {
   if (p === CONSUMER_PLAN.GOLD) return "Gold";
   if (p === CONSUMER_PLAN.PREMIUM) return "Premium";
   return "Basic";
+}
+
+const USERS_AUTH_FETCH_CHUNK = 45;
+
+/** Auth user rows may live in `UsersAuth`, `users`, or a custom collection (set `expo.extra.pbUsersCollection`). */
+function getAuthUsersCollectionCandidates() {
+  const fromEnv =
+    (typeof process !== "undefined" &&
+      process.env?.EXPO_PUBLIC_PB_USERS_COLLECTION) ||
+    Constants?.expoConfig?.extra?.pbUsersCollection ||
+    "";
+  const primary = String(fromEnv || "UsersAuth").trim();
+  return [...new Set([primary, "UsersAuth", "users"].filter(Boolean))];
+}
+
+/**
+ * Human-readable name from an optional profile row (doctor_profile, patient_profile, …)
+ * plus optional expanded auth user. Does not use specialty/clinical labels as a fallback name.
+ */
+export function resolveListingDisplayName(profileRecord, authUserRecord) {
+  const pick = (v) => String(v == null ? "" : v).trim();
+  let uRaw = authUserRecord;
+  if (Array.isArray(uRaw)) uRaw = uRaw[0];
+  const u =
+    uRaw && typeof uRaw === "object" && !Array.isArray(uRaw) ? uRaw : {};
+  const r = profileRecord || {};
+  const firstLast = [
+    pick(u.first_name),
+    pick(u.last_name),
+    pick(r.first_name),
+    pick(r.last_name),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const candidates = [
+    pick(u.name),
+    firstLast,
+    pick(u.full_name),
+    pick(u.displayName),
+    pick(u.display_name),
+    pick(u.username),
+    pick(u.userName),
+    pick(u.user_name),
+    pick(u.nickname),
+    pick(r.full_name),
+    pick(r.display_name),
+    pick(r.name),
+    pick(r.doctor_name),
+    pick(r.preferred_name),
+    pick(r.store_name),
+    pick(r.title),
+  ];
+  for (const c of candidates) {
+    if (c) return c;
+  }
+  const email = pick(u.email || r.email);
+  if (email && email.includes("@")) {
+    const local = email.split("@")[0].trim();
+    if (local) {
+      const humanized = local.replace(/[._-]+/g, " ").trim();
+      return humanized || local;
+    }
+  }
+  if (email) return email;
+  return "";
+}
+
+/** Batch-load auth user rows for id lists (names often missing from relation expands under PB rules). */
+export async function fetchUsersAuthByIds(userIds) {
+  const byId = new Map();
+  const ids = [...new Set((userIds || []).filter(Boolean).map(String))];
+  const collections = getAuthUsersCollectionCandidates();
+  for (let i = 0; i < ids.length; i += USERS_AUTH_FETCH_CHUNK) {
+    const chunk = ids.slice(i, i + USERS_AUTH_FETCH_CHUNK);
+    const filter = chunk
+      .map((id) => `id="${String(id).replace(/"/g, '\\"')}"`)
+      .join(" || ");
+    for (const coll of collections) {
+      try {
+        const rows = await pb.collection(coll).getFullList({
+          filter,
+          requestKey: null,
+        });
+        (rows || []).forEach((row) => {
+          if (row?.id && !byId.has(row.id)) byId.set(row.id, row);
+        });
+      } catch (error) {
+        console.log(`fetchUsersAuthByIds ${coll} list:`, error?.message);
+      }
+    }
+    for (const id of chunk) {
+      if (byId.has(id)) continue;
+      for (const coll of collections) {
+        try {
+          const row = await pb.collection(coll).getOne(id, {
+            requestKey: null,
+          });
+          if (row?.id) {
+            byId.set(id, row);
+            break;
+          }
+        } catch {
+          /* try next collection */
+        }
+      }
+    }
+  }
+  return byId;
+}
+
+/** Batch-load patient_profile rows (names live here when appointments.patient points at profile). */
+export async function fetchPatientProfilesByIds(profileIds) {
+  const byId = new Map();
+  const ids = [...new Set((profileIds || []).filter(Boolean).map(String))];
+  for (let i = 0; i < ids.length; i += USERS_AUTH_FETCH_CHUNK) {
+    const chunk = ids.slice(i, i + USERS_AUTH_FETCH_CHUNK);
+    const filter = chunk
+      .map((id) => `id="${String(id).replace(/"/g, '\\"')}"`)
+      .join(" || ");
+    try {
+      const rows = await pb.collection("patient_profile").getFullList({
+        filter,
+        requestKey: null,
+      });
+      rows.forEach((row) => byId.set(row.id, row));
+    } catch (error) {
+      console.log("fetchPatientProfilesByIds chunk error:", error?.message);
+      for (const id of chunk) {
+        try {
+          const row = await pb.collection("patient_profile").getOne(id, {
+            requestKey: null,
+          });
+          byId.set(id, row);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  return byId;
+}
+
+/**
+ * Doctor queue rows: merge expanded UsersAuth onto `expand.patient` when PB only
+ * returns the profile (or strips nested user fields).
+ */
+export async function hydrateRowsPatientAuthUsers(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const ids = new Set();
+  for (const row of rows) {
+    const p = row.expand?.patient;
+    if (!p || typeof p !== "object") continue;
+    if (p.expand?.user?.id) ids.add(p.expand.user.id);
+    const rel = typeof p.user === "string" ? p.user : p.user?.id;
+    if (rel) ids.add(rel);
+    if (!rel && !p.expand?.user && (p.email || p.username)) ids.add(p.id);
+  }
+  if (!ids.size) return rows;
+  const byId = await fetchUsersAuthByIds([...ids]);
+  return rows.map((row) => {
+    const p = row.expand?.patient;
+    if (!p || typeof p !== "object") return row;
+    let uid =
+      (p.expand?.user && p.expand.user.id) ||
+      (typeof p.user === "string" ? p.user : p.user?.id) ||
+      null;
+    if (!uid && (p.email || p.username)) uid = p.id;
+    const u = uid ? byId.get(uid) : null;
+    if (!u) return row;
+    return {
+      ...row,
+      expand: {
+        ...row.expand,
+        patient: {
+          ...p,
+          expand: { ...(p.expand || {}), user: u },
+        },
+      },
+    };
+  });
 }
 
 /** Doctor package slot index (1–3) → tier label shown to doctors and patients. */
@@ -795,6 +979,183 @@ export async function clearPatientCareMode({ profileId, userId }) {
   } catch (error) {
     console.log("clearPatientCareMode:", error?.message);
   }
+}
+
+const patientPrimaryPathsKey = (userId) =>
+  `nv_patient_primary_paths_v1_${String(userId || "").trim()}`;
+
+/**
+ * Persisted primary-care onboarding (General / Specialist paths).
+ * `completed: true` means the patient finished the post-registration wizard.
+ */
+export async function readPatientPrimaryCarePaths(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+  try {
+    const raw = await AsyncStorage.getItem(patientPrimaryPathsKey(uid));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writePatientPrimaryCarePaths(userId, data) {
+  const uid = String(userId || "").trim();
+  if (!uid || !data || typeof data !== "object") return;
+  try {
+    await AsyncStorage.setItem(patientPrimaryPathsKey(uid), JSON.stringify(data));
+  } catch (e) {
+    console.log("writePatientPrimaryCarePaths:", e?.message);
+  }
+}
+
+export async function clearPatientPrimaryCarePaths(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+  try {
+    await AsyncStorage.removeItem(patientPrimaryPathsKey(uid));
+  } catch (e) {
+    console.log("clearPatientPrimaryCarePaths:", e?.message);
+  }
+}
+
+/** If the patient already had legacy `care_mode` before primary-paths existed, mark paths complete. */
+export async function migrateLegacyPatientPrimaryPathsIfNeeded(
+  userId,
+  profile,
+  localCareMode,
+) {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+  const existing = await readPatientPrimaryCarePaths(uid);
+  if (existing?.completed) return existing;
+  const legacy = String(
+    profile?.care_mode || localCareMode || "",
+  ).trim();
+  if (legacy) {
+    const migrated = {
+      completed: true,
+      legacyCareMode: legacy,
+      wantsGeneral: legacy === CARE_MODE.GENERAL,
+      wantsSpecialist: legacy === CARE_MODE.PACKAGE,
+    };
+    await writePatientPrimaryCarePaths(uid, migrated);
+    return migrated;
+  }
+  return existing;
+}
+
+/** True if the patient has a non-cancelled appointment with this doctor. */
+export async function patientHasBookedConsultWithDoctor(
+  patientUserId,
+  doctorUserId,
+) {
+  const pid = String(patientUserId || "").trim();
+  const did = String(doctorUserId || "").trim();
+  if (!pid || !did) return false;
+  try {
+    const profileId = await resolveDoctorProfileIdForUser(did);
+    const doctorKeys = [...new Set([did, profileId].filter(Boolean))];
+    const parts = doctorKeys.map((d) => `doctor="${d}"`);
+    const filter = `patient="${pid}" && (${parts.join(" || ")})`;
+    const rows = await pb.collection(appointmentsColl()).getFullList({
+      requestKey: null,
+      filter,
+      sort: "-created",
+    });
+    return rows.some((r) => {
+      const st = String(r.status || "").toLowerCase();
+      if (st === "cancelled" || st === "canceled" || st === "rejected")
+        return false;
+      return true;
+    });
+  } catch (e) {
+    console.log("patientHasBookedConsultWithDoctor:", e?.message);
+    return false;
+  }
+}
+
+/**
+ * Basic package: calls/chat only inside the doctor's configured daily window (local time, best-effort).
+ */
+export function isNowInsideConsultationWindowText(rawWindow) {
+  const t = String(rawWindow || "").trim();
+  if (!t) return true;
+  if (/\b24\s*[/\s.-]*\s*7\b/i.test(t)) return true;
+  const pieces = t.split(/\s+to\s+|\s*-\s+/i).map((s) => s.trim()).filter(Boolean);
+  if (pieces.length < 2) return true;
+  const parseToday = (timeStr) => {
+    const s = String(timeStr || "").trim();
+    if (!s) return null;
+    const m = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = parseInt(m[2] || "0", 10);
+    const ap = m[3].toUpperCase();
+    if (ap === "PM" && h !== 12) h += 12;
+    if (ap === "AM" && h === 12) h = 0;
+    const base = new Date();
+    base.setHours(h, min, 0, 0);
+    return base.getTime();
+  };
+  const a = parseToday(pieces[0]);
+  const b = parseToday(pieces[1]);
+  if (a == null || b == null) return true;
+  let start = Math.min(a, b);
+  let end = Math.max(a, b);
+  const now = Date.now();
+  if (end <= start) end += 24 * 60 * 60 * 1000;
+  return now >= start && now <= end;
+}
+
+export async function assertPatientMayPlaceCallToDoctor({
+  patientUserId,
+  doctorUserId,
+  primaryPaths,
+  patientCareMode,
+  consumerPlan,
+  consultationTimeWindow,
+}) {
+  const did = String(doctorUserId || "").trim();
+  const pid = String(patientUserId || "").trim();
+  if (!did || !pid) return { ok: true };
+
+  const paths =
+    primaryPaths && typeof primaryPaths === "object"
+      ? primaryPaths
+      : await readPatientPrimaryCarePaths(pid);
+  const genId = String(paths?.generalDoctorUserId || "").trim();
+  const specId = String(paths?.specialistDoctorUserId || "").trim();
+
+  if (patientCareMode === CARE_MODE.GENERAL && genId && did === genId) {
+    const booked = await patientHasBookedConsultWithDoctor(pid, did);
+    if (!booked) {
+      return {
+        ok: false,
+        message:
+          "Book and pay for an appointment with your general doctor before starting a call.",
+      };
+    }
+  }
+
+  const plan = String(consumerPlan || CONSUMER_PLAN.BASIC).toLowerCase();
+  if (
+    specId &&
+    did === specId &&
+    plan === CONSUMER_PLAN.BASIC &&
+    consultationTimeWindow
+  ) {
+    if (!isNowInsideConsultationWindowText(consultationTimeWindow)) {
+      return {
+        ok: false,
+        message: `Basic package: calls are limited to your doctor's consultation hours (${consultationTimeWindow}).`,
+      };
+    }
+  }
+
+  return { ok: true };
 }
 
 async function notifyLocal(title, body) {
@@ -3433,7 +3794,7 @@ export async function listQueuedQuickSolutionRequestsForProvider() {
       requestKey: null,
       sort: "-created",
       filter: `status="queued"`,
-      expand: "patient",
+      expand: "patient.user",
     });
   } catch (e1) {
     try {
@@ -3441,6 +3802,7 @@ export async function listQueuedQuickSolutionRequestsForProvider() {
         requestKey: null,
         sort: "-created",
         filter: `status="queued"`,
+        expand: "patient",
       });
     } catch (e2) {
       const msg =
@@ -3464,7 +3826,7 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
       requestKey: null,
       sort: "-created",
       filter: `status="queued"`,
-      expand: "patient",
+      expand: "patient.user",
     });
   } catch (e1) {
     try {
@@ -3472,6 +3834,7 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
         requestKey: null,
         sort: "-created",
         filter: `status="queued"`,
+        expand: "patient",
       });
     } catch (e2) {
       const msg =

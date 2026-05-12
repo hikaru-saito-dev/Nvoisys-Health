@@ -77,9 +77,11 @@ import {
   signUpWithEmail,
 } from "./pocketbase";
 import {
+  assertPatientMayPlaceCallToDoctor,
   CARE_MODE,
   cleanAppointmentReasonForDisplay,
   clearPatientCareMode,
+  clearPatientPrimaryCarePaths,
   combineDateAndTimeToIso,
   CONSUMER_PLAN,
   completePackageOfferPayment,
@@ -95,6 +97,8 @@ import {
   effectiveCareMode,
   ensurePackageDemoMeetingConversation,
   entitlementsForConsumerPlan,
+  fetchUsersAuthByIds,
+  fetchPatientProfilesByIds,
   getCoinBalanceForUser,
   getPatientActiveQuickCareBinding,
   listPackageOffersForDoctor,
@@ -102,6 +106,8 @@ import {
   mergeLocalFeesOntoSlots,
   minutesUsedWithDoctorThisRollingWeek,
   needsCareOnboarding,
+  migrateLegacyPatientPrimaryPathsIfNeeded,
+  readPatientPrimaryCarePaths,
   PACKAGE_MEETING_STATUS,
   normalizeDoctorPackageSlots,
   normalizePharmacyProviderKind,
@@ -116,9 +122,11 @@ import {
   recordQuickHelpOffer,
   recordPatientDoctorInteraction,
   resolveDoctorProfileIdForUser,
+  resolveListingDisplayName,
   settlePackageCoinsForCompletedAppointment,
   writeLocalCareMode,
 } from "./productSpecApi";
+import { PatientPrimaryCareOnboardingScreen } from "./patientPrimaryCareOnboarding";
 import {
   AdminConsoleAppScreen,
   CareModeOnboardingScreen,
@@ -2417,24 +2425,31 @@ const PatientHealthProfileFields = ({
   );
 };
 
-const mapWoundRecord = (record) => ({
-  id: record.id,
-  patient: record.patient || null,
-  patientId: record.patient || null,
-  patientName: record.expand?.patient?.name || record.patientName || "Patient",
-  description: record.description || "",
-  notes: record.notes || "",
-  severity: record.severity || "moderate",
-  status: humanizeWoundStatus(record.status),
-  statusKey: normalizeWoundStatus(record.status),
-  date: formatDateValue(record.created),
-  image: record.image || null,
-  imageUrl: woundRecordImageUrl(record),
-  doctor: record.doctor || null,
-  conversation: record.conversation || null,
-  hasPharmacy: !!record.hasPharmacy,
-  raw: record,
-});
+const mapWoundRecord = (record) => {
+  const p = record.expand?.patient;
+  const patientName =
+    resolveListingDisplayName(p, p?.expand?.user) ||
+    String(record.patientName || "").trim() ||
+    "Patient";
+  return {
+    id: record.id,
+    patient: record.patient || null,
+    patientId: record.patient || null,
+    patientName,
+    description: record.description || "",
+    notes: record.notes || "",
+    severity: record.severity || "moderate",
+    status: humanizeWoundStatus(record.status),
+    statusKey: normalizeWoundStatus(record.status),
+    date: formatDateValue(record.created),
+    image: record.image || null,
+    imageUrl: woundRecordImageUrl(record),
+    doctor: record.doctor || null,
+    conversation: record.conversation || null,
+    hasPharmacy: !!record.hasPharmacy,
+    raw: record,
+  };
+};
 
 // Predefined health-concern tags for the Find Doctor chip bar. The list is
 // intentionally small and user-visible; new concerns a doctor adds on their
@@ -2486,8 +2501,36 @@ const parseDoctorConcerns = (raw) => {
   return [];
 };
 
+const isDoctorSpecialtyPlaceholder = (raw) => {
+  const t = String(raw ?? "").trim();
+  if (!t) return true;
+  const low = t.toLowerCase();
+  return (
+    low === "n/a" ||
+    low === "na" ||
+    low === "-" ||
+    low === "none" ||
+    low === "unknown" ||
+    low === "nil"
+  );
+};
+
+const normalizeDoctorProfileSpecialty = (record) => {
+  const raw =
+    record.specialty ||
+    record.department ||
+    record.category ||
+    record.field ||
+    "";
+  const trimmed = String(raw).trim();
+  if (isDoctorSpecialtyPlaceholder(trimmed)) return "General Physician";
+  return trimmed;
+};
+
 const mapDoctorListingRecord = (record) => {
-  const user = record?.expand?.user;
+  const rawUser = record?.expand?.user;
+  let user = Array.isArray(rawUser) ? rawUser[0] : rawUser;
+  if (typeof user === "string") user = null;
   const userId = record.user || user?.id || null;
   const token = pb?.authStore?.token;
   const rawAvatar = record.avatar || record.photo || record.profile_image;
@@ -2496,12 +2539,7 @@ const mapDoctorListingRecord = (record) => {
     avatarField && record.id
       ? pb.files.getUrl(record, avatarField, token ? { token } : undefined)
       : null;
-  const specialty =
-    record.specialty ||
-    record.department ||
-    record.category ||
-    record.field ||
-    "General Physician";
+  const specialty = normalizeDoctorProfileSpecialty(record);
   const concerns = parseDoctorConcerns(
     record.concerns ||
       record.health_concerns ||
@@ -2535,10 +2573,13 @@ const mapDoctorListingRecord = (record) => {
     languageKeysSeen.add(dedupeKey);
     languagesMerged.push(piece);
   }
+  const resolvedName = resolveListingDisplayName(record, user);
+  // Never use specialty (e.g. "General Physician") as the person's name — only real auth/profile names.
+  const listingName = resolvedName || "Healthcare provider";
   return {
     profileId: record.id,
     userId,
-    name: user?.name || record.full_name || record.display_name || "Doctor",
+    name: listingName,
     practitionerTier: practitionerTier || "professional",
     packageSlots,
     packagesSetupComplete,
@@ -2759,16 +2800,147 @@ const mapPharmacyListingRecord = (record) => {
   };
 };
 
+const collectAppointmentRelatedAuthUserIds = (record) => {
+  const out = [];
+  const add = (v) => {
+    const s = typeof v === "string" ? v.trim() : v?.id;
+    if (s) out.push(s);
+  };
+  const pEx = record.expand?.patient;
+  if (pEx && typeof pEx === "object") {
+    const pUserFromExp = pEx.expand?.user;
+    const pUserObj = Array.isArray(pUserFromExp)
+      ? pUserFromExp[0]
+      : pUserFromExp;
+    if (pUserObj?.id) add(pUserObj.id);
+    const prel = typeof pEx.user === "string" ? pEx.user : pEx.user?.id;
+    if (prel) add(prel);
+  }
+  add(record.patient);
+  const d = record.expand?.doctor;
+  if (d && typeof d === "object") {
+    const dUserFromExp = d.expand?.user;
+    const dUserObj = Array.isArray(dUserFromExp)
+      ? dUserFromExp[0]
+      : dUserFromExp;
+    if (dUserObj?.id) add(dUserObj.id);
+    const rel = typeof d.user === "string" ? d.user : d.user?.id;
+    if (rel) add(rel);
+    if (!rel && !d.expand?.user && (d.name || d.email || d.username))
+      add(d.id);
+  } else {
+    add(typeof record.doctor === "string" ? record.doctor : record.doctor?.id);
+  }
+  try {
+    const workflow = decodeMeetingWorkflowFromAppointmentRow(record);
+    add(workflow?.patient_auth_user_id);
+    add(workflow?.doctor_auth_user_id);
+  } catch {
+    /* ignore */
+  }
+  return out;
+};
+
+const looksLikePatientProfileRow = (p) => {
+  if (!p || typeof p !== "object") return false;
+  if (p.user != null) return true;
+  if (String(p.full_name || "").trim()) return true;
+  if (p.primary_condition != null) return true;
+  if (p.medical_conditions != null) return true;
+  return false;
+};
+
+const mergeAppointmentRecordAuthUsers = (record, byId) => {
+  const expand = { ...(record.expand || {}) };
+  const norm = (u) => {
+    const v = Array.isArray(u) ? u[0] : u;
+    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+  };
+
+  const p0 = record.expand?.patient;
+  if (p0 && typeof p0 === "object") {
+    const expandedUser = norm(p0.expand?.user);
+    const pUserId =
+      (expandedUser && expandedUser.id) ||
+      (typeof p0.user === "string" ? p0.user : p0.user?.id) ||
+      null;
+    const fetchedUser = pUserId ? norm(byId.get(pUserId)) : null;
+    if (fetchedUser) {
+      expand.patient = {
+        ...p0,
+        expand: { ...(p0.expand || {}), user: fetchedUser },
+      };
+    } else {
+      const flat =
+        typeof record.patient === "string" ? record.patient : record.patient?.id;
+      if (flat && byId.has(flat)) {
+        expand.patient = byId.get(flat);
+      } else {
+        expand.patient = p0;
+      }
+    }
+  } else {
+    const flat =
+      typeof record.patient === "string" ? record.patient : record.patient?.id;
+    if (flat && byId.has(flat)) expand.patient = byId.get(flat);
+    else if (record.expand?.patient) expand.patient = record.expand.patient;
+  }
+
+  const d0 = record.expand?.doctor;
+  if (d0 && typeof d0 === "object") {
+    const uid =
+      (d0.expand?.user && norm(d0.expand.user)?.id) ||
+      (typeof d0.user === "string" ? d0.user : d0.user?.id) ||
+      null;
+    if (uid && byId.has(uid)) {
+      expand.doctor = {
+        ...d0,
+        expand: { ...(d0.expand || {}), user: norm(byId.get(uid)) },
+      };
+    } else if (!uid && d0.id && byId.has(d0.id)) {
+      expand.doctor = norm(byId.get(d0.id));
+    } else {
+      expand.doctor = d0;
+    }
+  } else {
+    const dr =
+      typeof record.doctor === "string" ? record.doctor : record.doctor?.id;
+    if (dr && byId.has(dr)) expand.doctor = norm(byId.get(dr));
+    else if (record.expand?.doctor) expand.doctor = record.expand.doctor;
+  }
+  return { ...record, expand };
+};
+
+const mergeAppointmentPatientProfiles = (record, profById) => {
+  const prev = record.expand?.patient;
+  const pid = prev && typeof prev === "object" ? prev.id : null;
+  if (!pid || !profById.has(pid)) return record;
+  const fresh = profById.get(pid);
+  return {
+    ...record,
+    expand: {
+      ...record.expand,
+      patient: {
+        ...prev,
+        ...fresh,
+        expand: { ...(prev.expand || {}), ...(fresh.expand || {}) },
+      },
+    },
+  };
+};
+
 const mapAppointmentRecord = (record) => {
+  const norm = (u) => (Array.isArray(u) ? u[0] : u);
   const doctor = record.expand?.doctor;
-  const doctorUser = doctor?.expand?.user;
+  const nestedDoctorUser = norm(doctor?.expand?.user);
   const patient = record.expand?.patient;
+  const nestedPatientUser = norm(patient?.expand?.user);
   const scheduledAt =
     record.scheduled_at || record.scheduledAt || record.date || record.when;
   const rawStatus = record.status || "scheduled";
   const doctorUserIdFromExpand =
-    doctorUser?.id ||
-    (typeof doctor?.user === "string" ? doctor.user : null) ||
+    nestedDoctorUser?.id ||
+    (typeof doctor?.user === "string" ? doctor.user : doctor?.user?.id) ||
     null;
   const doctorUserIdFromRecord =
     typeof record.doctor === "string" ? record.doctor : null;
@@ -2792,6 +2964,16 @@ const mapAppointmentRecord = (record) => {
       // ignore decode issues
     }
   }
+  const patientName =
+    resolveListingDisplayName(patient, nestedPatientUser) ||
+    String(record.patient_name || "").trim() ||
+    "Patient";
+  const doctorName =
+    (PB_APPOINTMENT_DOCTOR_IS_PROFILE
+      ? resolveListingDisplayName(doctor, nestedDoctorUser)
+      : resolveListingDisplayName({}, doctor)) ||
+    String(record.doctor_name || "").trim() ||
+    "Doctor";
   return {
     id: record.id,
     scheduledAt,
@@ -2812,15 +2994,9 @@ const mapAppointmentRecord = (record) => {
     meetingWorkflowStatus,
     conversationId: record.conversation || null,
     patientId: record.patient || null,
-    patientName:
-      patient?.name || patient?.full_name || record.patient_name || "Patient",
+    patientName,
     doctorUserId: doctorUserIdFromExpand || doctorUserIdFromRecord,
-    doctorName:
-      doctorUser?.name ||
-      doctor?.name ||
-      doctor?.full_name ||
-      record.doctor_name ||
-      "Doctor",
+    doctorName,
     doctorId: record.doctor || null,
     consultationFee:
       Number(
@@ -2849,10 +3025,10 @@ const mapOrderRecord = (record) => {
     woundExpand?.expand?.doctor ||
     woundExpand?.expand?.assigned_doctor ||
     record.expand?.doctor;
+  const doctorProfile = record.expand?.doctor_profile;
   const doctorName =
-    doctorUser?.name ||
-    doctorUser?.full_name ||
-    record.expand?.doctor_profile?.expand?.user?.name ||
+    resolveListingDisplayName(doctorUser, doctorUser?.expand?.user) ||
+    resolveListingDisplayName(doctorProfile, doctorProfile?.expand?.user) ||
     "Attending physician";
   const itemsText =
     itemsList.length > 0
@@ -2872,11 +3048,14 @@ const mapOrderRecord = (record) => {
   // the directory. "prescription_order" = doctor's prescribe flow auto-created
   // the order for any pharmacy.
   const orderKind = pharmacyUserId ? "pharmacy_order" : "prescription_order";
+  const pat = record.expand?.patient;
+  const patientDisplay =
+    resolveListingDisplayName(pat, pat?.expand?.user) || "Patient";
   return {
     id: record.id,
     wound: record.wound || null,
     conversation: record.conversation || null,
-    patient: record.expand?.patient?.name || "Patient",
+    patient: patientDisplay,
     patientId: record.patient || null,
     pharmacyId: pharmacyUserId,
     pharmacyName,
@@ -2900,17 +3079,21 @@ const mapPrescriptionRecord = (record) => {
   const diagnosis = String(record?.notes || "").trim();
   const doctorUser = record?.expand?.doctor;
   const doctorName =
-    doctorUser?.name || doctorUser?.full_name || "Attending physician";
+    resolveListingDisplayName(doctorUser, doctorUser?.expand?.user) ||
+    "Attending physician";
   const itemsText =
     itemsList.length > 0
       ? formatPrescriptionSummaryText(itemsList, diagnosis)
       : "Medicine items";
+  const pat = record.expand?.patient;
+  const patientName =
+    resolveListingDisplayName(pat, pat?.expand?.user) || "Patient";
   return {
     id: record.id,
     wound: record.wound || null,
     conversation: record.conversation || null,
     patientId: record.patient || null,
-    patientName: record.expand?.patient?.name || "Patient",
+    patientName,
     doctorId: record.doctor || null,
     itemsList,
     items: itemsText,
@@ -4247,6 +4430,7 @@ const PatientHomeScreen = () => {
     patientProfile,
     fetchApprovedDoctors,
     patientCareMode,
+    patientPrimaryCarePaths,
     dataLoading,
     CARE_MODE,
     currentUser,
@@ -4486,6 +4670,27 @@ const PatientHomeScreen = () => {
     },
     [ensureAssistantConversation, sendAssistantMessage],
   );
+
+  /** Home quick action: open pinned Health Assistant chat for symptom questions. */
+  const openSymptomsAssistant = useCallback(async () => {
+    try {
+      const conv = await ensureAssistantConversation();
+      if (!conv?.id) {
+        Alert.alert(
+          "Health Assistant",
+          "Could not open the assistant right now. Try again in a moment.",
+        );
+        return;
+      }
+      requestOpenConversation?.(conv.id, {});
+      tabNav?.navigateTab?.("Chat");
+    } catch (e) {
+      Alert.alert(
+        "Health Assistant",
+        e?.message || "Could not open the assistant.",
+      );
+    }
+  }, [ensureAssistantConversation, requestOpenConversation, tabNav]);
 
   const upcomingAppointments = (appointments || [])
     .filter((appointment) => {
@@ -5046,6 +5251,64 @@ const PatientHomeScreen = () => {
             <View
               style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
             >
+              {(patientPrimaryCarePaths?.wantsGeneral ||
+                patientPrimaryCarePaths?.wantsSpecialist) && (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    marginBottom: RFValue(12),
+                  }}
+                >
+                  {patientPrimaryCarePaths?.wantsGeneral ? (
+                    <View
+                      style={{
+                        paddingHorizontal: RFValue(12),
+                        paddingVertical: RFValue(6),
+                        borderRadius: RFValue(20),
+                        backgroundColor: theme.accentLight,
+                        borderWidth: 1,
+                        borderColor: theme.accent,
+                        marginRight: RFValue(8),
+                        marginBottom: RFValue(6),
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontWeight: "800",
+                          color: theme.accent,
+                          fontSize: RFValue(12),
+                        }}
+                      >
+                        General doctor
+                      </Text>
+                    </View>
+                  ) : null}
+                  {patientPrimaryCarePaths?.wantsSpecialist ? (
+                    <View
+                      style={{
+                        paddingHorizontal: RFValue(12),
+                        paddingVertical: RFValue(6),
+                        borderRadius: RFValue(20),
+                        backgroundColor: theme.successLight,
+                        borderWidth: 1,
+                        borderColor: theme.success,
+                        marginBottom: RFValue(6),
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontWeight: "800",
+                          color: theme.success,
+                          fontSize: RFValue(12),
+                        }}
+                      >
+                        Specialist doctor
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
               {/* Quick Actions Grid */}
               <View
                 style={{
@@ -5070,7 +5333,7 @@ const PatientHomeScreen = () => {
                   }}
                 >
                   <TouchableOpacity
-                    onPress={() => setShowFindDoctor(true)}
+                    onPress={() => void openSymptomsAssistant()}
                     style={{ alignItems: "center", width: "25%" }}
                   >
                     <View
@@ -5322,9 +5585,11 @@ const PatientHomeScreen = () => {
                     ? "Package Doctor"
                     : patientCareMode === CARE_MODE.CASUAL
                       ? "Casual / Normal"
-                      : patientCareMode === CARE_MODE.SKIP
-                        ? "Browsing (skip)"
-                        : "-"}
+                      : patientCareMode === CARE_MODE.GENERAL
+                        ? "General doctor"
+                        : patientCareMode === CARE_MODE.SKIP
+                          ? "Browsing (skip)"
+                          : "-"}
                 </Text>
                 <Text
                   style={{
@@ -7566,6 +7831,8 @@ const PatientChatScreen = () => {
   const {
     currentUserId,
     userRole,
+    patientCareMode,
+    patientPrimaryCarePaths,
     conversations,
     loadConversationMessages,
     sendConversationMessage,
@@ -7578,6 +7845,7 @@ const PatientChatScreen = () => {
     pendingChatRequest,
     consumePendingChatRequest,
   } = useAppData();
+  const patientQuickCareBinding = usePatientQuickCareBinding();
   const [selectedContact, setSelectedContact] = useState(null);
   const [message, setMessage] = useState("");
   const [contactMessages, setContactMessages] = useState([]);
@@ -7646,6 +7914,53 @@ const PatientChatScreen = () => {
     }
     return conversation?.id || "";
   };
+
+  const initiateChatCall = useCallback(
+    async (callType) => {
+      if (!selectedContact) return;
+      const pair = patientDoctorPairFromConversation(selectedContact, {
+        id: currentUserId,
+      });
+      if (userRole === "patient" && pair.doctorUserId) {
+        try {
+          const res = await assertPatientMayPlaceCallToDoctor({
+            patientUserId: currentUserId,
+            doctorUserId: pair.doctorUserId,
+            primaryPaths: patientPrimaryCarePaths,
+            patientCareMode,
+            consumerPlan:
+              patientQuickCareBinding?.consumerPlan || CONSUMER_PLAN.BASIC,
+            consultationTimeWindow: "",
+          });
+          if (!res.ok) {
+            Alert.alert("Call not available", res.message || "");
+            return;
+          }
+        } catch (e) {
+          console.log("initiateChatCall check:", e?.message);
+        }
+      }
+      void recordPatientDoctorInteraction({
+        ...pair,
+        kind: callType,
+        conversationId: selectedContact.id,
+        source: "chat_call_button",
+      });
+      setActiveCall({
+        conversationId: resolveCallRoomId(selectedContact),
+        callType,
+        contact: selectedContact,
+      });
+    },
+    [
+      selectedContact,
+      currentUserId,
+      userRole,
+      patientPrimaryCarePaths,
+      patientCareMode,
+      patientQuickCareBinding,
+    ],
+  );
 
   const showDirectoryResults = normalizedQuery.length > 0;
   const directoryMatches = showDirectoryResults
@@ -8159,54 +8474,26 @@ const PatientChatScreen = () => {
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: "row", opacity: 0.45 }}>
-            <TouchableOpacity
-              style={{ padding: 8 }}
-              onPress={() => {
-                const pair = patientDoctorPairFromConversation(selectedContact, {
-                  id: currentUserId,
-                });
-                void recordPatientDoctorInteraction({
-                  ...pair,
-                  kind: "audio",
-                  conversationId: selectedContact.id,
-                  source: "chat_call_button",
-                });
-                setActiveCall({
-                  conversationId: resolveCallRoomId(selectedContact),
-                  callType: "audio",
-                  contact: selectedContact,
-                });
-              }}
-            >
-              <Ionicons name="call" size={RFValue(20)} color={theme.accent} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={{ padding: 8, marginLeft: 8 }}
-              onPress={() => {
-                const pair = patientDoctorPairFromConversation(selectedContact, {
-                  id: currentUserId,
-                });
-                void recordPatientDoctorInteraction({
-                  ...pair,
-                  kind: "video",
-                  conversationId: selectedContact.id,
-                  source: "chat_call_button",
-                });
-                setActiveCall({
-                  conversationId: resolveCallRoomId(selectedContact),
-                  callType: "video",
-                  contact: selectedContact,
-                });
-              }}
-            >
-              <Ionicons
-                name="videocam"
-                size={RFValue(20)}
-                color={theme.accent}
-              />
-            </TouchableOpacity>
-          </View>
+          {!isAssistantConversation(selectedContact) ? (
+            <View style={{ flexDirection: "row", opacity: 0.45 }}>
+              <TouchableOpacity
+                style={{ padding: 8 }}
+                onPress={() => void initiateChatCall("audio")}
+              >
+                <Ionicons name="call" size={RFValue(20)} color={theme.accent} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ padding: 8, marginLeft: 8 }}
+                onPress={() => void initiateChatCall("video")}
+              >
+                <Ionicons
+                  name="videocam"
+                  size={RFValue(20)}
+                  color={theme.accent}
+                />
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </View>
 
         <KeyboardAvoidingView
@@ -10394,9 +10681,9 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                 marginBottom: RFValue(14),
               }}
             >
-              Cashfree needs the customer's mobile number to create the payment
-              order. This will be saved to your patient profile for future
-              payments.
+              {
+                "Cashfree needs the customer's mobile number to create the payment order. This will be saved to your patient profile for future payments."
+              }
             </Text>
             <TextInput
               value={paymentPhone}
@@ -23330,8 +23617,9 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
             marginBottom: RFValue(10),
           }}
         >
-          The app doesn't handle payment or delivery. Finalize price and
-          delivery with the pharmacy in chat.
+          {
+            "The app doesn't handle payment or delivery. Finalize price and delivery with the pharmacy in chat."
+          }
         </Text>
 
         <ScrollView
@@ -23442,8 +23730,9 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                 marginBottom: RFValue(10),
               }}
             >
-              This pharmacy hasn't listed products yet. Add the items you want
-              below.
+              {
+                "This pharmacy hasn't listed products yet. Add the items you want below."
+              }
             </Text>
           )}
 
@@ -29234,6 +29523,10 @@ export default function App() {
     },
   ]);
   const [localCareMode, setLocalCareMode] = useState("");
+  const [patientPrimaryCarePaths, setPatientPrimaryCarePaths] =
+    useState(null);
+  const [patientPrimaryCarePathsLoaded, setPatientPrimaryCarePathsLoaded] =
+    useState(false);
 
   const callInviteWsRef = useRef(null);
   const callInviteReconnectRef = useRef(null);
@@ -29381,6 +29674,51 @@ export default function App() {
     currentUser?.id,
     patientProfile?.id,
     patientProfile?.care_mode,
+  ]);
+
+  const reloadPatientPrimaryCarePaths = useCallback(async () => {
+    const uid = currentUser?.id;
+    if (!uid || userRole !== "patient") {
+      setPatientPrimaryCarePaths(null);
+      setPatientPrimaryCarePathsLoaded(true);
+      return;
+    }
+    const paths = await readPatientPrimaryCarePaths(uid);
+    setPatientPrimaryCarePaths(paths);
+    setPatientPrimaryCarePathsLoaded(true);
+  }, [currentUser?.id, userRole]);
+
+  useEffect(() => {
+    if (userRole !== "patient" || !currentUser?.id) {
+      setPatientPrimaryCarePaths(null);
+      setPatientPrimaryCarePathsLoaded(false);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      setPatientPrimaryCarePathsLoaded(false);
+      const migrated = await migrateLegacyPatientPrimaryPathsIfNeeded(
+        currentUser.id,
+        patientProfile,
+        localCareMode,
+      );
+      if (cancelled) return;
+      const paths =
+        migrated ?? (await readPatientPrimaryCarePaths(currentUser.id));
+      if (!cancelled) {
+        setPatientPrimaryCarePaths(paths);
+        setPatientPrimaryCarePathsLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    userRole,
+    currentUser?.id,
+    patientProfile?.id,
+    patientProfile?.care_mode,
+    localCareMode,
   ]);
 
   const fetchUsersByRole = async (role) => {
@@ -29699,6 +30037,44 @@ export default function App() {
         fetchAppointmentsSafe(),
       ]);
 
+      let appointmentsForMap = appointmentRecords || [];
+      const apptAuthIds = uniqueIds(
+        appointmentsForMap.flatMap(collectAppointmentRelatedAuthUserIds),
+      );
+      if (apptAuthIds.length) {
+        try {
+          const apptAuthById = await fetchUsersAuthByIds(apptAuthIds);
+          appointmentsForMap = appointmentsForMap.map((r) =>
+            mergeAppointmentRecordAuthUsers(r, apptAuthById),
+          );
+        } catch (e) {
+          console.log("appointment auth hydrate skipped:", e?.message);
+        }
+      }
+
+      const patientProfIds = uniqueIds(
+        appointmentsForMap
+          .map((r) => {
+            const p = r.expand?.patient;
+            if (!p || typeof p !== "object" || !p.id) return null;
+            return looksLikePatientProfileRow(p) ? p.id : null;
+          })
+          .filter(Boolean),
+      );
+      if (patientProfIds.length) {
+        try {
+          const profById = await fetchPatientProfilesByIds(patientProfIds);
+          appointmentsForMap = appointmentsForMap.map((r) =>
+            mergeAppointmentPatientProfiles(r, profById),
+          );
+        } catch (e) {
+          console.log(
+            "appointment patient_profile hydrate skipped:",
+            e?.message,
+          );
+        }
+      }
+
       const allWounds = woundRecords.map(mapWoundRecord);
       const allOrders = orderRecords.map(mapOrderRecord);
       const allPrescriptions = (prescriptionRecords || []).map(
@@ -29732,7 +30108,7 @@ export default function App() {
         );
       };
 
-      const completedPackageRowsForAutoSettlement = (appointmentRecords || [])
+      const completedPackageRowsForAutoSettlement = (appointmentsForMap || [])
         .filter(
           (record) =>
             normalizeAppointmentStatus(record?.status) === "completed" &&
@@ -29770,7 +30146,7 @@ export default function App() {
           ),
         );
         setAppointments(
-          appointmentRecords
+          appointmentsForMap
             .filter((record) => record.patient === activeUser.id)
             .map(mapAppointmentRecord),
         );
@@ -29783,7 +30159,7 @@ export default function App() {
           ),
         );
         setAppointments(
-          appointmentRecords
+          appointmentsForMap
             .filter(doctorMatchesAppointment)
             .map(mapAppointmentRecord),
         );
@@ -30154,8 +30530,46 @@ export default function App() {
         filter: `status="approved"`,
         expand: "user",
       });
+      const authIdsToHydrate = uniqueIds(
+        (records || []).map((rec) =>
+          typeof rec.user === "string" ? rec.user : rec.user?.id || null,
+        ),
+      );
+      const authById =
+        authIdsToHydrate.length > 0
+          ? await fetchUsersAuthByIds(authIdsToHydrate)
+          : new Map();
       let list = records
-        .map(mapDoctorListingRecord)
+        .map((rec) => {
+          const uid =
+            typeof rec.user === "string" ? rec.user : rec.user?.id || null;
+          const fromExpand = rec.expand?.user;
+          const fromExpandNorm = Array.isArray(fromExpand)
+            ? fromExpand[0]
+            : fromExpand;
+          const expandObj =
+            fromExpandNorm &&
+            typeof fromExpandNorm === "object" &&
+            !Array.isArray(fromExpandNorm)
+              ? fromExpandNorm
+              : null;
+          const fromFetch = uid ? authById.get(uid) : null;
+          const fetchObj =
+            fromFetch &&
+            typeof fromFetch === "object" &&
+            !Array.isArray(fromFetch)
+              ? fromFetch
+              : null;
+          const mergedUser = fetchObj || expandObj;
+          const merged = {
+            ...rec,
+            expand: {
+              ...(rec.expand || {}),
+              ...(mergedUser ? { user: mergedUser } : {}),
+            },
+          };
+          return mapDoctorListingRecord(merged);
+        })
         .filter((item) => item.userId);
       if (opts.quickServiceOnly) {
         list = list.filter((doc) => {
@@ -32207,6 +32621,9 @@ export default function App() {
       profileId: patientProfile?.id,
       userId: currentUser.id,
     });
+    await clearPatientPrimaryCarePaths(currentUser.id);
+    setPatientPrimaryCarePaths(null);
+    setPatientPrimaryCarePathsLoaded(true);
     setLocalCareMode("");
     try {
       const refreshed = await ensureRoleProfile("patient");
@@ -32302,6 +32719,9 @@ export default function App() {
     clearPatientCareMode,
     persistPatientCareMode,
     CARE_MODE,
+    patientPrimaryCarePaths,
+    patientPrimaryCarePathsLoaded,
+    reloadPatientPrimaryCarePaths,
     upgradeToPackageMode,
     resetCareOnboarding,
   };
@@ -32788,6 +33208,9 @@ const AppContent = ({
     payForPackageOffer,
     savePharmacyProfile,
     refreshAllData,
+    patientPrimaryCarePaths,
+    patientPrimaryCarePathsLoaded,
+    reloadPatientPrimaryCarePaths,
   } = useAppData();
 
   const handleAuthSuccess = ({ user, profile }) => {
@@ -32999,6 +33422,41 @@ const AppContent = ({
 
   if (
     userRole === "patient" &&
+    patientProfile?.id &&
+    patientPrimaryCarePathsLoaded &&
+    !patientPrimaryCarePaths?.completed
+  ) {
+    return (
+      <PatientPrimaryCareOnboardingScreen
+        theme={theme}
+        currentUser={currentUser}
+        patientProfile={patientProfile}
+        fetchAllApprovedDoctors={() => fetchApprovedDoctors?.()}
+        fetchPackageModeDoctors={() =>
+          fetchApprovedDoctors?.({ packageModeOnly: true })
+        }
+        onPaySelectedPackage={payForPackageOffer}
+        onFinished={async () => {
+          let refreshed = patientProfile;
+          try {
+            refreshed = await ensureRoleProfile("patient");
+            setPatientProfile(refreshed);
+          } catch (_) {
+            /* ignore */
+          }
+          const from = String(refreshed?.care_mode || "").trim();
+          if (from && currentUser?.id) {
+            await writeLocalCareMode(currentUser.id, from);
+            setLocalCareMode(from);
+          }
+          await reloadPatientPrimaryCarePaths();
+        }}
+      />
+    );
+  }
+
+  if (
+    userRole === "patient" &&
     needsCareOnboarding(patientProfile, localCareMode)
   ) {
     return (
@@ -33023,6 +33481,7 @@ const AppContent = ({
           } catch (_) {
             // profile refresh optional
           }
+          await reloadPatientPrimaryCarePaths();
         }}
       />
     );

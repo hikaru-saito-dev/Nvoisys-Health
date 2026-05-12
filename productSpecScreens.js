@@ -48,6 +48,9 @@ import {
   getFixedPackageDefinitionForSlot,
   getAiAssistantUsageToday,
   getCoinBalanceForUser,
+  fetchUsersAuthByIds,
+  hydrateRowsPatientAuthUsers,
+  resolveListingDisplayName,
   incrementAiAssistantUsageToday,
   getDoctorCoinBalance,
   listActivePackagePairsForDoctor,
@@ -4768,7 +4771,7 @@ function quickRequestPatientLabel(record) {
   if (record?.private_mode) return "Private - identity hidden";
   const u = record?.expand?.patient;
   if (!u) return "Patient";
-  return u.name || u.email || u.username || "Patient";
+  return resolveListingDisplayName(u, u.expand?.user) || "Patient";
 }
 
 function quickRequestPatientUserId(record) {
@@ -4847,6 +4850,16 @@ export function DoctorQuickRequestsPanel({
       cou = await listQueuedQuickCounsellingRequestsForProvider();
     } catch (e) {
       parts.push(`Quick Counselling: ${e?.message || "list failed"}`);
+    }
+    try {
+      sol = await hydrateRowsPatientAuthUsers(sol || []);
+    } catch (e) {
+      console.log("hydrateRowsPatientAuthUsers (solution) skipped:", e?.message);
+    }
+    try {
+      cou = await hydrateRowsPatientAuthUsers(cou || []);
+    } catch (e) {
+      console.log("hydrateRowsPatientAuthUsers (counselling) skipped:", e?.message);
     }
     setSolutionRows(sol || []);
     setCounsellingRows(cou || []);
@@ -5786,16 +5799,67 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
           expand: "user",
         });
         if (cancelled) return;
+        const allUids = [
+          ...new Set(
+            (rows || [])
+              .map((row) =>
+                typeof row.user === "string" ? row.user : row.user?.id,
+              )
+              .filter(Boolean),
+          ),
+        ];
+        const byId =
+          allUids.length > 0 ? await fetchUsersAuthByIds(allUids) : new Map();
         const mapped = (rows || [])
-          .map((row) => ({
-            profileId: row.id,
-            userId: row.user || row.expand?.user?.id || "",
-            name: row.expand?.user?.name || row.full_name || "Doctor",
-            specialty: row.specialty || "General Physician",
-            practitionerTier: String(
-              row.practitioner_tier || row.tier || row.doctor_class || "",
-            ).toLowerCase(),
-          }))
+          .map((row) => {
+            const uid = typeof row.user === "string" ? row.user : row.user?.id;
+            const expU0 = row.expand?.user;
+            const expNorm0 = Array.isArray(expU0) ? expU0[0] : expU0;
+            const expandObj =
+              expNorm0 &&
+              typeof expNorm0 === "object" &&
+              !Array.isArray(expNorm0)
+                ? expNorm0
+                : null;
+            const fetched = uid ? byId.get(uid) : null;
+            const fetchObj =
+              fetched &&
+              typeof fetched === "object" &&
+              !Array.isArray(fetched)
+                ? fetched
+                : null;
+            const uNorm = fetchObj || expandObj;
+            const merged = {
+              ...row,
+              expand: { ...(row.expand || {}), ...(uNorm ? { user: uNorm } : {}) },
+            };
+            const specRaw = String(merged.specialty || "").trim();
+            const specLow = specRaw.toLowerCase();
+            const spec =
+              !specRaw ||
+              specLow === "n/a" ||
+              specLow === "na" ||
+              specLow === "-" ||
+              specLow === "none" ||
+              specLow === "unknown" ||
+              specLow === "nil"
+                ? "General Physician"
+                : specRaw;
+            return {
+              profileId: merged.id,
+              userId: merged.user || merged.expand?.user?.id || "",
+              name:
+                resolveListingDisplayName(merged, merged.expand?.user) ||
+                "Healthcare provider",
+              specialty: spec,
+              practitionerTier: String(
+                merged.practitioner_tier ||
+                  merged.tier ||
+                  merged.doctor_class ||
+                  "",
+              ).toLowerCase(),
+            };
+          })
           .filter(
             (doctor) =>
               doctor.userId &&
