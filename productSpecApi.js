@@ -985,8 +985,9 @@ const patientPrimaryPathsKey = (userId) =>
   `nv_patient_primary_paths_v1_${String(userId || "").trim()}`;
 
 /**
- * Persisted primary-care onboarding (General / Specialist paths).
+ * Persisted primary-care onboarding (pharmacy, then General / Specialist paths).
  * `completed: true` means the patient finished the post-registration wizard.
+ * May include `pharmacyUserId` / `pharmacyName` for medicine orders + chat.
  */
 export async function readPatientPrimaryCarePaths(userId) {
   const uid = String(userId || "").trim();

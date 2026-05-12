@@ -1,6 +1,6 @@
 /**
- * Post-registration primary care path: General doctor vs Specialist (package) doctor.
- * Patient may enable one or both; specialist path includes package selection + payment.
+ * Post-registration primary care path: pharmacy, then General vs Specialist (package)
+ * doctor choices. Specialist path includes package selection + payment.
  */
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -33,18 +33,22 @@ export function PatientPrimaryCareOnboardingScreen({
   patientProfile,
   fetchAllApprovedDoctors,
   fetchPackageModeDoctors,
+  fetchPharmacies,
   onPaySelectedPackage,
   onFinished,
 }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState("choose");
+  const [step, setStep] = useState("pharmacy_pick");
   const [wantGeneral, setWantGeneral] = useState(false);
   const [wantSpecialist, setWantSpecialist] = useState(false);
   const [allDoctors, setAllDoctors] = useState([]);
   const [pkgDoctors, setPkgDoctors] = useState([]);
+  const [pharmacyList, setPharmacyList] = useState([]);
+  const [selectedPharmacy, setSelectedPharmacy] = useState(null);
   const [search, setSearch] = useState("");
   const [loadingDocs, setLoadingDocs] = useState(false);
+  const [loadingPharmacies, setLoadingPharmacies] = useState(false);
   const [generalPick, setGeneralPick] = useState(null);
   const [specDoctor, setSpecDoctor] = useState(null);
   const [specSlot, setSpecSlot] = useState(null);
@@ -52,6 +56,11 @@ export function PatientPrimaryCareOnboardingScreen({
 
   const uid = currentUser?.id;
   const profileId = patientProfile?.id;
+
+  const pharmacyPathFields = () => ({
+    pharmacyUserId: selectedPharmacy?.userId || null,
+    pharmacyName: selectedPharmacy?.name || null,
+  });
 
   const loadLists = useCallback(async () => {
     setLoadingDocs(true);
@@ -74,6 +83,38 @@ export function PatientPrimaryCareOnboardingScreen({
       void loadLists();
     }
   }, [step, loadLists]);
+
+  const loadPharmacies = useCallback(async () => {
+    setLoadingPharmacies(true);
+    try {
+      const list = await fetchPharmacies?.();
+      const arr = Array.isArray(list) ? list : [];
+      const medsOk = arr.filter((p) => p && p.receivesMedicineOrders);
+      setPharmacyList(medsOk.length ? medsOk : arr);
+    } catch (e) {
+      Alert.alert("Pharmacies", e?.message || "Could not load pharmacies.");
+      setPharmacyList([]);
+    } finally {
+      setLoadingPharmacies(false);
+    }
+  }, [fetchPharmacies]);
+
+  useEffect(() => {
+    if (step === "pharmacy_pick") {
+      void loadPharmacies();
+    }
+  }, [step, loadPharmacies]);
+
+  const filteredPharmacies = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const base = pharmacyList || [];
+    if (!q) return base;
+    return base.filter((p) =>
+      `${p.name || ""} ${p.address || ""} ${p.district || ""} ${p.state || ""}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [pharmacyList, search]);
 
   const filteredAll = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -136,6 +177,7 @@ export function PatientPrimaryCareOnboardingScreen({
         mode: CARE_MODE.GENERAL,
       });
       await finishPaths({
+        ...pharmacyPathFields(),
         wantsGeneral: true,
         wantsSpecialist: false,
         generalDoctorUserId: doc.userId,
@@ -175,6 +217,7 @@ export function PatientPrimaryCareOnboardingScreen({
       });
       const genUid = generalDoctorRef.current || generalPick?.userId || null;
       await finishPaths({
+        ...pharmacyPathFields(),
         wantsGeneral: !!wantGeneral,
         wantsSpecialist: true,
         generalDoctorUserId: genUid,
@@ -188,6 +231,139 @@ export function PatientPrimaryCareOnboardingScreen({
       setBusy(false);
     }
   };
+
+  if (step === "pharmacy_pick") {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: theme.bg,
+          paddingTop: insets.top + 12,
+        }}
+      >
+        <ScrollView
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: insets.bottom + 24,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 22,
+              fontWeight: "800",
+            }}
+          >
+            Choose your pharmacy
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              marginTop: 8,
+              marginBottom: 16,
+              lineHeight: 20,
+            }}
+          >
+            Pick the pharmacy you will use for medicine orders and chat. You can
+            change this later from your care settings.
+          </Text>
+          <TextInput
+            placeholder="Search pharmacies..."
+            placeholderTextColor={theme.textTertiary}
+            value={search}
+            onChangeText={setSearch}
+            style={{
+              marginBottom: 12,
+              backgroundColor: theme.card,
+              borderRadius: 12,
+              padding: 12,
+              color: theme.textPrimary,
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          />
+          {loadingPharmacies ? (
+            <ActivityIndicator style={{ marginTop: 20 }} color={theme.accent} />
+          ) : null}
+          {!loadingPharmacies && filteredPharmacies.length === 0 ? (
+            <Text style={{ color: theme.textSecondary, marginTop: 12 }}>
+              No pharmacies are listed yet. Pull to try again after a moment, or
+              contact support.
+            </Text>
+          ) : null}
+          {filteredPharmacies.map((p) => {
+            const sel = selectedPharmacy?.userId === p.userId;
+            return (
+              <TouchableOpacity
+                key={p.profileId || p.userId || p.id}
+                onPress={() => setSelectedPharmacy(p)}
+                style={{
+                  ...card,
+                  borderColor: sel ? theme.accent : theme.cardBorder,
+                  backgroundColor: sel ? theme.accentLight : theme.card,
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons
+                    name={sel ? "radio-button-on" : "radio-button-off"}
+                    size={22}
+                    color={theme.accent}
+                    style={{ marginRight: 10 }}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        color: theme.textPrimary,
+                        fontWeight: "800",
+                        fontSize: S.title,
+                      }}
+                    >
+                      {p.name || "Pharmacy"}
+                    </Text>
+                    {(p.address || p.district || p.state) ? (
+                      <Text
+                        style={{
+                          color: theme.textSecondary,
+                          marginTop: 4,
+                          fontSize: S.small,
+                        }}
+                      >
+                        {[p.address, p.district, p.state].filter(Boolean).join(", ")}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+          <TouchableOpacity
+            onPress={() => {
+              if (!selectedPharmacy?.userId) {
+                Alert.alert("Pharmacy", "Please select a pharmacy to continue.");
+                return;
+              }
+              setSearch("");
+              setStep("choose");
+            }}
+            disabled={busy}
+            style={{
+              marginTop: 8,
+              backgroundColor: theme.accent,
+              borderRadius: 16,
+              padding: 16,
+              alignItems: "center",
+              opacity: selectedPharmacy?.userId ? 1 : 0.5,
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>
+              Continue
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
 
   if (step === "choose") {
     return (
@@ -204,6 +380,15 @@ export function PatientPrimaryCareOnboardingScreen({
             paddingBottom: insets.bottom + 24,
           }}
         >
+          <TouchableOpacity
+            onPress={() => {
+              setSearch("");
+              setStep("pharmacy_pick");
+            }}
+            style={{ marginBottom: 12 }}
+          >
+            <Text style={{ color: theme.accent, fontWeight: "800" }}>Back</Text>
+          </TouchableOpacity>
           <Text
             style={{
               color: theme.textPrimary,

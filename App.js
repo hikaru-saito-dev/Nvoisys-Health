@@ -11372,6 +11372,7 @@ const PatientProfileScreen = ({
   const [showTheme, setShowTheme] = useState(false);
   const [showAppointments, setShowAppointments] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
+  const [showFamilyHealth, setShowFamilyHealth] = useState(false);
   const [showMedicalRecords, setShowMedicalRecords] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const { theme, followSystem, setFollowSystem } = useTheme();
@@ -11478,6 +11479,10 @@ const PatientProfileScreen = ({
         patientUserId={currentUser?.id}
         scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
+    );
+  if (showFamilyHealth)
+    return (
+      <FamilyHealthScreen onBack={() => setShowFamilyHealth(false)} />
     );
   if (showTheme) return <ThemeScreen onBack={() => setShowTheme(false)} />;
   if (showAppointments)
@@ -12107,17 +12112,25 @@ const PatientProfileScreen = ({
               Health
             </Text>
             {[
-              { icon: "medkit-outline", label: "Medical Records" },
-              { icon: "calendar-outline", label: "Appointments" },
-              { icon: "heart-outline", label: "Family Members" },
+              {
+                icon: "medkit-outline",
+                label: "Medical Records",
+                onPress: () => setShowMedicalRecords(true),
+              },
+              {
+                icon: "calendar-outline",
+                label: "Appointments",
+                onPress: () => setShowAppointments(true),
+              },
+              {
+                icon: "heart-outline",
+                label: "Family Members",
+                onPress: () => setShowFamilyHealth(true),
+              },
             ].map((item, idx) => (
               <TouchableOpacity
-                key={idx}
-                onPress={
-                  item.label === "Appointments"
-                    ? () => setShowAppointments(true)
-                    : undefined
-                }
+                key={item.label}
+                onPress={item.onPress}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -22216,11 +22229,17 @@ const savePrescriptionPdfToDevice = async (rx, sideWarnings) => {
 
 const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   const { theme } = useTheme();
+  const tabNav = useMainTabNav();
   const {
     prescriptions: prescriptionRecords,
     wounds: woundRecords,
     runSideEffectCheck,
     patientProfile,
+    patientPrimaryCarePaths,
+    currentUser,
+    ensureDirectConversation,
+    requestOpenConversation,
+    sendConversationMessage,
   } = useAppData();
   const scrollRef = React.useRef(null);
   const cardOffsetsRef = React.useRef({});
@@ -22229,6 +22248,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   const [rxScrollViewportH, setRxScrollViewportH] = useState(0);
   const [rxScrollContentH, setRxScrollContentH] = useState(0);
   const [savingPdfRxId, setSavingPdfRxId] = useState(null);
+  const [orderMedsBusy, setOrderMedsBusy] = useState(false);
 
   const cards = React.useMemo(() => {
     const list = [...(prescriptionRecords || [])].sort(
@@ -22347,6 +22367,55 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
       await savePrescriptionPdfToDevice(rx, rxSideWarnings[rx.id] || []);
     } finally {
       setSavingPdfRxId(null);
+    }
+  };
+
+  const handleOrderMedsWithPharmacy = async (rx) => {
+    const pharmacyUserId = String(
+      patientPrimaryCarePaths?.pharmacyUserId || "",
+    ).trim();
+    if (!pharmacyUserId) {
+      Alert.alert(
+        "Pharmacy",
+        "Choose your pharmacy first. Open Profile → Care journey → Switch care journey to run setup again and pick a pharmacy.",
+      );
+      return;
+    }
+    if (!currentUser?.id) {
+      Alert.alert("Sign in", "Please log in to message your pharmacy.");
+      return;
+    }
+    if (orderMedsBusy) return;
+    setOrderMedsBusy(true);
+    try {
+      const conv = await ensureDirectConversation({
+        id: pharmacyUserId,
+        role: "pharmacy",
+      });
+      const cid = conv?.id;
+      if (!cid) {
+        Alert.alert("Chat", "Could not open a chat with your pharmacy.");
+        return;
+      }
+      try {
+        const label = String(rx?.diagnosis || "Prescription").trim() || "Rx";
+        const medNames = (rx?.medicines || [])
+          .map((m) => String(m?.name || "").trim())
+          .filter(Boolean)
+          .slice(0, 6)
+          .join(", ");
+        const intro = `Order meds — ${label}${medNames ? ` (${medNames})` : ""}. Rx #${String(rx?.id || "").slice(-8)}`;
+        await sendConversationMessage(cid, intro);
+      } catch {
+        /* opening chat without intro is fine */
+      }
+      requestOpenConversation?.(cid, {});
+      tabNav?.navigateTab?.("Chat");
+      if (typeof onBack === "function") onBack();
+    } catch (e) {
+      Alert.alert("Order Meds", e?.message || "Could not open pharmacy chat.");
+    } finally {
+      setOrderMedsBusy(false);
     }
   };
 
@@ -22788,7 +22857,8 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  disabled={!!savingPdfRxId}
+                  disabled={!!savingPdfRxId || orderMedsBusy}
+                  onPress={() => void handleOrderMedsWithPharmacy(rx)}
                   style={{
                     flex: 1,
                     flexDirection: "row",
@@ -22798,15 +22868,23 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     backgroundColor: theme.accentLight,
                     borderRadius: RFValue(10),
                     marginLeft: RFValue(8),
-                    opacity: savingPdfRxId ? 0.45 : 1,
+                    opacity: savingPdfRxId || orderMedsBusy ? 0.45 : 1,
                   }}
                 >
-                  <Ionicons
-                    name="cart-outline"
-                    size={RFValue(16)}
-                    color={theme.accent}
-                    style={{ marginRight: RFValue(6) }}
-                  />
+                  {orderMedsBusy ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={theme.accent}
+                      style={{ marginRight: RFValue(8) }}
+                    />
+                  ) : (
+                    <Ionicons
+                      name="cart-outline"
+                      size={RFValue(16)}
+                      color={theme.accent}
+                      style={{ marginRight: RFValue(6) }}
+                    />
+                  )}
                   <Text
                     style={{
                       color: theme.accent,
@@ -25500,6 +25578,7 @@ const FamilyHealthScreen = ({ onBack }) => {
 };
 
 const EmergencySOScreen = ({ onBack }) => {
+  const { theme } = useTheme();
   const { currentUser } = useAppData();
   const patientQuickCareBinding = usePatientQuickCareBinding();
   const [sosActive, setSosActive] = useState(false);
@@ -25554,20 +25633,23 @@ const EmergencySOScreen = ({ onBack }) => {
 
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: sosActive ? "#7F1D1D" : "#F8FAFC" }}
+      style={{
+        flex: 1,
+        backgroundColor: sosActive ? "#7F1D1D" : theme.bg,
+      }}
       edges={["bottom", "left", "right"]}
     >
       <StatusBar
-        barStyle={sosActive ? "light-content" : "dark-content"}
-        backgroundColor={sosActive ? "#7F1D1D" : "#FFFFFF"}
+        barStyle={sosActive ? "light-content" : theme.statusBarStyle}
+        backgroundColor={sosActive ? "#7F1D1D" : theme.statusBarBg}
       />
       <View
         style={{
-          backgroundColor: sosActive ? "#7F1D1D" : "#FFFFFF",
+          backgroundColor: sosActive ? "#7F1D1D" : theme.card,
           padding: RFValue(20),
           paddingTop: RFValue(16),
           borderBottomWidth: 1,
-          borderBottomColor: sosActive ? "#991B1B" : "#F3F4F6",
+          borderBottomColor: sosActive ? "#991B1B" : theme.divider,
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -25577,7 +25659,9 @@ const EmergencySOScreen = ({ onBack }) => {
               width: RFValue(36),
               height: RFValue(36),
               borderRadius: RFValue(10),
-              backgroundColor: sosActive ? "rgba(255,255,255,0.2)" : "#F3F4F6",
+              backgroundColor: sosActive
+                ? "rgba(255,255,255,0.2)"
+                : theme.inputBg,
               justifyContent: "center",
               alignItems: "center",
               marginRight: RFValue(14),
@@ -25586,14 +25670,14 @@ const EmergencySOScreen = ({ onBack }) => {
             <Ionicons
               name="arrow-back"
               size={RFValue(20)}
-              color={sosActive ? "#FFF" : "#374151"}
+              color={sosActive ? "#FFF" : theme.textPrimary}
             />
           </TouchableOpacity>
           <Text
             style={{
               fontSize: RFValue(18),
               fontWeight: "800",
-              color: sosActive ? "#FFF" : "#1E1B4B",
+              color: sosActive ? "#FFF" : theme.textPrimary,
             }}
           >
             Emergency SOS
@@ -25672,7 +25756,7 @@ const EmergencySOScreen = ({ onBack }) => {
                 width: RFValue(160),
                 height: RFValue(160),
                 borderRadius: RFValue(80),
-                backgroundColor: "#FEF2F2",
+                backgroundColor: theme.dangerLight,
                 justifyContent: "center",
                 alignItems: "center",
                 marginBottom: RFValue(24),
@@ -25709,7 +25793,7 @@ const EmergencySOScreen = ({ onBack }) => {
             </View>
             <Text
               style={{
-                color: "#1E1B4B",
+                color: theme.textPrimary,
                 fontSize: RFValue(20),
                 fontWeight: "800",
                 textAlign: "center",
@@ -25720,7 +25804,7 @@ const EmergencySOScreen = ({ onBack }) => {
             </Text>
             <Text
               style={{
-                color: "#6B7280",
+                color: theme.textSecondary,
                 fontSize: RFValue(14),
                 textAlign: "center",
                 lineHeight: RFValue(22),
@@ -25737,7 +25821,7 @@ const EmergencySOScreen = ({ onBack }) => {
         <View style={{ width: "100%" }}>
           <Text
             style={{
-              color: sosActive ? "#FCA5A5" : "#6B7280",
+              color: sosActive ? "#FCA5A5" : theme.textSecondary,
               fontSize: RFValue(13),
               fontWeight: "700",
               marginBottom: RFValue(12),
@@ -25753,13 +25837,15 @@ const EmergencySOScreen = ({ onBack }) => {
                 style={{
                   backgroundColor: sosActive
                     ? "rgba(255,255,255,0.1)"
-                    : "#FFFFFF",
+                    : theme.card,
                   borderRadius: RFValue(14),
                   padding: RFValue(16),
                   marginBottom: RFValue(10),
                   flexDirection: "row",
                   alignItems: "center",
-                  shadowColor: "#000",
+                  borderWidth: sosActive ? 0 : 1,
+                  borderColor: theme.cardBorder,
+                  shadowColor: theme.shadowColor,
                   shadowOpacity: sosActive ? 0 : 0.06,
                   shadowOffset: { width: 0, height: 4 },
                   shadowRadius: 12,
@@ -25773,7 +25859,7 @@ const EmergencySOScreen = ({ onBack }) => {
                     borderRadius: RFValue(12),
                     backgroundColor: sosActive
                       ? "rgba(255,255,255,0.2)"
-                      : "#FEF2F2",
+                      : theme.dangerLight,
                     justifyContent: "center",
                     alignItems: "center",
                     marginRight: RFValue(14),
@@ -25782,7 +25868,7 @@ const EmergencySOScreen = ({ onBack }) => {
                   <Ionicons
                     name={contact.icon}
                     size={RFValue(20)}
-                    color={sosActive ? "#FFF" : "#DC2626"}
+                    color={sosActive ? "#FFF" : theme.danger}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -25790,7 +25876,7 @@ const EmergencySOScreen = ({ onBack }) => {
                     style={{
                       fontSize: RFValue(14),
                       fontWeight: "700",
-                      color: sosActive ? "#FFF" : "#1E1B4B",
+                      color: sosActive ? "#FFF" : theme.textPrimary,
                     }}
                   >
                     {contact.name}
@@ -25798,7 +25884,7 @@ const EmergencySOScreen = ({ onBack }) => {
                   <Text
                     style={{
                       fontSize: RFValue(12),
-                      color: sosActive ? "#FCA5A5" : "#6B7280",
+                      color: sosActive ? "#FCA5A5" : theme.textSecondary,
                     }}
                   >
                     {contact.phone}
@@ -33205,6 +33291,7 @@ const AppContent = ({
     setPatientSelectedWoundId,
     setPatientShowNewWound,
     fetchApprovedDoctors,
+    fetchPharmacies,
     payForPackageOffer,
     savePharmacyProfile,
     refreshAllData,
@@ -33435,6 +33522,7 @@ const AppContent = ({
         fetchPackageModeDoctors={() =>
           fetchApprovedDoctors?.({ packageModeOnly: true })
         }
+        fetchPharmacies={fetchPharmacies}
         onPaySelectedPackage={payForPackageOffer}
         onFinished={async () => {
           let refreshed = patientProfile;
