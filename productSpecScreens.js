@@ -29,10 +29,10 @@ import {
 } from "./keyboardScrollUtils";
 import { getAuthUser, pb } from "./pocketbase";
 import {
+  acceptQuickHelpOffer,
   cancelQuickRequest,
   CARE_MODE,
   closeQuickRequest,
-  consumerPlanDisplayName,
   createPatientSelectedPackageOffer,
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
@@ -45,6 +45,7 @@ import {
   doctorProposePackageMeetingReschedule,
   doctorSendPackageOfferFromSlot,
   doctorTierEligibleForPackageMode,
+  doctorTierEligibleForQuickService,
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
   getFixedPackageDefinitionForSlot,
@@ -89,6 +90,8 @@ import {
   saveDoctorPackageTemplates,
   settleDueReferralMonthlyCommissions,
   uploadMedicalRecord,
+  WALLET_TOPUP_MAX_INR,
+  WALLET_TOPUP_MIN_INR,
 } from "./productSpecApi";
 
 const S = {
@@ -159,10 +162,16 @@ export function CareModeOnboardingScreen({
   currentUser,
   onDone,
   onCommitPackageDoctor,
+  onWalletTopUp,
+  paymentMode,
 }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [casualStep, setCasualStep] = useState(false);
+  const [casualAmount, setCasualAmount] = useState(
+    String(WALLET_TOPUP_MIN_INR),
+  );
 
   const confirm = async () => {
     if (!selected) {
@@ -183,6 +192,10 @@ export function CareModeOnboardingScreen({
       }
       return;
     }
+    if (selected === "casual") {
+      setCasualStep(true);
+      return;
+    }
     try {
       setBusy(true);
       const mode = selected === "skip" ? CARE_MODE.SKIP : CARE_MODE.CASUAL;
@@ -194,6 +207,40 @@ export function CareModeOnboardingScreen({
       onDone?.(mode);
     } catch (e) {
       Alert.alert("Could not save", e?.message || "Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const payCasualTopup = async () => {
+    const amount = Math.floor(Number(String(casualAmount || "").trim()));
+    if (
+      !Number.isFinite(amount) ||
+      amount < WALLET_TOPUP_MIN_INR ||
+      amount > WALLET_TOPUP_MAX_INR
+    ) {
+      Alert.alert(
+        "Top up coins",
+        `Enter a whole number from ₹${WALLET_TOPUP_MIN_INR} to ₹${WALLET_TOPUP_MAX_INR}.`,
+      );
+      return;
+    }
+    if (typeof onWalletTopUp !== "function") {
+      Alert.alert("Top up coins", "Wallet top-up is not available right now.");
+      return;
+    }
+    try {
+      setBusy(true);
+      await onWalletTopUp(amount);
+      await persistPatientCareMode({
+        profileId: patientProfile?.id,
+        userId: currentUser?.id,
+        mode: CARE_MODE.CASUAL,
+      });
+      onDone?.(CARE_MODE.CASUAL);
+      Alert.alert("Coins added", `${amount} coins were added to your wallet.`);
+    } catch (e) {
+      Alert.alert("Top up coins", e?.message || "Could not complete top-up.");
     } finally {
       setBusy(false);
     }
@@ -214,6 +261,84 @@ export function CareModeOnboardingScreen({
     borderWidth: selected === key ? 2 : StyleSheet.hairlineWidth,
     backgroundColor: selected === key ? theme.accentLight : theme.card,
   });
+
+  if (casualStep) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: theme.bg,
+          paddingTop: insets.top + 12,
+        }}
+      >
+        <ScrollView
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: insets.bottom + 24,
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <TouchableOpacity
+            onPress={() => setCasualStep(false)}
+            disabled={busy}
+            style={{ marginBottom: 14, alignSelf: "flex-start" }}
+          >
+            <Text style={{ color: theme.accent, fontWeight: "800" }}>Back</Text>
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 24,
+              fontWeight: "800",
+            }}
+          >
+            Top up for Casual mode
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              marginTop: 8,
+              marginBottom: 14,
+              lineHeight: 20,
+            }}
+          >
+            Enter ₹{WALLET_TOPUP_MIN_INR}-₹{WALLET_TOPUP_MAX_INR}. You get the
+            same number of coins after Cashfree confirms payment. Quick Solution
+            costs 10 coins and Quick Counselling costs 25 coins.
+          </Text>
+          <TextInput
+            placeholder="e.g. 500"
+            placeholderTextColor={theme.textTertiary}
+            value={casualAmount}
+            onChangeText={setCasualAmount}
+            keyboardType="numeric"
+            editable={!busy}
+            style={slotInput(theme)}
+          />
+          <TouchableOpacity
+            onPress={payCasualTopup}
+            disabled={busy}
+            style={{
+              backgroundColor: theme.success,
+              borderRadius: 16,
+              padding: 16,
+              alignItems: "center",
+              opacity: busy ? 0.65 : 1,
+            }}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "900" }}>
+                {paymentMode === "cashfree" ? "Pay with Cashfree" : "Add coins"}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -1714,15 +1839,14 @@ export function QuickSolutionScreen({
   theme,
   onBack,
   patientUserId,
-  quickCareBinding = null,
   /** Return approved doctors for quick queues (RMP / clinic). */
   loadQuickPickDoctors,
   /** Return pharmacy listings (patient browse list). */
   loadQuickPickPharmacies,
+  /** Optional package binding; quick services still route to the casual RMP/clinic queue. */
+  quickCareBinding = null,
   /** async (question: string) => reply text */
   onAskAi,
-  consultMinutesUsed = 0,
-  consultMinutesLimit = 0,
   scrollContentBottomInset = 100,
 }) {
   const insets = useSafeAreaInsets();
@@ -1740,11 +1864,6 @@ export function QuickSolutionScreen({
   const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
   const [selectedPharmacyUserId, setSelectedPharmacyUserId] = useState(null);
   const [imagePart, setImagePart] = useState(null);
-
-  useEffect(() => {
-    const id = quickCareBinding?.doctorUserId;
-    if (id) setSelectedDoctorUserId(String(id));
-  }, [quickCareBinding?.doctorUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1920,11 +2039,6 @@ export function QuickSolutionScreen({
   const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
   const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
 
-  const consultHint =
-    ent && consultMinutesLimit > 0 && quickCareBinding?.doctorUserId
-      ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
-      : "";
-
   const hasRecipient = Boolean(
     selectedDoctorUserId || selectedPharmacyUserId,
   );
@@ -1966,52 +2080,17 @@ export function QuickSolutionScreen({
           paddingBottom: scrollBottomPad,
         }}
       >
-        {quickCareBinding?.doctorUserId ? (
-          <View
-            style={{
-              backgroundColor: theme.accentLight,
-              padding: 12,
-              borderRadius: 14,
-              marginBottom: 12,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: S.small,
-                fontWeight: "800",
-              }}
-            >
-              Package doctor pre-selected
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 11,
-                marginTop: 4,
-                lineHeight: 16,
-              }}
-            >
-              {quickCareBinding?.doctor
-                ? `${quickCareBinding.doctor} is the default recipient. Clear below to choose a pharmacy instead.`
-                : "Your linked package doctor is the default recipient."}
-            </Text>
-          </View>
-        ) : (
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.small,
-              marginBottom: 12,
-              lineHeight: 18,
-            }}
-          >
-            Pick one doctor or one pharmacy, add details (and an optional photo),
-            then send (10 coins).
-          </Text>
-        )}
+        <Text
+          style={{
+            color: theme.textSecondary,
+            fontSize: S.small,
+            marginBottom: 12,
+            lineHeight: 18,
+          }}
+        >
+          Pick one eligible RMP / clinic provider, add details (and an optional
+          photo), then send (10 coins). Package care stays separate.
+        </Text>
 
         <QuickRecipientPickerPanel
           theme={theme}
@@ -2024,19 +2103,6 @@ export function QuickSolutionScreen({
           onSelectPharmacy={onSelectPharmacy}
           onClearSelection={onClearSelection}
         />
-
-        {consultHint ? (
-          <Text
-            style={{
-              color: theme.textTertiary,
-              marginBottom: 14,
-              fontSize: 11,
-              lineHeight: 16,
-            }}
-          >
-            {consultHint}
-          </Text>
-        ) : null}
 
         <Text
           style={{
@@ -2264,11 +2330,8 @@ export function QuickCounsellingScreen({
   onBack,
   patientUserId,
   fromWoundTracker = false,
-  quickCareBinding = null,
   loadQuickPickDoctors,
   loadQuickPickPharmacies,
-  consultMinutesUsed = 0,
-  consultMinutesLimit = 0,
   scrollContentBottomInset = 100,
 }) {
   const insets = useSafeAreaInsets();
@@ -2284,11 +2347,6 @@ export function QuickCounsellingScreen({
   const [pickListsLoading, setPickListsLoading] = useState(true);
   const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
   const [selectedPharmacyUserId, setSelectedPharmacyUserId] = useState(null);
-
-  useEffect(() => {
-    const id = quickCareBinding?.doctorUserId;
-    if (id) setSelectedDoctorUserId(String(id));
-  }, [quickCareBinding?.doctorUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2311,19 +2369,6 @@ export function QuickCounsellingScreen({
       cancelled = true;
     };
   }, [loadQuickPickDoctors, loadQuickPickPharmacies]);
-
-  const ent = useMemo(
-    () =>
-      quickCareBinding?.consumerPlan != null
-        ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
-        : null,
-    [quickCareBinding?.consumerPlan],
-  );
-
-  const consultHint =
-    ent && consultMinutesLimit > 0 && quickCareBinding?.doctorUserId
-      ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
-      : "";
 
   const onSelectDoctor = (uid) => {
     const id = String(uid || "").trim();
@@ -2397,10 +2442,6 @@ export function QuickCounsellingScreen({
   const hasTopic = Boolean(String(topic || "").trim());
   const canSubmit = hasRecipient && hasTopic && !busy;
 
-  const planLabel = quickCareBinding?.consumerPlan
-    ? consumerPlanDisplayName(quickCareBinding.consumerPlan)
-    : null;
-
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <View
@@ -2436,53 +2477,17 @@ export function QuickCounsellingScreen({
           paddingBottom: scrollBottomPad,
         }}
       >
-        {quickCareBinding?.doctorUserId ? (
-          <View
-            style={{
-              backgroundColor: theme.successLight || theme.accentLight,
-              padding: 12,
-              borderRadius: 14,
-              marginBottom: 12,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: S.small,
-                fontWeight: "800",
-              }}
-            >
-              Package doctor pre-selected
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 11,
-                marginTop: 4,
-                lineHeight: 16,
-              }}
-            >
-              {planLabel ? `${planLabel} · ` : ""}
-              {quickCareBinding?.doctor
-                ? `${quickCareBinding.doctor} is the default recipient. Clear below to choose a pharmacy instead.`
-                : "Your linked package doctor is the default recipient."}
-            </Text>
-          </View>
-        ) : (
-          <Text
-            style={{
-              color: theme.textSecondary,
-              marginBottom: 12,
-              fontSize: S.small,
-              lineHeight: 18,
-            }}
-          >
-            Pick one doctor or one pharmacy, describe your request, then send (25
-            coins).
-          </Text>
-        )}
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 12,
+            fontSize: S.small,
+            lineHeight: 18,
+          }}
+        >
+          Pick one eligible RMP / clinic provider, describe your request, then
+          send (25 coins). Package care stays separate.
+        </Text>
 
         <QuickRecipientPickerPanel
           theme={theme}
@@ -2495,19 +2500,6 @@ export function QuickCounsellingScreen({
           onSelectPharmacy={onSelectPharmacy}
           onClearSelection={onClearSelection}
         />
-
-        {consultHint ? (
-          <Text
-            style={{
-              color: theme.textTertiary,
-              marginBottom: 12,
-              fontSize: 11,
-              lineHeight: 16,
-            }}
-          >
-            {consultHint}
-          </Text>
-        ) : null}
 
         <TextInput
           placeholder={
@@ -5819,21 +5811,43 @@ export function PatientQuickRequestsTrackerPanel({
     );
   };
 
-  const handleOpenOffer = (offer) => {
-    if (typeof onOpenConversation === "function" && offer?.conversation) {
-      onOpenConversation(
-        offer.conversation,
-        offer?.expand?.doctor?.id || offer.doctor,
-      );
-    } else {
+  const handleOpenOffer = async (row, offer) => {
+    const conversationId =
+      (typeof offer?.conversation === "string" ? offer.conversation : "") ||
+      offer?.conversation?.id ||
+      offer?.expand?.conversation?.id ||
+      "";
+    const doctorId =
+      offer?.expand?.doctor?.id ||
+      (typeof offer?.doctor === "string" ? offer.doctor : offer?.doctor?.id) ||
+      "";
+    if (!conversationId) {
       Alert.alert(
         "Chat unavailable",
         "Open the Chat tab to find this conversation manually.",
       );
+      return;
+    }
+    try {
+      setBusyRowId(`${row.kind}::${row.id}`);
+      await acceptQuickHelpOffer({
+        offer,
+        requestId: row.id,
+        kind: row.kind,
+        patientUserId,
+      });
+      removeRowLocally(row.kind, row.id);
+      if (typeof onOpenConversation === "function") {
+        onOpenConversation(conversationId, doctorId);
+      }
+    } catch (e) {
+      Alert.alert("Could not open offer", e?.message || "Please try again.");
+    } finally {
+      setBusyRowId(null);
     }
   };
 
-  const renderOffer = (offer) => {
+  const renderOffer = (offer, row) => {
     const doctor = offer?.expand?.doctor;
     const doctorName = resolveListingDisplayName({}, doctor) || "Doctor";
     return (
@@ -5878,7 +5892,8 @@ export function PatientQuickRequestsTrackerPanel({
           ) : null}
         </View>
         <TouchableOpacity
-          onPress={() => handleOpenOffer(offer)}
+          onPress={() => handleOpenOffer(row, offer)}
+          disabled={busyRowId === `${row.kind}::${row.id}`}
           accessibilityLabel="Open chat with this doctor"
           style={{
             width: 36,
@@ -5887,6 +5902,7 @@ export function PatientQuickRequestsTrackerPanel({
             justifyContent: "center",
             alignItems: "center",
             backgroundColor: theme.success,
+            opacity: busyRowId === `${row.kind}::${row.id}` ? 0.6 : 1,
           }}
         >
           <Ionicons name="arrow-forward" size={18} color="#FFF" />
@@ -5950,38 +5966,40 @@ export function PatientQuickRequestsTrackerPanel({
           </Text>
         ) : null}
 
-        {offers.map(renderOffer)}
+        {offers.map((offer) => renderOffer(offer, row))}
 
         <View style={{ flexDirection: "row", marginTop: 12 }}>
-          <TouchableOpacity
-            onPress={() => handleClose(row)}
-            disabled={isBusy}
-            style={{
-              flex: 1,
-              marginRight: 6,
-              paddingVertical: 10,
-              borderRadius: 10,
-              alignItems: "center",
-              backgroundColor: hasOffers ? theme.accent : theme.accentLight,
-              opacity: isBusy ? 0.6 : 1,
-            }}
-          >
-            <Text
+          {!hasOffers ? (
+            <TouchableOpacity
+              onPress={() => handleClose(row)}
+              disabled={isBusy}
               style={{
-                color: hasOffers ? "#FFF" : theme.accent,
-                fontWeight: "700",
-                fontSize: 13,
+                flex: 1,
+                marginRight: 6,
+                paddingVertical: 10,
+                borderRadius: 10,
+                alignItems: "center",
+                backgroundColor: theme.accentLight,
+                opacity: isBusy ? 0.6 : 1,
               }}
             >
-              Close
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={{
+                  color: theme.accent,
+                  fontWeight: "700",
+                  fontSize: 13,
+                }}
+              >
+                Close
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             onPress={() => handleCancel(row)}
             disabled={isBusy}
             style={{
               flex: 1,
-              marginLeft: 6,
+              marginLeft: hasOffers ? 0 : 6,
               paddingVertical: 10,
               borderRadius: 10,
               alignItems: "center",
@@ -6044,10 +6062,10 @@ export function PatientQuickRequestsTrackerPanel({
         }}
       >
         Track Quick Solution / Counselling requests you submitted. When a doctor
-        offers help, an alert appears with an arrow button - tap it to open the
-        chat. Use <Text style={{ fontWeight: "700" }}>Close</Text> after you’ve
-        chosen a doctor or <Text style={{ fontWeight: "700" }}>Cancel</Text> if
-        you no longer need help.
+        offers help, tap the arrow to choose that doctor, credit their share,
+        close the request, and open the chat. Use{" "}
+        <Text style={{ fontWeight: "700" }}>Cancel</Text> if you no longer need
+        help.
       </Text>
       {err ? (
         <Text
@@ -6169,13 +6187,16 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
                   merged.doctor_class ||
                   "",
               ).toLowerCase(),
+              clinicOrHospital: merged.clinic_or_hospital || "",
+              raw: merged,
             };
           })
           .filter(
             (doctor) =>
               doctor.userId &&
               doctor.userId !== user?.id &&
-              doctorTierEligibleForPackageMode(doctor.practitionerTier),
+              doctorTierEligibleForPackageMode(doctor.practitionerTier) &&
+              !doctorTierEligibleForQuickService(doctor),
           );
         setPackageDoctors(mapped);
       } catch {

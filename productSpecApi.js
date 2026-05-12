@@ -483,6 +483,27 @@ export function doctorTierEligibleForPackageMode(tier) {
   return t === "professional" || t === "specialist";
 }
 
+const normalizeTierMarker = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+function quickServiceMarkerEligible(value) {
+  const marker = normalizeTierMarker(value);
+  if (!marker) return false;
+  if (
+    marker === "rmp" ||
+    marker === "rmp_doctor" ||
+    marker === "clinic" ||
+    marker === "clinic_doctor"
+  ) {
+    return true;
+  }
+  return marker.split("_").includes("rmp");
+}
+
 /**
  * Quick Solution / Quick Counselling queues: RMP & clinic tiers (not package-demo tier).
  * Pass auth `user`, `doctor_profile` row, or a tier string.
@@ -492,20 +513,31 @@ export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
     typeof userOrProfileOrTier === "string" ||
     typeof userOrProfileOrTier === "number"
   ) {
-    return !doctorTierEligibleForPackageMode(String(userOrProfileOrTier));
+    return quickServiceMarkerEligible(userOrProfileOrTier);
   }
-  const row = userOrProfileOrTier && typeof userOrProfileOrTier === "object"
-    ? userOrProfileOrTier
-    : null;
-  const tier = String(
-    row?.practitioner_tier ||
-      row?.practitionerTier ||
-      row?.tier ||
-      row?.verification_tier ||
-      row?.doctor_class ||
-      "",
+  const row =
+    userOrProfileOrTier && typeof userOrProfileOrTier === "object"
+      ? userOrProfileOrTier
+      : null;
+  const raw = row?.raw && typeof row.raw === "object" ? row.raw : null;
+  const sources = [row, raw].filter(Boolean);
+  const tierFields = sources.flatMap((src) => [
+    src.practitioner_tier,
+    src.practitionerTier,
+    src.doctor_class,
+    src.doctorClass,
+    src.tier,
+    src.verification_tier,
+    src.verificationTier,
+    src.provider_kind,
+    src.providerKind,
+  ]);
+  const explicitTier = tierFields.find((value) => String(value || "").trim());
+  if (tierFields.some(quickServiceMarkerEligible)) return true;
+  if (doctorTierEligibleForPackageMode(explicitTier)) return false;
+  return sources.some((src) =>
+    quickServiceMarkerEligible(src.clinic_or_hospital || src.clinicOrHospital),
   );
-  return !doctorTierEligibleForPackageMode(tier);
 }
 
 /** PocketBase `pharmacy_profile.provider_kind` — drives medicine orders vs quick queues only. */
@@ -515,11 +547,11 @@ export const PHARMACY_PROVIDER_KIND = Object.freeze({
 });
 
 export function normalizePharmacyProviderKind(raw) {
-  const t = String(raw || "").toLowerCase().trim();
+  const t = normalizeTierMarker(raw);
   if (t === "rmp_doctor" || t === "rmp" || t === "gp" || t === "general_physician") {
     return PHARMACY_PROVIDER_KIND.RMP_DOCTOR;
   }
-  if (t === "clinic" || t === "pharmacy") {
+  if (t === "clinic" || t === "pharmacy" || t === "clinic_doctor") {
     return PHARMACY_PROVIDER_KIND.CLINIC;
   }
   return "";
@@ -915,13 +947,16 @@ export async function persistPackageSetupSkip({ profileId, userId }) {
   }
 }
 
-/** Package split: platform keeps 20%; the remaining 80% becomes patient package coins. */
+export const WALLET_TOPUP_MIN_INR = 50;
+export const WALLET_TOPUP_MAX_INR = 1000;
+
+/** Package split: platform keeps 25%; the remaining 75% is the doctor pool. */
 export function splitPackagePayment(amountInr) {
   const total = Number(amountInr);
   if (!Number.isFinite(total) || total <= 0) {
     return { platformFeeInr: 0, doctorCoins: 0 };
   }
-  const platformFeeInr = Math.round(total * 0.2);
+  const platformFeeInr = Math.round(total * 0.25);
   const doctorCoins = Math.max(0, total - platformFeeInr);
   return { platformFeeInr, doctorCoins };
 }
@@ -2425,6 +2460,32 @@ async function createPackageOfferWithRelationFallback(basePayload) {
   throw lastError || new Error("Could not create package offer.");
 }
 
+async function assertPackageDoctorEligible(doctorUserId) {
+  const uid = String(doctorUserId || "").trim();
+  if (!uid) throw new Error("Missing package doctor.");
+  try {
+    const profile = await pb
+      .collection("doctor_profile")
+      .getFirstListItem(`user="${uid}"`, { requestKey: null });
+    const tier =
+      profile?.practitioner_tier ||
+      profile?.tier ||
+      profile?.doctor_class ||
+      profile?.verification_tier ||
+      "";
+    if (
+      !doctorTierEligibleForPackageMode(tier) ||
+      doctorTierEligibleForQuickService(profile)
+    ) {
+      throw new Error("Package mode is only for professional or specialist doctors.");
+    }
+    return profile;
+  } catch (error) {
+    if (error?.message?.includes("Package mode")) throw error;
+    throw new Error("Choose an eligible professional or specialist package doctor.");
+  }
+}
+
 export async function doctorSendPackageOffer({
   patientUserId,
   doctorUserId,
@@ -2440,6 +2501,7 @@ export async function doctorSendPackageOffer({
   total_period = "",
   description_for_patient = "",
 }) {
+  await assertPackageDoctorEligible(doctorUserId);
   const payload = {
     patient: patientUserId,
     doctor: doctorUserId,
@@ -2523,6 +2585,7 @@ export async function createPatientSelectedPackageOffer({
   if (!patientUserId || !doctorUserId) {
     throw new Error("Select a doctor before paying for a package.");
   }
+  await assertPackageDoctorEligible(doctorUserId);
   const amountInr = resolvePackageSlotAmountInr(slot);
   const { platformFeeInr, doctorCoins } = splitPackagePayment(amountInr);
   const slotNum = Number(slot?.slot || packageSlotIndex || 1) || 1;
@@ -2891,7 +2954,7 @@ async function persistActivePackagePair({
     amount_inr: amountInr,
     platform_fee_inr: platformFeeInr,
     doctor_pool_coins: packageCoins,
-    remaining_coins: packageCoins,
+    remaining_coins: amountInr,
     title: offer?.title || "Care package",
   };
   if (offer?.package_slot != null) base.package_slot = offer.package_slot;
@@ -2960,7 +3023,7 @@ export async function completePackageOfferPayment(
     providerOrderId: payment.providerOrderId,
     providerPaymentId: payment.providerPaymentId,
     providerReferenceId: payment.providerReferenceId,
-    amountInr: offer?.amount_inr ?? offer?.amountInr,
+    amountInr: offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr,
     currency: "INR",
     status: "success",
     description: offer?.title || "Package offer payment",
@@ -2972,15 +3035,19 @@ export async function completePackageOfferPayment(
       payment_mode: payment.paymentMode || payment.provider || "stub",
       platform_fee_inr: offer?.platform_fee_inr ?? offer?.platformFeeInr ?? null,
       doctor_coins: offer?.doctor_coins ?? offer?.doctorCoins ?? null,
+      patient_package_coins: offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr ?? null,
       verified: payment.verified || null,
     },
   });
-  const amountInr = Number(offer?.amount_inr ?? offer?.amountInr ?? 0);
+  const amountInr = Number(offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr ?? 0);
+  if (!Number.isFinite(amountInr) || amountInr <= 0) {
+    throw new Error("Package amount missing; coins cannot be loaded.");
+  }
   const split = splitPackagePayment(amountInr);
   const platformFeeInr = Number(
     offer?.platform_fee_inr ?? offer?.platformFeeInr ?? split.platformFeeInr,
   );
-  const packageCoins = Number(
+  const doctorPoolCoins = Number(
     offer?.doctor_coins ?? offer?.doctorCoins ?? split.doctorCoins,
   );
   const ts = new Date().toISOString();
@@ -2996,14 +3063,15 @@ export async function completePackageOfferPayment(
   const lines = [
     patientUserId && existingTopups.length === 0 && {
       user: patientUserId,
-      delta: packageCoins,
+      delta: amountInr,
       reason: "package_patient_coins_loaded",
       ref_collection: "package_offers",
       ref_id: offerId,
       meta: {
         paid_amount_inr: amountInr,
         platform_fee_inr: platformFeeInr,
-        doctor_pool_coins: packageCoins,
+        doctor_pool_coins: doctorPoolCoins,
+        patient_package_coins: amountInr,
         paid_at: ts,
         paired_doctor_user_id: effectiveDoctorUserId,
       },
@@ -3028,9 +3096,13 @@ export async function completePackageOfferPayment(
   for (const line of lines) {
     if (!line) continue;
     try {
-      await pb.collection("coin_ledger").create(line);
-    } catch {
-      // collection optional
+      await createCoinLedgerLine(line);
+    } catch (error) {
+      if (line.reason === "package_patient_coins_loaded") {
+        const msg = formatPocketBaseClientError(error) || error?.message;
+        throw new Error(msg || "Payment succeeded, but package coins could not be loaded.");
+      }
+      // doctor-side zero-value audit lines are optional
     }
   }
   await persistActivePackagePair({
@@ -3040,7 +3112,7 @@ export async function completePackageOfferPayment(
     doctorUserId: effectiveDoctorUserId,
     amountInr,
     platformFeeInr,
-    packageCoins,
+    packageCoins: doctorPoolCoins,
     startedAt: paidPayload.deal_started_at,
   });
   await notifyLocal(
@@ -3056,14 +3128,38 @@ export async function patientPayPackageOfferStub(offerId, doctorUserId) {
 }
 
 async function createCoinLedgerLine(payload) {
-  return pb.collection("coin_ledger").create({
+  const meta = payload.meta && typeof payload.meta === "object" ? payload.meta : {};
+  const base = {
     user: payload.user,
     delta: Number(payload.delta || 0),
     reason: String(payload.reason || "").trim(),
     ref_collection: String(payload.ref_collection || "").trim(),
     ref_id: String(payload.ref_id || "").trim(),
-    meta: payload.meta && typeof payload.meta === "object" ? payload.meta : {},
-  });
+  };
+  try {
+    return await pb.collection("coin_ledger").create({ ...base, meta });
+  } catch (error) {
+    return await pb.collection("coin_ledger").create({
+      ...base,
+      meta: JSON.stringify(meta),
+    });
+  }
+}
+
+function parseCoinLedgerMeta(row) {
+  const meta = row?.meta;
+  if (meta && typeof meta === "object" && !Array.isArray(meta)) return meta;
+  if (typeof meta === "string" && meta.trim()) {
+    try {
+      const parsed = JSON.parse(meta);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 export async function getCoinBalanceForUser(userId) {
@@ -3090,9 +3186,16 @@ export async function recordTrialCoinTopup({
   providerReferenceId,
 } = {}) {
   const userId = String(patientUserId || getAuthUser()?.id || "").trim();
-  const amount = Number(amountInr);
-  if (!userId || !Number.isFinite(amount) || amount < 1) {
-    throw new Error("Invalid trial coin top-up.");
+  const amount = Math.floor(Number(amountInr));
+  if (!userId) throw new Error("Sign in required.");
+  if (
+    !Number.isFinite(amount) ||
+    amount < WALLET_TOPUP_MIN_INR ||
+    amount > WALLET_TOPUP_MAX_INR
+  ) {
+    throw new Error(
+      `Top up between ₹${WALLET_TOPUP_MIN_INR} and ₹${WALLET_TOPUP_MAX_INR}.`,
+    );
   }
   await recordPaymentTransaction({
     patientUserId: userId,
@@ -3118,49 +3221,101 @@ export async function recordTrialCoinTopup({
   });
 }
 
-/**
- * Stub wallet top-up (1 coin = ₹1): logs `payment_transactions` when possible,
- * then credits `coin_ledger`. Replace with Cashfree when deposits go live.
- */
-export async function recordPatientWalletDepositStub(
+/** Wallet top-up (1 coin = ₹1): caller verifies payment, then ledger is credited. */
+export async function recordPatientWalletDeposit({
   patientUserId,
   amountInr,
-) {
+  provider = "cashfree",
+  providerOrderId,
+  providerPaymentId,
+  providerReferenceId,
+  meta = {},
+} = {}) {
   const userId = String(patientUserId || getAuthUser()?.id || "").trim();
   const amount = Math.floor(Number(amountInr));
   if (!userId) throw new Error("Sign in required.");
-  if (!Number.isFinite(amount) || amount < 1) {
-    throw new Error("Enter a valid whole number of rupees (minimum 1).");
+  if (
+    !Number.isFinite(amount) ||
+    amount < WALLET_TOPUP_MIN_INR ||
+    amount > WALLET_TOPUP_MAX_INR
+  ) {
+    throw new Error(
+      `Enter a whole number from ₹${WALLET_TOPUP_MIN_INR} to ₹${WALLET_TOPUP_MAX_INR}.`,
+    );
   }
-  const refId = `wd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const paymentProvider = String(provider || "cashfree").trim().toLowerCase();
+  const refId = String(
+    providerOrderId ||
+      providerPaymentId ||
+      providerReferenceId ||
+      `wd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+  ).trim();
+  const reason =
+    paymentProvider === "stub" ? "wallet_deposit_stub" : "wallet_deposit";
+  if (refId) {
+    try {
+      const existing = await pb.collection("coin_ledger").getFullList({
+        requestKey: null,
+        filter: `user="${userId}" && ref_collection="wallet_deposit" && ref_id="${refId}" && reason="${reason}"`,
+      });
+      if (existing.length > 0) return getCoinBalanceForUser(userId);
+    } catch {
+      // coin_ledger errors surface on create below
+    }
+  }
   try {
     await recordPaymentTransaction({
       patientUserId: userId,
       sourceCollection: "wallet_deposit",
       sourceId: refId,
-      kind: "wallet_deposit_stub",
-      provider: "stub",
-      providerOrderId: refId,
+      kind:
+        paymentProvider === "stub" ? "wallet_deposit_stub" : "wallet_deposit",
+      provider: paymentProvider,
+      providerOrderId: providerOrderId || refId,
+      providerPaymentId,
+      providerReferenceId,
       amountInr: amount,
       currency: "INR",
       status: "success",
-      description: `Wallet deposit (stub): ${amount} coins`,
+      description: `Wallet deposit: ${amount} coins`,
+      metadata: {
+        amount_inr: amount,
+        coins: amount,
+        ...meta,
+      },
     });
   } catch (e) {
     console.log(
-      "recordPatientWalletDepositStub payment_transactions:",
+      "recordPatientWalletDeposit payment_transactions:",
       e?.message,
     );
   }
   await createCoinLedgerLine({
     user: userId,
     delta: amount,
-    reason: "wallet_deposit_stub",
+    reason,
     ref_collection: "wallet_deposit",
     ref_id: refId,
-    meta: { amount_inr: amount, at: new Date().toISOString() },
+    meta: {
+      provider: paymentProvider,
+      provider_order_id: providerOrderId || "",
+      provider_payment_id: providerPaymentId || "",
+      provider_reference_id: providerReferenceId || "",
+      amount_inr: amount,
+      coins: amount,
+      at: new Date().toISOString(),
+      ...meta,
+    },
   });
   return getCoinBalanceForUser(userId);
+}
+
+export async function recordPatientWalletDepositStub(patientUserId, amountInr) {
+  return recordPatientWalletDeposit({
+    patientUserId,
+    amountInr,
+    provider: "stub",
+  });
 }
 
 async function findDoctorCoinBalanceRow(doctorUserId) {
@@ -3178,7 +3333,7 @@ async function upsertDoctorCoinBalance(doctorUserId, delta) {
   if (!doctorUserId) return null;
   const current = await findDoctorCoinBalanceRow(doctorUserId);
   if (current?.id) {
-    const next = Math.max(0, (Number(current.balance) || 0) + Number(delta || 0));
+    const next = (Number(current.balance) || 0) + Number(delta || 0);
     return pb.collection("doctor_coin_balances").update(current.id, {
       balance: next,
       last_ledger_at: new Date().toISOString(),
@@ -3186,7 +3341,7 @@ async function upsertDoctorCoinBalance(doctorUserId, delta) {
   }
   return pb.collection("doctor_coin_balances").create({
     doctor: doctorUserId,
-    balance: Math.max(0, Number(delta || 0)),
+    balance: Number(delta || 0),
     last_ledger_at: new Date().toISOString(),
   });
 }
@@ -3275,6 +3430,26 @@ export async function referPackagePatientToDoctor({
   }
   if (fromDoctor === toDoctor) {
     throw new Error("Choose a different doctor for referral.");
+  }
+  try {
+    const targetProfile = await pb
+      .collection("doctor_profile")
+      .getFirstListItem(`user="${toDoctor}"`, { requestKey: null });
+    const targetTier =
+      targetProfile?.practitioner_tier ||
+      targetProfile?.tier ||
+      targetProfile?.doctor_class ||
+      targetProfile?.verification_tier ||
+      "";
+    if (
+      !doctorTierEligibleForPackageMode(targetTier) ||
+      doctorTierEligibleForQuickService(targetProfile)
+    ) {
+      throw new Error("Referral target must be a professional or specialist package doctor.");
+    }
+  } catch (error) {
+    if (error?.message?.includes("Referral target")) throw error;
+    throw new Error("Choose an eligible professional or specialist package doctor.");
   }
   const activeOffer = await findActivePackageOfferForPair({
     patientUserId: patient,
@@ -3372,7 +3547,7 @@ export async function settleReferralMonthlyCommission(referral, date = new Date(
     return { settled: false, reason: "coin_ledger_missing" };
   }
   existing = existing.filter((row) => {
-    const meta = row?.meta && typeof row.meta === "object" ? row.meta : {};
+    const meta = parseCoinLedgerMeta(row);
     return String(meta.month || "") === key;
   });
   if (existing.length > 0) return { settled: false, reason: "already_settled" };
@@ -3381,7 +3556,7 @@ export async function settleReferralMonthlyCommission(referral, date = new Date(
     filter: `user="${toDoctorUserId}" && reason="package_session_doctor_earned" && created>="${start}" && created<"${end}"`,
   });
   const earnedFromPatient = (earnedRows || []).filter((row) => {
-    const meta = row?.meta && typeof row.meta === "object" ? row.meta : {};
+    const meta = parseCoinLedgerMeta(row);
     return (
       String(meta.package_offer_id || "") === offerId ||
       String(meta.patient_user_id || "") === patientUserId
@@ -3551,10 +3726,65 @@ export async function settlePackageCoinsForCompletedAppointment(appointmentRow) 
     return { settled: false, reason: "appointment_doctor_not_in_pair" };
   }
   const totalDoctorCoins = Number(activeOffer.doctor_coins ?? 0);
+  const totalPatientCoins = Number(activeOffer.amount_inr ?? 0) || totalDoctorCoins;
   const sessions = Math.max(1, Number(activeOffer.sessions) || 1);
-  const coins = Math.max(1, Math.round(totalDoctorCoins / sessions));
-  if (!patientUserId || !doctorUserId || !Number.isFinite(coins)) {
+  if (
+    !patientUserId ||
+    !doctorUserId ||
+    !Number.isFinite(totalDoctorCoins) ||
+    totalDoctorCoins <= 0 ||
+    !Number.isFinite(totalPatientCoins) ||
+    totalPatientCoins <= 0
+  ) {
     return { settled: false, reason: "missing_party_or_amount" };
+  }
+  let priorDoctorRows = [];
+  let priorPatientRows = [];
+  try {
+    const [doctorRows, patientRows] = await Promise.all([
+      pb.collection("coin_ledger").getFullList({
+        requestKey: null,
+        filter: `user="${doctorUserId}" && reason="package_session_doctor_earned"`,
+      }),
+      pb.collection("coin_ledger").getFullList({
+        requestKey: null,
+        filter: `user="${patientUserId}" && reason="package_session_patient_spent"`,
+      }),
+    ]);
+    priorDoctorRows = (doctorRows || []).filter(
+      (row) => String(parseCoinLedgerMeta(row).package_offer_id || "") === offerId,
+    );
+    priorPatientRows = (patientRows || []).filter(
+      (row) => String(parseCoinLedgerMeta(row).package_offer_id || "") === offerId,
+    );
+  } catch {
+    return { settled: false, reason: "coin_ledger_missing" };
+  }
+  if (priorDoctorRows.length >= sessions) {
+    return { settled: false, reason: "all_package_sessions_settled" };
+  }
+  const doctorEarnedSoFar = priorDoctorRows.reduce(
+    (sum, row) => sum + Math.max(0, Number(row.delta) || 0),
+    0,
+  );
+  const patientSpentSoFar = priorPatientRows.reduce(
+    (sum, row) => sum + Math.max(0, Math.abs(Number(row.delta) || 0)),
+    0,
+  );
+  const sessionIndex = priorDoctorRows.length + 1;
+  const isFinalSession = sessionIndex >= sessions;
+  const patientRemaining = Math.max(0, totalPatientCoins - patientSpentSoFar);
+  const doctorRemaining = Math.max(0, totalDoctorCoins - doctorEarnedSoFar);
+  const basePatientCoins = Math.max(1, Math.floor(totalPatientCoins / sessions));
+  const baseDoctorCoins = Math.max(1, Math.floor(totalDoctorCoins / sessions));
+  const patientCoins = isFinalSession
+    ? patientRemaining
+    : Math.min(patientRemaining, basePatientCoins);
+  const doctorCoins = isFinalSession
+    ? doctorRemaining
+    : Math.min(doctorRemaining, baseDoctorCoins);
+  if (patientCoins <= 0 || doctorCoins <= 0) {
+    return { settled: false, reason: "package_coins_already_depleted" };
   }
   const hadInteraction = await hasPatientDoctorInteractionOnDay({
     patientUserId,
@@ -3569,18 +3799,54 @@ export async function settlePackageCoinsForCompletedAppointment(appointmentRow) 
   if (!hadInteraction) {
     return { settled: false, reason: "no_same_day_interaction" };
   }
-  await assertUserHasCoins(patientUserId, coins);
+  try {
+    const loadedRows = await pb.collection("coin_ledger").getFullList({
+      requestKey: null,
+      filter: `user="${patientUserId}" && ref_collection="package_offers" && ref_id="${offerId}"`,
+    });
+    const loadedCoins = (loadedRows || [])
+      .filter((row) =>
+        [
+          "package_patient_coins_loaded",
+          "package_patient_coins_adjusted_to_paid_amount",
+        ].includes(String(row.reason || "")),
+      )
+      .reduce((sum, row) => sum + Math.max(0, Number(row.delta) || 0), 0);
+    if (loadedCoins < totalPatientCoins) {
+      const diff = totalPatientCoins - loadedCoins;
+      await createCoinLedgerLine({
+        user: patientUserId,
+        delta: diff,
+        reason: "package_patient_coins_adjusted_to_paid_amount",
+        ref_collection: "package_offers",
+        ref_id: offerId,
+        meta: {
+          package_offer_id: offerId,
+          paid_amount_inr: totalPatientCoins,
+          previous_loaded_coins: loadedCoins,
+          adjusted_at: new Date().toISOString(),
+        },
+      });
+    }
+  } catch {
+    // If adjustment cannot be checked, the balance assertion below protects settlement.
+  }
+  await assertUserHasCoins(patientUserId, patientCoins);
   const meta = {
     package_offer_id: offerId,
     appointment_id: appointmentRow.id,
     patient_user_id: patientUserId,
     doctor_user_id: doctorUserId,
+    session_index: sessionIndex,
     sessions,
+    total_patient_package_coins: totalPatientCoins,
     total_doctor_coins: totalDoctorCoins,
+    patient_session_coins: patientCoins,
+    doctor_session_coins: doctorCoins,
   };
   await createCoinLedgerLine({
     user: patientUserId,
-    delta: -coins,
+    delta: -patientCoins,
     reason: "package_session_patient_spent",
     ref_collection: getPbAppointmentsCollection(),
     ref_id: appointmentRow.id,
@@ -3588,28 +3854,39 @@ export async function settlePackageCoinsForCompletedAppointment(appointmentRow) 
   });
   await createCoinLedgerLine({
     user: doctorUserId,
-    delta: coins,
+    delta: doctorCoins,
     reason: "package_session_doctor_earned",
     ref_collection: getPbAppointmentsCollection(),
     ref_id: appointmentRow.id,
     meta,
   });
   try {
-    await upsertDoctorCoinBalance(doctorUserId, coins);
+    await upsertDoctorCoinBalance(doctorUserId, doctorCoins);
   } catch {
     // withdrawal can still use ledger balance if the balance collection is missing
   }
-  return { settled: true, coins };
+  try {
+    const pair = await pb
+      .collection("patient_doctor_packages")
+      .getFirstListItem(`package_offer="${offerId}"`, { requestKey: null });
+    await pb.collection("patient_doctor_packages").update(pair.id, {
+      remaining_coins: Math.max(0, totalPatientCoins - patientSpentSoFar - patientCoins),
+    });
+  } catch {
+    // optional progress cache; ledger remains source of truth
+  }
+  return { settled: true, patientCoins, doctorCoins };
 }
 
 export async function listCoinLedgerForUser(userId) {
   if (!userId) return [];
   try {
-    return await pb.collection("coin_ledger").getFullList({
+    const rows = await pb.collection("coin_ledger").getFullList({
       requestKey: null,
       sort: "-created",
       filter: `user="${userId}"`,
     });
+    return (rows || []).map((row) => ({ ...row, meta: parseCoinLedgerMeta(row) }));
   } catch {
     return [];
   }
@@ -3620,12 +3897,15 @@ export async function doctorWithdrawCoinsStub(doctorUserId, coins) {
   if (!doctorUserId || !Number.isFinite(n) || n < 1) {
     throw new Error("Invalid withdrawal.");
   }
-  const balanceRow = await findDoctorCoinBalanceRow(doctorUserId);
+  let balanceRow = await findDoctorCoinBalanceRow(doctorUserId);
   const balance = balanceRow?.id
     ? Number(balanceRow.balance) || 0
     : await getCoinBalanceForUser(doctorUserId);
   if (n > balance) {
     throw new Error(`Withdrawal exceeds available coins (${balance}).`);
+  }
+  if (!balanceRow?.id && balance > 0) {
+    balanceRow = await upsertDoctorCoinBalance(doctorUserId, balance);
   }
   try {
     const request = {
@@ -3701,14 +3981,25 @@ export async function createQuickSolutionRequest({
     } else {
       row = await pb.collection("quick_solution_requests").create(base);
     }
-    await createCoinLedgerLine({
-      user: patientUserId,
-      delta: -10,
-      reason: "quick_solution_patient_spent",
-      ref_collection: "quick_solution_requests",
-      ref_id: row.id,
-      meta: coinMeta,
-    });
+    try {
+      await createCoinLedgerLine({
+        user: patientUserId,
+        delta: -10,
+        reason: "quick_solution_patient_spent",
+        ref_collection: "quick_solution_requests",
+        ref_id: row.id,
+        meta: coinMeta,
+      });
+    } catch (ledgerError) {
+      try {
+        await pb.collection("quick_solution_requests").update(row.id, {
+          status: QUICK_REQUEST_STATUS.CANCELLED,
+        });
+      } catch {
+        // best effort: do not leave a free queued request when ledger fails
+      }
+      throw ledgerError;
+    }
     await notifyLocal(
       "Quick Solution submitted",
       privateMode
@@ -3787,14 +4078,25 @@ export async function createQuickCounsellingRequest({
       provider_coins: 15,
       status: "queued",
     });
-    await createCoinLedgerLine({
-      user: patientUserId,
-      delta: -25,
-      reason: "quick_counselling_patient_spent",
-      ref_collection: "quick_counselling_requests",
-      ref_id: row.id,
-      meta: coinMeta,
-    });
+    try {
+      await createCoinLedgerLine({
+        user: patientUserId,
+        delta: -25,
+        reason: "quick_counselling_patient_spent",
+        ref_collection: "quick_counselling_requests",
+        ref_id: row.id,
+        meta: coinMeta,
+      });
+    } catch (ledgerError) {
+      try {
+        await pb.collection("quick_counselling_requests").update(row.id, {
+          status: QUICK_REQUEST_STATUS.CANCELLED,
+        });
+      } catch {
+        // best effort: do not leave a free queued request when ledger fails
+      }
+      throw ledgerError;
+    }
     await notifyLocal(
       "Quick Counselling",
       "An RMP doctor will connect shortly.",
@@ -3840,7 +4142,36 @@ export async function listQuickCounsellingRequests(patientUserId) {
  * PocketBase: allow authenticated staff/doctors to list `status="queued"` (and expand `patient` if you want names).
  * Errors propagate so the UI can show 403 / rule failures instead of looking like an empty queue.
  */
+async function assertCurrentUserCanAccessQuickQueues() {
+  const user = getAuthUser();
+  const uid = String(user?.id || "").trim();
+  const role = String(user?.role || "").trim().toLowerCase();
+  if (!uid) throw new Error("Sign in required.");
+  if (role === "pharmacy") {
+    try {
+      const profile = await pb
+        .collection("pharmacy_profile")
+        .getFirstListItem(`user="${uid}"`, { requestKey: null });
+      if (normalizePharmacyProviderKind(profile?.provider_kind)) return true;
+    } catch {
+      // fall through to deny
+    }
+  }
+  if (role === "doctor") {
+    try {
+      const profile = await pb
+        .collection("doctor_profile")
+        .getFirstListItem(`user="${uid}"`, { requestKey: null });
+      if (doctorTierEligibleForQuickService(profile)) return true;
+    } catch {
+      // fall through to deny
+    }
+  }
+  throw new Error("Quick queues are only for RMP, clinic, or clinic-doctor accounts.");
+}
+
 export async function listQueuedQuickSolutionRequestsForProvider() {
+  await assertCurrentUserCanAccessQuickQueues();
   try {
     return await pb.collection("quick_solution_requests").getFullList({
       requestKey: null,
@@ -3873,6 +4204,7 @@ export async function listQueuedQuickSolutionRequestsForProvider() {
  * PocketBase: same list rules as quick_solution_requests for your role.
  */
 export async function listQueuedQuickCounsellingRequestsForProvider() {
+  await assertCurrentUserCanAccessQuickQueues();
   try {
     return await pb.collection("quick_counselling_requests").getFullList({
       requestKey: null,
@@ -3955,6 +4287,7 @@ export async function recordQuickHelpOffer({
   if (!requestId || !doctorUserId || !patientUserId || !conversationId) {
     return { record: null, skipped: true };
   }
+  await assertCurrentUserCanAccessQuickQueues();
   const kind = requestKind === "counselling" ? "counselling" : "solution";
   const trimmed = String(firstMessage || "").trim();
   const baseAttempts = [
@@ -4259,6 +4592,100 @@ export async function listActiveQuickRequestsForPatient(patientUserId) {
     );
 
   return { items };
+}
+
+/** Patient selects a doctor's quick-help offer: pay provider share once, then close the request. */
+export async function acceptQuickHelpOffer({
+  offer,
+  requestId,
+  kind,
+  patientUserId,
+} = {}) {
+  const requestKind = kind === "counselling" ? "counselling" : "solution";
+  const collection = quickRequestCollectionName(requestKind);
+  const reqId = String(requestId || offer?.request_id || "").trim();
+  const doctorUserId = String(
+    relationId(offer?.doctor) || relationId(offer?.expand?.doctor) || "",
+  ).trim();
+  const patient = String(
+    patientUserId || relationId(offer?.patient) || getAuthUser()?.id || "",
+  ).trim();
+  const authId = String(getAuthUser()?.id || "").trim();
+  if (!reqId || !doctorUserId || !patient) {
+    throw new Error("Missing quick request, doctor, or patient.");
+  }
+  if (authId && authId !== patient) {
+    throw new Error("You can only select offers for your own quick requests.");
+  }
+  let request = null;
+  try {
+    request = await pb.collection(collection).getOne(reqId, { requestKey: null });
+  } catch (error) {
+    const msg = formatPocketBaseClientError(error) || error?.message;
+    throw new Error(msg || "Could not load this quick request.");
+  }
+  const status = String(request?.status || "queued").toLowerCase();
+  if (status !== QUICK_REQUEST_STATUS.QUEUED) {
+    return { paid: false, closed: true, reason: "request_not_queued" };
+  }
+  const reason =
+    requestKind === "counselling"
+      ? "quick_counselling_provider_earned"
+      : "quick_solution_provider_earned";
+  const defaultProviderCoins = requestKind === "counselling" ? 15 : 5;
+  const providerCoins =
+    Number(request?.provider_coins ?? request?.doctor_coins ?? defaultProviderCoins) ||
+    defaultProviderCoins;
+  const platformFeeCoins =
+    Number(request?.platform_fee_coins ?? (requestKind === "counselling" ? 10 : 5)) ||
+    (requestKind === "counselling" ? 10 : 5);
+  let existing = [];
+  try {
+    existing = await pb.collection("coin_ledger").getFullList({
+      requestKey: null,
+      filter: `ref_collection="${collection}" && ref_id="${reqId}" && reason="${reason}"`,
+    });
+  } catch {
+    existing = [];
+  }
+  if (existing.length === 0) {
+    await createCoinLedgerLine({
+      user: doctorUserId,
+      delta: providerCoins,
+      reason,
+      ref_collection: collection,
+      ref_id: reqId,
+      meta: {
+        request_id: reqId,
+        request_kind: requestKind,
+        quick_help_offer_id: String(offer?.id || "").trim(),
+        patient_user_id: patient,
+        doctor_user_id: doctorUserId,
+        provider_coins: providerCoins,
+        platform_fee_coins: platformFeeCoins,
+        accepted_at: new Date().toISOString(),
+      },
+    });
+    try {
+      await upsertDoctorCoinBalance(doctorUserId, providerCoins);
+    } catch {
+      // ledger remains source of truth if the balance cache is not available
+    }
+  }
+  await pb.collection(collection).update(reqId, {
+    status: QUICK_REQUEST_STATUS.CLOSED,
+  });
+  const offerId = String(offer?.id || "").trim();
+  if (offerId && !offerId.startsWith("inferred:")) {
+    try {
+      await pb.collection("quick_help_offers").update(offerId, {
+        status: QUICK_REQUEST_STATUS.CLOSED,
+      });
+    } catch {
+      // optional collection/rules
+    }
+  }
+  return { paid: existing.length === 0, closed: true, coins: providerCoins };
 }
 
 /** Patient closes a quick request (after picking a doctor). Status becomes "closed". */

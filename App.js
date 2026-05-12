@@ -102,7 +102,7 @@ import {
   getCoinBalanceForUser,
   getPatientActiveQuickCareBinding,
   listPackageOffersForDoctor,
-  recordPatientWalletDepositStub,
+  recordPatientWalletDeposit,
   mergeLocalFeesOntoSlots,
   minutesUsedWithDoctorThisRollingWeek,
   needsCareOnboarding,
@@ -126,6 +126,8 @@ import {
   resolveDoctorProfileIdForUser,
   resolveListingDisplayName,
   settlePackageCoinsForCompletedAppointment,
+  WALLET_TOPUP_MAX_INR,
+  WALLET_TOPUP_MIN_INR,
   writeLocalCareMode,
 } from "./productSpecApi";
 import { PatientPrimaryCareOnboardingScreen } from "./patientPrimaryCareOnboarding";
@@ -893,6 +895,11 @@ const appointmentFeePaise = (appointment) => {
 
 const packageOfferAmountPaise = (offer) => {
   const rupees = Number(offer?.amount_inr || offer?.amountInr || 0);
+  return Math.max(100, Math.round((Number.isFinite(rupees) ? rupees : 0) * 100));
+};
+
+const walletTopupAmountPaise = (amountInr) => {
+  const rupees = Math.floor(Number(amountInr));
   return Math.max(100, Math.round((Number.isFinite(rupees) ? rupees : 0) * 100));
 };
 
@@ -2579,7 +2586,7 @@ const mapDoctorListingRecord = (record) => {
     profileId: record.id,
     userId,
     name: listingName,
-    practitionerTier: practitionerTier || "professional",
+    practitionerTier,
     packageSlots,
     packagesSetupComplete,
     specialty: String(specialty),
@@ -2733,8 +2740,17 @@ const mapHospitalRecord = (record) => {
 //   + closing_days (JSON array of "mon"/"sun" etc.),
 //   + products (JSON array of { name, price, notes }).
 const mapPharmacyListingRecord = (record) => {
-  const user = record?.expand?.user;
-  const userId = record.user || user?.id || null;
+  const rawUser = record?.expand?.user;
+  const user = Array.isArray(rawUser) ? rawUser[0] : rawUser;
+  const rawRelationUser = Array.isArray(record.user)
+    ? record.user[0]
+    : record.user;
+  const userId =
+    (typeof rawRelationUser === "string"
+      ? rawRelationUser
+      : rawRelationUser?.id) ||
+    user?.id ||
+    null;
   const token = pb?.authStore?.token;
   const rawLogo = record.logo || record.avatar || record.photo || record.image;
   const logoField = Array.isArray(rawLogo) ? rawLogo[0] : rawLogo;
@@ -2771,7 +2787,7 @@ const mapPharmacyListingRecord = (record) => {
         .filter(Boolean)
     : [];
   const providerKind = normalizePharmacyProviderKind(
-    record.provider_kind || record.pharmacy_kind,
+    record.provider_kind || record.pharmacy_kind || record.providerKind,
   );
   return {
     id: record.id,
@@ -2791,6 +2807,43 @@ const mapPharmacyListingRecord = (record) => {
     products,
     logoUrl,
     raw: record,
+  };
+};
+
+const mapPharmacyQuickServiceDoctorListing = (pharmacy) => {
+  const providerKind = normalizePharmacyProviderKind(
+    pharmacy?.providerKind ||
+      pharmacy?.raw?.provider_kind ||
+      pharmacy?.raw?.pharmacy_kind,
+  );
+  if (!providerKind || !pharmacy?.userId) return null;
+  const isRmp = providerKind === PHARMACY_PROVIDER_KIND.RMP_DOCTOR;
+  return {
+    profileId: pharmacy.profileId || pharmacy.id,
+    userId: pharmacy.userId,
+    name: pharmacy.name || (isRmp ? "RMP doctor" : "Clinic"),
+    practitionerTier: isRmp ? "rmp" : "clinic",
+    packageSlots: [],
+    packagesSetupComplete: false,
+    specialty: isRmp ? "RMP / General Physician" : "Clinic doctor",
+    experience: null,
+    fee: 0,
+    rating: 4.8,
+    bio: pharmacy.tagline || "",
+    clinicOrHospital: [pharmacy.address, pharmacy.district, pharmacy.state]
+      .filter(Boolean)
+      .join(", "),
+    languages: [],
+    concerns: ["general"],
+    avatarUrl: pharmacy.logoUrl || null,
+    providerKind,
+    receivesMedicineOrders: pharmacy.receivesMedicineOrders,
+    quickServiceProvider: true,
+    raw: {
+      ...(pharmacy.raw || {}),
+      provider_kind: providerKind,
+      practitioner_tier: isRmp ? "rmp" : "clinic",
+    },
   };
 };
 
@@ -4220,6 +4273,7 @@ const WalletDepositScreen = ({
   depositAmount,
   setDepositAmount,
   onDeposit,
+  paymentMode,
   onBack,
 }) => {
   const insets = useSafeAreaInsets();
@@ -4299,9 +4353,8 @@ const WalletDepositScreen = ({
               {coinBalance} coins
             </Text>
             <Text style={{ color: theme.textTertiary, fontSize: RFValue(12), marginTop: RFValue(8), lineHeight: RFValue(18) }}>
-              Deposits use a stub flow: the same number of coins is credited to your
-              wallet in PocketBase (`coin_ledger`). Connect Cashfree here when you are
-              ready for live INR collection.
+              The same number of coins is credited to your wallet through
+              coin_ledger after the top-up is confirmed.
             </Text>
           </View>
 
@@ -4319,7 +4372,7 @@ const WalletDepositScreen = ({
               Deposit coins
             </Text>
             <Text style={{ color: theme.textSecondary, fontSize: RFValue(12), marginBottom: RFValue(10) }}>
-              Enter an amount in rupees. You’ll receive the same number of coins.
+              Enter ₹{WALLET_TOPUP_MIN_INR}-₹{WALLET_TOPUP_MAX_INR}. You’ll receive the same number of coins after Cashfree confirms payment.
             </Text>
             <TextInput
               value={depositAmount}
@@ -4350,7 +4403,7 @@ const WalletDepositScreen = ({
               }}
             >
               <Text style={{ color: "#FFF", fontWeight: "900", fontSize: RFValue(15) }}>
-                Deposit
+                {paymentMode === "cashfree" ? "Pay with Cashfree" : "Deposit"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -4436,6 +4489,8 @@ const PatientHomeScreen = () => {
     payForPackageOffer,
     ensureAssistantConversation,
     sendAssistantMessage,
+    topUpPatientWallet,
+    paymentMode,
   } = useAppData();
   const patientQuickCareBinding = usePatientQuickCareBinding();
   const patientFirstName =
@@ -4637,28 +4692,43 @@ const PatientHomeScreen = () => {
     patientQuickCareBinding?.doctorUserId,
   ]);
 
+  const refreshPatientCoinBalance = useCallback(async () => {
+    if (!currentUser?.id) return;
+    try {
+      const b = await getCoinBalanceForUser(currentUser.id);
+      setPatientCoinBalance(Number(b) || 0);
+    } catch {
+      // keep the last visible balance
+    }
+  }, [currentUser?.id]);
+
   const handleWalletDeposit = useCallback(async () => {
     const raw = String(depositAmount || "").trim();
     const n = Math.floor(Number(raw));
     if (!currentUser?.id) return;
-    if (!Number.isFinite(n) || n < 1) {
-      Alert.alert("Deposit", "Enter a whole number of rupees (1 or more).");
+    if (
+      !Number.isFinite(n) ||
+      n < WALLET_TOPUP_MIN_INR ||
+      n > WALLET_TOPUP_MAX_INR
+    ) {
+      Alert.alert(
+        "Deposit",
+        `Enter a whole number from ₹${WALLET_TOPUP_MIN_INR} to ₹${WALLET_TOPUP_MAX_INR}.`,
+      );
       return;
     }
     try {
-      const next = await recordPatientWalletDepositStub(currentUser.id, n);
+      if (typeof topUpPatientWallet !== "function") {
+        throw new Error("Wallet top-up is not available right now.");
+      }
+      const next = await topUpPatientWallet(n);
       setPatientCoinBalance(Number(next) || 0);
       setDepositAmount("");
-      try {
-        await refreshAllData();
-      } catch {
-        /* ignore */
-      }
       Alert.alert("Deposit", `${n} coins were added to your wallet.`);
     } catch (e) {
       Alert.alert("Deposit", e?.message || "Could not add coins.");
     }
-  }, [currentUser?.id, depositAmount, refreshAllData]);
+  }, [currentUser?.id, depositAmount, topUpPatientWallet]);
 
   useEffect(() => {
     if (!showPackageJourney) return;
@@ -4827,6 +4897,7 @@ const PatientHomeScreen = () => {
         depositAmount={depositAmount}
         setDepositAmount={setDepositAmount}
         onDeposit={handleWalletDeposit}
+        paymentMode={paymentMode}
         onBack={() => {
           setShowWallet(false);
           if (currentUser?.id) {
@@ -4844,6 +4915,7 @@ const PatientHomeScreen = () => {
         onBack={() => {
           setShowQuickSol(false);
           setQuickRequestsRefreshKey((k) => k + 1);
+          void refreshPatientCoinBalance();
         }}
         patientUserId={currentUser?.id}
         quickCareBinding={patientQuickCareBinding}
@@ -4868,6 +4940,7 @@ const PatientHomeScreen = () => {
         onBack={() => {
           setShowQuickCounselling(false);
           setQuickRequestsRefreshKey((k) => k + 1);
+          void refreshPatientCoinBalance();
         }}
         patientUserId={currentUser?.id}
         quickCareBinding={patientQuickCareBinding}
@@ -4901,7 +4974,10 @@ const PatientHomeScreen = () => {
           tabNav?.navigateTab?.("Appts");
         }}
         onPaySelectedPackage={payForPackageOffer}
-        onPackagePaid={() => refreshAllData()}
+        onPackagePaid={() => {
+          void refreshAllData();
+          void refreshPatientCoinBalance();
+        }}
       />
     );
 
@@ -5656,12 +5732,12 @@ const PatientHomeScreen = () => {
                 >
                   {patientCareMode === CARE_MODE.PACKAGE &&
                   patientQuickCareBinding?.doctorUserId
-                    ? "Quick Solve and Quick Counselling go to your package doctor by default (change recipient on each send if needed)."
+                    ? "Quick services use the RMP / clinic queue; your package doctor remains for structured care."
                     : patientCareMode === CARE_MODE.PACKAGE
-                      ? "Quick Solve and Quick Counselling: pick a doctor or pharmacy on each request."
+                      ? "Quick services stay separate from package care and use RMP / clinic doctors."
                       : patientCareMode === CARE_MODE.CASUAL
-                        ? "Pick one doctor or one pharmacy each time (1 coin = ₹1)."
-                        : "Available anytime; pick one doctor or one pharmacy per request."}
+                        ? "RMP / clinic doctors (1 coin = ₹1)."
+                        : "Available anytime through the RMP / clinic queue."}
                 </Text>
                 <TouchableOpacity
                   onPress={() => setShowQuickSol(true)}
@@ -5718,7 +5794,7 @@ const PatientHomeScreen = () => {
                       }}
                     >
                       {patientCareMode === CARE_MODE.PACKAGE
-                        ? "10 coin · Private mode available"
+                        ? "10 coins · RMP/clinic queue"
                         : "₹10 · Private mode available"}
                     </Text>
                   </View>
@@ -5782,7 +5858,7 @@ const PatientHomeScreen = () => {
                         marginTop: RFValue(2),
                       }}
                     >
-                      {patientCareMode === CARE_MODE.PACKAGE ? "25 coin" : "₹25"}
+                      {patientCareMode === CARE_MODE.PACKAGE ? "25 coins · RMP/clinic" : "₹25"}
                     </Text>
                   </View>
                   <Ionicons
@@ -5832,154 +5908,256 @@ const PatientHomeScreen = () => {
                 >
                   {patientCareMode === CARE_MODE.PACKAGE
                     ? "Demos, paid packages, and your package journey live here."
-                    : "Explore the app; switch care mode anytime from Profile."}
+                    : patientCareMode === CARE_MODE.CASUAL
+                      ? "Quick services are handled above; medical records stay available for consults."
+                      : "Explore the app; switch care mode anytime from Profile."}
                 </Text>
                 {patientCareMode === CARE_MODE.PACKAGE ? (
                   <>
-                    {!patientQuickCareBinding?.doctorUserId ? (
-                      <Text
-                        style={{
-                          fontSize: RFValue(11),
-                          color: theme.textSecondary,
-                          marginBottom: RFValue(12),
-                          lineHeight: RFValue(16),
-                        }}
-                      >
-                        Quick Solve and Quick Counselling unlock after you
-                        choose a doctor and activate a paid package — start from
-                        Package journey below.
-                      </Text>
-                    ) : null}
-                    <TouchableOpacity
-                      onPress={() => setShowPackageJourney(true)}
-                      activeOpacity={0.9}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        backgroundColor: theme.card,
-                        borderRadius: RFValue(16),
-                        padding: RFValue(16),
-                        marginBottom: RFValue(10),
-                        borderWidth: StyleSheet.hairlineWidth,
-                        borderColor: theme.cardBorder,
-                        shadowColor: theme.shadowColor,
-                        shadowOpacity: 0.06,
-                        shadowOffset: { width: 0, height: 4 },
-                        shadowRadius: 12,
-                        elevation: 3,
-                      }}
-                    >
-                      <View
-                        style={{
-                          paddingHorizontal: RFValue(10),
-                          height: RFValue(36),
-                          borderRadius: RFValue(14),
-                          backgroundColor: theme.accentLight,
-                          justifyContent: "center",
-                          alignItems: "center",
-                          marginRight: RFValue(14),
-                        }}
-                      >
-                        <Ionicons
-                          name="git-branch-outline"
-                          size={RFValue(22)}
-                          color={theme.accent}
-                        />
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text
+                    {patientQuickCareBinding?.doctorUserId ? (
+                      <>
+                        <View
                           style={{
-                            fontSize: RFValue(14),
-                            fontWeight: "700",
-                            color: theme.textPrimary,
+                            flexDirection: "row",
+                            gap: RFValue(8),
+                            alignItems: "stretch",
+                            marginBottom: RFValue(0),
                           }}
                         >
-                          Package journey
-                        </Text>
-                        <Text
+                          <TouchableOpacity
+                            onPress={() => setShowPackageJourney(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              backgroundColor: theme.accentLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Ionicons
+                              name="git-branch-outline"
+                              size={RFValue(22)}
+                              color={theme.accent}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{ fontWeight: "800", color: theme.accent }}
+                            >
+                              Package journey
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Demo → pay
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowMedical(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              borderWidth: 1,
+                              borderColor: theme.cardBorder,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                              backgroundColor: theme.card,
+                            }}
+                          >
+                            <Ionicons
+                              name="document-text-outline"
+                              size={RFValue(22)}
+                              color={theme.textSecondary}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{
+                                fontWeight: "800",
+                                color: theme.textPrimary,
+                              }}
+                            >
+                              Medical records
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Uploads for consults
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          activeOpacity={0.9}
+                          onPress={() => setShowPackageJourney(true)}
                           style={{
-                            fontSize: RFValue(12),
-                            color: theme.textSecondary,
-                            marginTop: RFValue(2),
+                            backgroundColor: theme.accentLight,
+                            padding: RFValue(14),
+                            borderRadius: RFValue(14),
+                            marginBottom: RFValue(10),
+                            borderWidth: StyleSheet.hairlineWidth,
+                            borderColor: theme.cardBorder,
                           }}
                         >
-                          Demo → pay
-                        </Text>
-                      </View>
-                      <Ionicons
-                        name="chevron-forward"
-                        size={RFValue(18)}
-                        color={theme.textTertiary}
-                      />
-                    </TouchableOpacity>
+                          <Text
+                            style={{
+                              fontSize: RFValue(14),
+                              fontWeight: "800",
+                              color: theme.textPrimary,
+                              marginBottom: RFValue(6),
+                            }}
+                          >
+                            Package care not active yet
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: RFValue(11),
+                              color: theme.textSecondary,
+                              lineHeight: RFValue(16),
+                            }}
+                          >
+                            Select a professional or specialist doctor and
+                            activate a paid package for structured care. Quick
+                            services remain available separately through the
+                            RMP / clinic queue.
+                          </Text>
+                          <Text
+                            style={{
+                              marginTop: RFValue(10),
+                              fontSize: RFValue(13),
+                              fontWeight: "800",
+                              color: theme.accent,
+                            }}
+                          >
+                            Open package journey →
+                          </Text>
+                        </TouchableOpacity>
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            gap: RFValue(8),
+                            alignItems: "stretch",
+                          }}
+                        >
+                          <TouchableOpacity
+                            onPress={() => setShowPackageJourney(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              backgroundColor: theme.accentLight,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                            }}
+                          >
+                            <Ionicons
+                              name="git-branch-outline"
+                              size={RFValue(22)}
+                              color={theme.accent}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{ fontWeight: "800", color: theme.accent }}
+                            >
+                              Package journey
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Demo → pay
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowMedical(true)}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              borderWidth: 1,
+                              borderColor: theme.cardBorder,
+                              padding: RFValue(12),
+                              borderRadius: RFValue(14),
+                              backgroundColor: theme.card,
+                            }}
+                          >
+                            <Ionicons
+                              name="document-text-outline"
+                              size={RFValue(22)}
+                              color={theme.textSecondary}
+                              style={{ marginBottom: RFValue(6) }}
+                            />
+                            <Text
+                              style={{
+                                fontWeight: "800",
+                                color: theme.textPrimary,
+                              }}
+                            >
+                              Medical records
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: RFValue(10),
+                                color: theme.textSecondary,
+                                marginTop: 4,
+                              }}
+                            >
+                              Uploads for consults
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      gap: RFValue(8),
+                    }}
+                  >
                     <TouchableOpacity
                       onPress={() => setShowMedical(true)}
-                      activeOpacity={0.9}
                       style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        backgroundColor: theme.card,
-                        borderRadius: RFValue(16),
-                        padding: RFValue(16),
-                        marginBottom: RFValue(0),
-                        borderWidth: StyleSheet.hairlineWidth,
+                        flexBasis: "100%",
+                        width: "100%",
+                        borderWidth: 1,
                         borderColor: theme.cardBorder,
-                        shadowColor: theme.shadowColor,
-                        shadowOpacity: 0.06,
-                        shadowOffset: { width: 0, height: 4 },
-                        shadowRadius: 12,
-                        elevation: 3,
+                        padding: RFValue(12),
+                        borderRadius: RFValue(14),
+                        backgroundColor: theme.card,
                       }}
                     >
-                      <View
+                      <Text
+                        style={{ fontWeight: "800", color: theme.textPrimary }}
+                      >
+                        Medical records
+                      </Text>
+                      <Text
                         style={{
-                          paddingHorizontal: RFValue(10),
-                          height: RFValue(36),
-                          borderRadius: RFValue(14),
-                          backgroundColor: theme.bg,
-                          justifyContent: "center",
-                          alignItems: "center",
-                          marginRight: RFValue(14),
+                          fontSize: RFValue(10),
+                          color: theme.textSecondary,
+                          marginTop: 4,
                         }}
                       >
-                        <Ionicons
-                          name="document-text-outline"
-                          size={RFValue(22)}
-                          color={theme.textSecondary}
-                        />
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text
-                          style={{
-                            fontSize: RFValue(14),
-                            fontWeight: "700",
-                            color: theme.textPrimary,
-                          }}
-                        >
-                          Medical records
-                        </Text>
-                        <Text
-                          style={{
-                            fontSize: RFValue(12),
-                            color: theme.textSecondary,
-                            marginTop: RFValue(2),
-                          }}
-                        >
-                          Uploads for consults
-                        </Text>
-                      </View>
-                      <Ionicons
-                        name="chevron-forward"
-                        size={RFValue(18)}
-                        color={theme.textTertiary}
-                      />
+                        Uploads for consults
+                      </Text>
                     </TouchableOpacity>
-                  </>
-                ) : null}
+                  </View>
+                )}
               </View>
 
-              {(patientCareMode === CARE_MODE.CASUAL ||
-                patientCareMode === CARE_MODE.SKIP) && (
+              {currentUser?.id ? (
                 <View
                   style={{
                     backgroundColor: theme.card,
@@ -5997,7 +6175,7 @@ const PatientHomeScreen = () => {
                     refreshTrigger={quickRequestsRefreshKey}
                   />
                 </View>
-              )}
+              ) : null}
 
               {upcomingAppointments.length > 0 ? (
                 <TouchableOpacity
@@ -15047,7 +15225,7 @@ const AuthScreen = ({ onLogin }) => {
         }
 
         let phoneDigits = "";
-        if (role === "patient" || role === "doctor") {
+        if (role === "patient" || role === "doctor" || role === "pharmacy") {
           phoneDigits = String(profilePhone || "").replace(/\D/g, "");
           if (phoneDigits.length < 10) {
             throw new Error(
@@ -15134,6 +15312,8 @@ const AuthScreen = ({ onLogin }) => {
                       provider_kind: normalizePharmacyProviderKind(
                         pharmacySignupProviderKind,
                       ),
+                      store_name: name.trim(),
+                      phone: phoneDigits,
                     }
                   : {},
         });
@@ -17394,8 +17574,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
     (p) => p.riskLevel === "High",
   ).length;
   /** Doctor tier comes from the signed-in user / doctor profile fields — not patientProfile. */
-  const quickServiceDoctor =
-    doctorTierEligibleForQuickService(currentUser);
+  const quickServiceDoctor = doctorTierEligibleForQuickService(doctorProfile);
 
   // Doctor "Help" flow per spec:
   //   ensure conversation → send first message → record offer →
@@ -29328,6 +29507,42 @@ const PharmacyDashboard = ({ orders }) => {
           />
         </View>
 
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(18),
+            padding: RFValue(16),
+            marginBottom: RFValue(16),
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+          }}
+        >
+          <CoinWalletDoctorPanel theme={theme} />
+        </View>
+
+        <View
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: RFValue(18),
+            padding: RFValue(16),
+            marginBottom: RFValue(16),
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: RFValue(16),
+              fontWeight: "800",
+              color: theme.textPrimary,
+              marginBottom: RFValue(6),
+            }}
+          >
+            Payment history
+          </Text>
+          <DoctorCoinPaymentHistoryPanel theme={theme} />
+        </View>
+
         {receivesMeds ? (
           filteredOrders.map((o) => (
             <View
@@ -30178,6 +30393,27 @@ export default function App() {
     }
   };
 
+  const fetchQuickServiceProviders = async () => {
+    const [doctorRows, pharmacyRows] = await Promise.all([
+      fetchApprovedDoctors({ quickServiceOnly: true }),
+      fetchPharmacies(),
+    ]);
+    const providers = [
+      ...(Array.isArray(doctorRows) ? doctorRows : []),
+      ...(Array.isArray(pharmacyRows) ? pharmacyRows : [])
+        .map(mapPharmacyQuickServiceDoctorListing)
+        .filter(Boolean),
+    ];
+    const byUserId = new Map();
+    for (const provider of providers) {
+      const uid = String(provider?.userId || "").trim();
+      if (!uid || uid === currentUser?.id) continue;
+      if (!doctorTierEligibleForQuickService(provider)) continue;
+      if (!byUserId.has(uid)) byUserId.set(uid, provider);
+    }
+    return Array.from(byUserId.values());
+  };
+
   // Save edits to the current pharmacy user's `pharmacy_profile` row. Written
   // so old PB schemas without the new columns still work - each optional
   // field is only written if truthy/non-empty. JSON fields are sent as native
@@ -30890,15 +31126,12 @@ export default function App() {
         })
         .filter((item) => item.userId);
       if (opts.quickServiceOnly) {
-        list = list.filter((doc) => {
-          const tier = String(doc.practitionerTier || "").toLowerCase();
-          if (tier === "professional" || tier === "specialist") return false;
-          return true;
-        });
+        list = list.filter((doc) => doctorTierEligibleForQuickService(doc));
       }
       if (opts.packageModeOnly) {
         list = list.filter((doc) =>
-          doctorTierEligibleForPackageMode(doc.practitionerTier),
+          doctorTierEligibleForPackageMode(doc.practitionerTier) &&
+          !doctorTierEligibleForQuickService(doc),
         );
       }
       return list;
@@ -31908,6 +32141,7 @@ export default function App() {
       paymentMode: PAYMENT_MODE,
       patientUserId: currentUser?.id,
       doctorUserId,
+      amountInr: offer.amount_inr ?? offer.amountInr,
       providerOrderId:
         paymentResult?.cashfreeOrderId ||
         paymentResult?.orderId ||
@@ -31929,6 +32163,138 @@ export default function App() {
       verified: paymentResult || null,
     });
     await refreshAllData();
+  };
+
+  const runCashfreeWalletTopup = async (amountInr) => {
+    const amount = Math.floor(Number(amountInr));
+    const customerPhone = String(
+      patientProfilePhoneRaw(patientProfile) ||
+        patientProfilePhoneRaw(currentUser) ||
+        "",
+    ).replace(/\D/g, "");
+    if (customerPhone.length < 10) {
+      throw new Error("Please add your mobile number before topping up coins.");
+    }
+    const sourceId = `wallet_${currentUser?.id || "patient"}_${Date.now()}`;
+    const order = await postPaymentJson("/payments/cashfree/orders", {
+      appointmentId: sourceId,
+      sourceType: "wallet_deposit",
+      sourceId,
+      amountPaise: walletTopupAmountPaise(amount),
+      currency: "INR",
+      description: `Nvoisys wallet top-up: ${amount} coins`,
+      returnUrl: PAYMENT_CASHFREE_RETURN_URL,
+      customer: {
+        name: currentUser?.name || "Patient",
+        email: currentUser?.email || "",
+        phone: customerPhone,
+      },
+      metadata: {
+        patientId: currentUser?.id || "",
+        sourceType: "wallet_deposit",
+        walletDepositId: sourceId,
+        amountInr: amount,
+        coins: amount,
+      },
+    });
+
+    const checkoutUrl = order.checkoutUrl || order.paymentUrl;
+    if (!checkoutUrl) {
+      throw new Error("Payment checkout URL was not returned by the backend.");
+    }
+
+    const browserResult = await WebBrowser.openAuthSessionAsync(
+      checkoutUrl,
+      PAYMENT_CASHFREE_RETURN_URL,
+    );
+    if (browserResult.type !== "success" || !browserResult.url) {
+      throw new Error("Payment was cancelled before completion.");
+    }
+    const params = parseUrlQueryParams(browserResult.url);
+    if (params.status !== "success") {
+      throw new Error(
+        params.message || "Payment was cancelled before completion.",
+      );
+    }
+    const verifyPayload = {
+      appointmentId: sourceId,
+      sourceType: "wallet_deposit",
+      sourceId,
+      cashfreeOrderId:
+        params.cashfree_order_id ||
+        params.cashfreeOrderId ||
+        params.order_id ||
+        order.cashfreeOrderId ||
+        order.orderId,
+    };
+    if (!verifyPayload.cashfreeOrderId) {
+      throw new Error(
+        "Payment response was incomplete. Please contact support.",
+      );
+    }
+    const verified = await postPaymentJson(
+      "/payments/cashfree/verify",
+      verifyPayload,
+    );
+    if (!verified?.verified) {
+      throw new Error("Payment verification failed.");
+    }
+    return {
+      ...verified,
+      customerPhone,
+      sourceId,
+      cashfreeOrderId: verifyPayload.cashfreeOrderId,
+    };
+  };
+
+  const topUpPatientWallet = async (amountInr) => {
+    if (!currentUser?.id) throw new Error("Sign in required.");
+    const amount = Math.floor(Number(amountInr));
+    if (
+      !Number.isFinite(amount) ||
+      amount < WALLET_TOPUP_MIN_INR ||
+      amount > WALLET_TOPUP_MAX_INR
+    ) {
+      throw new Error(
+        `Enter a whole number from ₹${WALLET_TOPUP_MIN_INR} to ₹${WALLET_TOPUP_MAX_INR}.`,
+      );
+    }
+    let paymentResult = null;
+    if (PAYMENT_MODE === "cashfree") {
+      paymentResult = await runCashfreeWalletTopup(amount);
+    } else if (PAYMENT_MODE === "stripe") {
+      throw new Error("Stripe payment mode is not configured in this build.");
+    }
+    const next = await recordPatientWalletDeposit({
+      patientUserId: currentUser.id,
+      amountInr: amount,
+      provider: PAYMENT_MODE === "cashfree" ? "cashfree" : "stub",
+      providerOrderId:
+        paymentResult?.cashfreeOrderId ||
+        paymentResult?.orderId ||
+        paymentResult?.order_id ||
+        paymentResult?.sourceId,
+      providerPaymentId:
+        paymentResult?.paymentId ||
+        paymentResult?.payment_id ||
+        paymentResult?.cfPaymentId ||
+        paymentResult?.cf_payment_id,
+      providerReferenceId:
+        paymentResult?.referenceId ||
+        paymentResult?.reference_id ||
+        paymentResult?.bankReference ||
+        paymentResult?.bank_reference,
+      meta: {
+        payment_mode: PAYMENT_MODE,
+        verified: paymentResult || null,
+      },
+    });
+    try {
+      await refreshAllData();
+    } catch {
+      // balance ledger write already completed
+    }
+    return next;
   };
 
   // -------------------------------------------------------------------------
@@ -33027,12 +33393,14 @@ export default function App() {
     updateOrderStatus,
     createPharmacyOrder,
     fetchApprovedDoctors,
+    fetchQuickServiceProviders,
     createAppointment,
     updateAppointmentStatus,
     applyPatientRescheduleChoice,
     cancelAppointmentByPatient,
     payForAppointment,
     payForPackageOffer,
+    topUpPatientWallet,
     fetchMedicationSchedule,
     markScheduleDoseTaken,
     markScheduleDoseMissed,
@@ -33543,8 +33911,10 @@ const AppContent = ({
     setPatientSelectedWoundId,
     setPatientShowNewWound,
     fetchApprovedDoctors,
+    fetchQuickServiceProviders,
     fetchPharmacies,
     payForPackageOffer,
+    topUpPatientWallet,
     savePharmacyProfile,
     refreshAllData,
     patientPrimaryCarePaths,
@@ -33878,6 +34248,8 @@ const AppContent = ({
         theme={theme}
         patientProfile={patientProfile}
         currentUser={currentUser}
+        onWalletTopUp={topUpPatientWallet}
+        paymentMode={PAYMENT_MODE}
         onCommitPackageDoctor={async () => {
           if (!currentUser?.id) return;
           await persistPatientCareMode({
