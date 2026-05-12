@@ -56,6 +56,7 @@ import {
   resolveListingDisplayName,
   incrementAiAssistantUsageToday,
   getDoctorCoinBalance,
+  getDoctorCoinBucketBalances,
   listActivePackagePairsForDoctor,
   listActivePackagePairsForPatient,
   listActiveQuickRequestsForPatient,
@@ -5620,6 +5621,11 @@ export function DoctorQuickRequestsPanel({
   onOpenHelpChat,
   /** When true, hide the manual Refresh control and keep lists fresh via poll + PocketBase realtime. */
   autoRefreshQuickQueues = false,
+  /**
+   * `combined` — single “Quick Queues” card (default).
+   * `split_tracks` — two dashboard cards: Quick Solution Tracks + Quick Counselling Tracks.
+   */
+  layout = "combined",
 }) {
   const user = getAuthUser();
   const effectiveDoctorId = doctorUserId || user?.id || "";
@@ -5966,6 +5972,283 @@ export function DoctorQuickRequestsPanel({
       {renderHelpButton(r, "counselling")}
     </View>
   );
+
+  const trackCardShell = (children, { icon, title, testId } = {}) => (
+    <View
+      key={title}
+      style={{
+        marginBottom: 16,
+        backgroundColor: theme.card,
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.cardBorder,
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.05,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 8,
+        elevation: 2,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 10,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              backgroundColor: theme.warningLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: 10,
+            }}
+          >
+            <Ionicons name={icon || "flash"} size={22} color={theme.warning} />
+          </View>
+          <Text
+            style={{ color: theme.textPrimary, fontWeight: "800", fontSize: 16 }}
+          >
+            {title}
+          </Text>
+        </View>
+        {!autoRefreshQuickQueues ? (
+          <TouchableOpacity
+            onPress={() => void load()}
+            disabled={loading}
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 12,
+              backgroundColor: theme.accentLight,
+            }}
+          >
+            <Text
+              style={{ color: theme.accent, fontWeight: "800", fontSize: 12 }}
+            >
+              {loading ? "…" : "Refresh"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {children}
+    </View>
+  );
+
+  if (layout === "split_tracks") {
+    return (
+      <View style={{ marginTop: 0 }}>
+        {err ? (
+          <Text
+            style={{
+              color: theme.danger,
+              fontSize: S.small,
+              marginBottom: 8,
+              paddingHorizontal: 4,
+            }}
+          >
+            {err}
+          </Text>
+        ) : null}
+        {trackCardShell(
+          <>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginBottom: 10,
+              }}
+            >
+              Queued Quick Solution requests (including wound-related notes when
+              patients route them here).
+            </Text>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "700",
+                marginBottom: 6,
+              }}
+            >
+              In queue ({solutionRows.length})
+            </Text>
+            {solutionRows.length === 0 ? (
+              <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
+                {err
+                  ? "Nothing to show, or the list could not load (see message above)."
+                  : "No Quick Solution requests right now."}
+              </Text>
+            ) : (
+              solutionRows.map(renderSolutionCard)
+            )}
+          </>,
+          { icon: "medkit-outline", title: "Quick Solution tracks" },
+        )}
+        {trackCardShell(
+          <>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginBottom: 10,
+              }}
+            >
+              Queued counselling conversations waiting for a doctor to respond.
+            </Text>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "700",
+                marginBottom: 6,
+              }}
+            >
+              In queue ({counsellingRows.length})
+            </Text>
+            {counsellingRows.length === 0 ? (
+              <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
+                No Quick Counselling requests right now.
+              </Text>
+            ) : (
+              counsellingRows.map(renderCounsellingCard)
+            )}
+          </>,
+          { icon: "chatbubbles-outline", title: "Quick Counselling tracks" },
+        )}
+
+        <Modal
+          animationType="fade"
+          transparent
+          visible={!!helpTarget}
+          onRequestClose={closeHelpModal}
+        >
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.4)",
+              justifyContent: "center",
+              paddingHorizontal: 18,
+            }}
+          >
+            <View
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: 18,
+                padding: 18,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.cardBorder,
+              }}
+            >
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontWeight: "800",
+                  fontSize: 16,
+                  marginBottom: 4,
+                }}
+              >
+                Offer help to{" "}
+                {helpTarget?.patientLabel === "Private - identity hidden"
+                  ? "this patient"
+                  : helpTarget?.patientLabel || "this patient"}
+              </Text>
+              <Text
+                style={{
+                  color: theme.textSecondary,
+                  fontSize: 12,
+                  marginBottom: 10,
+                }}
+              >
+                {helpTarget?.requestKind === "counselling"
+                  ? "Quick Counselling"
+                  : "Quick Solution"}
+                {helpTarget?.preview ? ` · ${helpTarget.preview}` : ""}
+              </Text>
+              <Text
+                style={{
+                  color: theme.textSecondary,
+                  fontSize: 11,
+                  marginBottom: 6,
+                }}
+              >
+                Your message - this becomes the first chat message in the new
+                conversation.
+              </Text>
+              <TextInput
+                value={helpMessage}
+                onChangeText={setHelpMessage}
+                multiline
+                editable={!helpBusy}
+                placeholder="Hi, how can I help?"
+                placeholderTextColor={theme.textTertiary}
+                style={{
+                  minHeight: 96,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  padding: 12,
+                  color: theme.textPrimary,
+                  backgroundColor: theme.bg,
+                  textAlignVertical: "top",
+                }}
+              />
+              <View
+                style={{
+                  flexDirection: "row",
+                  marginTop: 14,
+                  justifyContent: "flex-end",
+                }}
+              >
+                <TouchableOpacity
+                  onPress={closeHelpModal}
+                  disabled={helpBusy}
+                  style={{
+                    paddingHorizontal: 14,
+                    paddingVertical: 10,
+                    marginRight: 8,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: theme.cardBorder,
+                  }}
+                >
+                  <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={submitHelpModal}
+                  disabled={helpBusy}
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    backgroundColor: helpBusy ? theme.accentLight : theme.accent,
+                    flexDirection: "row",
+                    alignItems: "center",
+                  }}
+                >
+                  {helpBusy ? (
+                    <ActivityIndicator
+                      size="small"
+                      color="#FFF"
+                      style={{ marginRight: 6 }}
+                    />
+                  ) : null}
+                  <Text style={{ color: "#FFF", fontWeight: "700" }}>
+                    {helpBusy ? "Sending…" : "Confirm"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -6595,7 +6878,16 @@ export function PatientQuickRequestsTrackerPanel({
   );
 }
 
-export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
+export function CoinWalletDoctorPanel({
+  theme,
+  hideWithdrawSection = false,
+  /**
+   * `combined` — legacy single balance (default, pharmacy portal).
+   * `quick` — Quick Solution / Counselling share of your ledger.
+   * `package` — package sessions, referrals, and other non-quick ledger totals.
+   */
+  walletChannel = "combined",
+}) {
   const user = getAuthUser();
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
@@ -6606,21 +6898,38 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
   const [referralTargets, setReferralTargets] = useState({});
 
   const refreshBalance = useCallback(async () => {
-    const [coins, activePairs, referralRows] = await Promise.all([
-      getDoctorCoinBalance(user?.id),
+    if (walletChannel === "combined") {
+      const [coins, activePairs, referralRows] = await Promise.all([
+        getDoctorCoinBalance(user?.id),
+        listActivePackagePairsForDoctor(user?.id),
+        listPackageReferralsForDoctor(user?.id),
+      ]);
+      setBalance(coins);
+      setPairs(activePairs || []);
+      setReferrals(referralRows || []);
+      return;
+    }
+    const [buckets, activePairs, referralRows] = await Promise.all([
+      getDoctorCoinBucketBalances(user?.id),
       listActivePackagePairsForDoctor(user?.id),
       listPackageReferralsForDoctor(user?.id),
     ]);
+    const coins =
+      walletChannel === "quick" ? buckets.quickCoins : buckets.packageCoins;
     setBalance(coins);
     setPairs(activePairs || []);
     setReferrals(referralRows || []);
-  }, [user?.id]);
+  }, [user?.id, walletChannel]);
 
   useEffect(() => {
     void refreshBalance();
   }, [refreshBalance]);
 
   useEffect(() => {
+    if (walletChannel === "quick") {
+      setPackageDoctors([]);
+      return undefined;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -6708,7 +7017,7 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [user?.id, walletChannel]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -6763,24 +7072,44 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
       .map((r) => String(r.package_offer || "")),
   );
 
+  const walletTitle =
+    walletChannel === "quick"
+      ? "Quick care coins (1 coin = ₹1)"
+      : walletChannel === "package"
+        ? "Package care coins (1 coin = ₹1)"
+        : "Coin wallet (1 coin = ₹1)";
+  const showPackagePairUi = walletChannel !== "quick";
+  const showWithdrawBlock = !hideWithdrawSection && walletChannel !== "quick";
+
   return (
     <View style={{ marginTop: 0 }}>
       <Text
         style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 8 }}
       >
-        Coin wallet (1 coin = ₹1)
+        {walletTitle}
       </Text>
       <Text
         style={{ color: theme.textPrimary, fontSize: S.title, fontWeight: "900" }}
       >
         {balance} coins available
       </Text>
-      <Text
-        style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
-      >
-        Active package pairs: {pairs.length}
-      </Text>
-      {pairs.slice(0, 5).map((pair) => {
+      {walletChannel === "quick" ? (
+        <Text
+          style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
+        >
+          Credited when a patient accepts your help on a Quick Solution or Quick
+          Counselling request. Withdrawals use your combined balance (see
+          package wallet if you also run care packages).
+        </Text>
+      ) : (
+        <Text
+          style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
+        >
+          Active package pairs: {pairs.length}
+        </Text>
+      )}
+      {showPackagePairUi
+        ? pairs.slice(0, 5).map((pair) => {
         const alreadyReferred = outgoingReferralOfferIds.has(String(pair.offerId));
         return (
           <View
@@ -6862,8 +7191,9 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
             ) : null}
           </View>
         );
-      })}
-      {!hideWithdrawSection ? (
+      })
+        : null}
+      {showWithdrawBlock ? (
         <>
           <Text
             style={{

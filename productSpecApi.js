@@ -519,7 +519,9 @@ export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
     userOrProfileOrTier && typeof userOrProfileOrTier === "object"
       ? userOrProfileOrTier
       : null;
+  if (doctorProfileIsPackageDoctor(row)) return false;
   const raw = row?.raw && typeof row.raw === "object" ? row.raw : null;
+  if (doctorProfileIsPackageDoctor(raw)) return false;
   const sources = [row, raw].filter(Boolean);
   const tierFields = sources.flatMap((src) => [
     src.practitioner_tier,
@@ -695,6 +697,17 @@ export function doctorProfilePackageSetupSkipped(record) {
   return false;
 }
 
+/** Raw JSON for package fee rows from `doctor_profile` (supports alternate field names). */
+export function packageTemplatesRawFromRecord(record) {
+  if (!record) return null;
+  return (
+    record.package_templates ??
+    record.packages_template ??
+    record.package_slots ??
+    null
+  );
+}
+
 /** True when three fees are saved (`package_setup`) or derived complete from template array / legacy. */
 export function doctorProfilePackageFeesReady(record) {
   if (!record) return false;
@@ -705,15 +718,64 @@ export function doctorProfilePackageFeesReady(record) {
   return doctorPackagesSetupComplete(slots);
 }
 
-/** Raw JSON for package fee rows from `doctor_profile` (supports alternate field names). */
-export function packageTemplatesRawFromRecord(record) {
-  if (!record) return null;
-  return (
-    record.package_templates ??
-    record.packages_template ??
-    record.package_slots ??
-    null
+/**
+ * Package doctor: completed fee setup and did not choose Skip.
+ * RMP doctor: everyone else (including skipped onboarding).
+ */
+export function doctorProfileIsPackageDoctor(record) {
+  if (!record) return false;
+  if (doctorProfilePackageSetupSkipped(record)) return false;
+  return doctorProfilePackageFeesReady(record);
+}
+
+const LEDGER_REASON_QUICK_SOLUTION_EARNED = "quick_solution_provider_earned";
+const LEDGER_REASON_QUICK_COUNSELLING_EARNED =
+  "quick_counselling_provider_earned";
+const LEDGER_REASON_PACKAGE_SESSION_EARNED = "package_session_doctor_earned";
+const LEDGER_REASON_REFERRAL_COMMISSION_RECEIVED =
+  "referral_monthly_commission_received";
+const LEDGER_REASON_REFERRAL_COMMISSION_PAID =
+  "referral_monthly_commission_paid";
+
+/**
+ * Split doctor coin ledger into Quick (RMP) vs package-care buckets for UI.
+ * Any deltas not matching these reasons are folded into the package bucket so
+ * the two numbers still sum to the same total as `getCoinBalanceForUser`.
+ */
+export async function getDoctorCoinBucketBalances(doctorUserId) {
+  const uid = String(doctorUserId || "").trim();
+  if (!uid) {
+    return { quickCoins: 0, packageCoins: 0, totalCoins: 0 };
+  }
+  const rows = await listCoinLedgerForUser(uid);
+  let quick = 0;
+  let pkg = 0;
+  for (const row of rows) {
+    const r = String(row.reason || "");
+    const d = Number(row.delta) || 0;
+    if (
+      r === LEDGER_REASON_QUICK_SOLUTION_EARNED ||
+      r === LEDGER_REASON_QUICK_COUNSELLING_EARNED
+    ) {
+      quick += d;
+    } else if (
+      r === LEDGER_REASON_PACKAGE_SESSION_EARNED ||
+      r === LEDGER_REASON_REFERRAL_COMMISSION_RECEIVED ||
+      r === LEDGER_REASON_REFERRAL_COMMISSION_PAID
+    ) {
+      pkg += d;
+    }
+  }
+  const totalCoins = rows.reduce(
+    (sum, row) => sum + (Number(row.delta) || 0),
+    0,
   );
+  const remainder = totalCoins - quick - pkg;
+  return {
+    quickCoins: quick,
+    packageCoins: pkg + remainder,
+    totalCoins,
+  };
 }
 
 const doctorPkgFeesKey = (userId) => `nvhs_doctor_pkg_fees_${userId || "anon"}`;
@@ -868,33 +930,52 @@ export async function saveDoctorPackageTemplates(
         : s.consultation_time_window || "",
     ).trim(),
   }));
+  const packageTierWhenComplete = complete
+    ? { practitioner_tier: "professional" }
+    : {};
   const attempts = [
     {
       package_templates,
       package_setup: complete,
       package_setup_skipped: false,
+      ...packageTierWhenComplete,
     },
-    { package_templates, package_setup: complete },
+    { package_templates, package_setup: complete, ...packageTierWhenComplete },
     {
       package_templates,
       packages_setup_complete: complete,
       package_setup_skipped: false,
+      ...packageTierWhenComplete,
     },
-    { package_templates, packages_setup_complete: complete },
-    { package_templates },
+    {
+      package_templates,
+      packages_setup_complete: complete,
+      ...packageTierWhenComplete,
+    },
+    { package_templates, ...packageTierWhenComplete },
     {
       packages_template: package_templates,
       package_setup: complete,
       package_setup_skipped: false,
+      ...packageTierWhenComplete,
     },
-    { packages_template: package_templates, package_setup: complete },
+    {
+      packages_template: package_templates,
+      package_setup: complete,
+      ...packageTierWhenComplete,
+    },
     {
       packages_template: package_templates,
       packages_setup_complete: complete,
       package_setup_skipped: false,
+      ...packageTierWhenComplete,
     },
-    { packages_template: package_templates, packages_setup_complete: complete },
-    { packages_template: package_templates },
+    {
+      packages_template: package_templates,
+      packages_setup_complete: complete,
+      ...packageTierWhenComplete,
+    },
+    { packages_template: package_templates, ...packageTierWhenComplete },
   ];
   let lastError = null;
   for (const body of attempts) {
