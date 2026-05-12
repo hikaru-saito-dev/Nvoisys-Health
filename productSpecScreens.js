@@ -631,6 +631,12 @@ const slotInput = (theme) => ({
   marginBottom: 10,
 });
 
+/** Shown to doctors as valid 12-hour window examples (Basic / Gold). Premium is 24/7 in-app. */
+const PACKAGE_CONSULT_TIME_EXAMPLES = Object.freeze({
+  1: "9:00 AM to 12:00 PM",
+  2: "12:00 PM to 5:00 PM",
+});
+
 export function DoctorPackageSetupScreen({
   theme,
   doctorProfileId,
@@ -646,7 +652,9 @@ export function DoctorPackageSetupScreen({
   const packageFeeScrollRef = useRef(null);
   const packageFeeScrollYRef = useRef(0);
   const focusedFeeSlotIndexRef = useRef(-1);
+  const activePackageFeeFieldRef = useRef("fee");
   const feeInputRefs = useRef([]);
+  const timeWindowInputRefs = useRef([]);
   const feeScrollMeasureRef = useRef(null);
   const [slots, setSlots] = useState(() =>
     normalizeDoctorPackageSlots(packageTemplatesRawFromRecord(initialRecord)),
@@ -660,7 +668,10 @@ export function DoctorPackageSetupScreen({
     }
     const idx = focusedFeeSlotIndexRef.current;
     if (idx < 0) return;
-    const inputEl = feeInputRefs.current[idx];
+    const inputEl =
+      activePackageFeeFieldRef.current === "time"
+        ? timeWindowInputRefs.current[idx]
+        : feeInputRefs.current[idx];
     if (!inputEl) return;
     if (keyboardInset.height <= 0 && keyboardInset.screenY == null) return;
     feeScrollMeasureRef.current = inputEl;
@@ -751,7 +762,7 @@ export function DoctorPackageSetupScreen({
       } else {
         Alert.alert(
           "Saved",
-          "Your fees are saved. Patients see the app-defined features with your prices on your profile.",
+          "Your fees and consultation windows are saved. Patients see the app-defined features with your prices and scheduled hours on your profile.",
         );
       }
       onComplete?.();
@@ -874,12 +885,70 @@ export function DoctorPackageSetupScreen({
             color: theme.textSecondary,
             fontSize: S.small,
             marginTop: 8,
-            marginBottom: 20,
+            marginBottom: 12,
+            lineHeight: 20,
           }}
         >
-          Enter your INR fee for Basic, Gold, and Premium. Skip and finish later
-          from Profile.
+          Enter your INR fee for each tier. For Basic and Gold, also enter when
+          you usually offer scheduled package consultation time, using 12-hour
+          times with am/pm (for example 9:00 AM to 12:00 PM). Premium is 24/7 in
+          the app — no time window to fill in. Skip and finish later from
+          Profile.
         </Text>
+        <View
+          style={{
+            backgroundColor: theme.accentLight,
+            borderRadius: 14,
+            padding: 14,
+            marginBottom: 20,
+            borderLeftWidth: 4,
+            borderLeftColor: theme.accent,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.accent,
+              fontWeight: "900",
+              fontSize: 13,
+              marginBottom: 8,
+            }}
+          >
+            Examples
+          </Text>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 12,
+              fontWeight: "700",
+              marginBottom: 4,
+              lineHeight: 18,
+            }}
+          >
+            • Basic — {PACKAGE_CONSULT_TIME_EXAMPLES[1]}
+          </Text>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 12,
+              fontWeight: "700",
+              marginBottom: 4,
+              lineHeight: 18,
+            }}
+          >
+            • Gold — {PACKAGE_CONSULT_TIME_EXAMPLES[2]}
+          </Text>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 12,
+              fontWeight: "700",
+              lineHeight: 18,
+            }}
+          >
+            • Premium — 24/7 access (no daily hours; patients see this tier as
+            anytime care).
+          </Text>
+        </View>
 
         {slots.map((slot, index) => (
           <View
@@ -915,28 +984,86 @@ export function DoctorPackageSetupScreen({
             </Text>
             <Text
               style={{
-                color: theme.textSecondary,
+                color: theme.textPrimary,
                 fontSize: S.small,
                 marginBottom: 10,
                 lineHeight: 20,
+                fontWeight: "500",
               }}
             >
               {slot.description}
             </Text>
             {Array.isArray(slot.features) && slot.features.length > 0 ? (
-              <View style={{ marginBottom: 12 }}>
+              <View
+                style={{
+                  marginBottom: 14,
+                  backgroundColor: theme.accentLight,
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderLeftWidth: 3,
+                  borderLeftColor: theme.accent,
+                }}
+              >
+                <Text
+                  style={{
+                    color: theme.accent,
+                    fontWeight: "800",
+                    fontSize: 11,
+                    marginBottom: 8,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  Package features
+                </Text>
                 {slot.features.map((line, fi) => (
                   <Text
                     key={`${slot.slot}-${fi}`}
                     style={{
-                      color: theme.textTertiary,
-                      fontSize: 12,
-                      marginBottom: 4,
+                      color: theme.textPrimary,
+                      fontSize: 13,
+                      fontWeight: "600",
+                      marginBottom: 6,
+                      lineHeight: 20,
                     }}
                   >
                     • {line}
                   </Text>
                 ))}
+              </View>
+            ) : null}
+            {Number(slot.slot) !== 3 &&
+            PACKAGE_CONSULT_TIME_EXAMPLES[slot.slot] ? (
+              <View
+                style={{
+                  marginBottom: 12,
+                  padding: 10,
+                  borderRadius: 10,
+                  backgroundColor: theme.inputBg,
+                  borderWidth: 1,
+                  borderColor: theme.inputBorder,
+                }}
+              >
+                <Text
+                  style={{
+                    color: theme.textPrimary,
+                    fontSize: 12,
+                    fontWeight: "800",
+                  }}
+                >
+                  Example for this tier
+                </Text>
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    fontSize: 12,
+                    marginTop: 4,
+                    fontWeight: "600",
+                  }}
+                >
+                  {PACKAGE_CONSULT_TIME_EXAMPLES[slot.slot]}
+                </Text>
               </View>
             ) : null}
             <Text
@@ -953,12 +1080,16 @@ export function DoctorPackageSetupScreen({
               placeholder={`e.g. ${packageSlotMinimumFeeInr(slot.slot)}`}
               placeholderTextColor={theme.textTertiary}
               keyboardType="numeric"
+              ref={(el) => {
+                feeInputRefs.current[index] = el;
+              }}
               value={String(slot.total_amount_inr ?? "")}
               onChangeText={(t) => {
                 patchSlot(index, { total_amount_inr: t });
                 scheduleFeeVisibleWhileTyping();
               }}
               onFocus={() => {
+                activePackageFeeFieldRef.current = "fee";
                 focusedFeeSlotIndexRef.current = index;
                 if (Platform.OS === "android") {
                   packageFeeScrollRef.current?.scrollToEnd({ animated: false });
@@ -988,6 +1119,110 @@ export function DoctorPackageSetupScreen({
               }}
               style={slotInput(theme)}
             />
+            {Number(slot.slot) === 3 ? (
+              <View
+                style={{
+                  marginTop: 12,
+                  padding: 14,
+                  borderRadius: 12,
+                  backgroundColor: theme.successLight,
+                  borderWidth: 1,
+                  borderColor: theme.success,
+                }}
+              >
+                <Text
+                  style={{
+                    color: theme.success,
+                    fontWeight: "900",
+                    fontSize: 13,
+                    marginBottom: 6,
+                  }}
+                >
+                  Premium — 24/7
+                </Text>
+                <Text
+                  style={{
+                    color: theme.textPrimary,
+                    fontSize: 12,
+                    lineHeight: 18,
+                    fontWeight: "600",
+                  }}
+                >
+                  You do not need to enter office hours. This tier is shown to
+                  patients as round-the-clock access; your fee above is all that
+                  is required here.
+                </Text>
+              </View>
+            ) : (
+              <>
+                <Text
+                  style={{
+                    color: theme.textPrimary,
+                    fontSize: 12,
+                    fontWeight: "700",
+                    marginBottom: 6,
+                    marginTop: 4,
+                  }}
+                >
+                  Your usual consultation hours (12-hour format)
+                </Text>
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    fontSize: 11,
+                    marginBottom: 8,
+                    lineHeight: 16,
+                  }}
+                >
+                  Type a window you can repeat for scheduled package time, with
+                  two times and am/pm — e.g. matching the example above.
+                </Text>
+                <TextInput
+                  placeholder={PACKAGE_CONSULT_TIME_EXAMPLES[slot.slot] || ""}
+                  placeholderTextColor={theme.textTertiary}
+                  ref={(el) => {
+                    timeWindowInputRefs.current[index] = el;
+                  }}
+                  value={String(slot.consultation_time_window ?? "")}
+                  onChangeText={(t) => {
+                    patchSlot(index, { consultation_time_window: t });
+                    scheduleFeeVisibleWhileTyping();
+                  }}
+                  onFocus={() => {
+                    activePackageFeeFieldRef.current = "time";
+                    focusedFeeSlotIndexRef.current = index;
+                    if (Platform.OS === "android") {
+                      packageFeeScrollRef.current?.scrollToEnd({
+                        animated: false,
+                      });
+                      requestAnimationFrame(() => {
+                        scrollFocusedFeeAboveIme();
+                      });
+                      [40, 120, 260, 420, 600].forEach((ms) =>
+                        setTimeout(() => {
+                          if (focusedFeeSlotIndexRef.current !== index) return;
+                          scrollFocusedFeeAboveIme();
+                        }, ms),
+                      );
+                    } else {
+                      requestAnimationFrame(() => {
+                        setTimeout(() => {
+                          packageFeeScrollRef.current?.scrollToEnd({
+                            animated: true,
+                          });
+                        }, 120);
+                      });
+                    }
+                  }}
+                  onBlur={() => {
+                    if (focusedFeeSlotIndexRef.current === index) {
+                      focusedFeeSlotIndexRef.current = -1;
+                    }
+                  }}
+                  style={slotInput(theme)}
+                />
+              </>
+            )}
           </View>
         ))}
 

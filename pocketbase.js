@@ -541,8 +541,8 @@ async function createPatientProfileRecord(userId, merged) {
  * specialist) - Quick Solution / Quick Counselling prefer non-professional tiers;
  * package flows use professional doctors. Optional **`coin_balance`** (number) for wallet UI.
  * **`package_templates`** or alias **`packages_template`** (JSON): store an array of
- * **`{ slot, total_amount_inr }`** (length 3) - package titles, periods, descriptions & features are
- * **app-defined**; doctors only set fees. When the doctor taps Skip onboarding, the app may store
+ * **`{ slot, total_amount_inr, consultation_time_window? }`** (length 3) - package titles, periods, descriptions & features are
+ * **app-defined**; doctors set fees plus consultation hours for Basic/Gold (`consultation_time_window`); Premium is stored as 24/7. When the doctor taps Skip onboarding, the app may store
  * **`{ "skipped": true }`** instead of the fee array. Bool **`package_setup`**: **`true`** when all
  * three fees are saved; **`false`** when incomplete or skipped. Legacy: **`packages_setup_complete`**,
  * **`package_setup_skipped`** (still sent on some writes for older schemas).

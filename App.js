@@ -1505,7 +1505,7 @@ const FOOD_LOG_DRAFTS_STORAGE_PREFIX = "nvhs_food_drafts";
 
 let notificationsHandlerConfigured = false;
 const configureNotificationsHandler = () => {
-  if (notificationsHandlerConfigured) return;
+  if (notificationsHandlerConfigured) return;cd
   notificationsHandlerConfigured = true;
   try {
     Notifications.setNotificationHandler({
@@ -20840,6 +20840,18 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                         ₹{pkg.total_amount_inr} · {pkg.total_period} ·{" "}
                         {pkg.treatment_type}
                       </Text>
+                      {pkg.consultation_time_window ? (
+                        <Text
+                          style={{
+                            fontSize: RFValue(11),
+                            color: theme.accent,
+                            marginTop: 6,
+                            fontWeight: "800",
+                          }}
+                        >
+                          Scheduled hours: {pkg.consultation_time_window}
+                        </Text>
+                      ) : null}
                       {pkg.description ? (
                         <Text
                           style={{
@@ -20859,9 +20871,11 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                             <Text
                               key={`${pkg.slot}-${fi}`}
                               style={{
-                                fontSize: RFValue(11),
-                                color: theme.textTertiary,
-                                marginBottom: 3,
+                                fontSize: RFValue(12),
+                                color: theme.textPrimary,
+                                fontWeight: "600",
+                                marginBottom: 4,
+                                lineHeight: RFValue(18),
                               }}
                             >
                               • {f}
