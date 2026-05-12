@@ -14770,6 +14770,7 @@ const AuthScreen = ({ onLogin }) => {
     setPatientHealthValues((prev) => ({ ...prev, [key]: value }));
   }, []);
   const [doctorSpecialtyField, setDoctorSpecialtyField] = useState("");
+  const [doctorPracticeType, setDoctorPracticeType] = useState("");
   const [doctorClinic, setDoctorClinic] = useState("");
   const [pharmacySignupProviderKind, setPharmacySignupProviderKind] =
     useState("");
@@ -14864,6 +14865,14 @@ const AuthScreen = ({ onLogin }) => {
     }
   }, [role]);
 
+  useEffect(() => {
+    if (role !== "doctor") {
+      setDoctorPracticeType("");
+      setDoctorSpecialtyField("");
+      setDoctorClinic("");
+    }
+  }, [role]);
+
   const handleRequestPasswordReset = async () => {
     try {
       setForgotLoading(true);
@@ -14928,8 +14937,15 @@ const AuthScreen = ({ onLogin }) => {
           }
         }
         if (role === "doctor") {
+          if (!doctorPracticeType) {
+            throw new Error("Please choose Specialist doctor or General doctor.");
+          }
           if (!doctorSpecialtyField.trim()) {
-            throw new Error("Please enter your medical field / specialty");
+            throw new Error(
+              doctorPracticeType === "specialist"
+                ? "Please enter your specialist subject."
+                : "Please enter your general subject.",
+            );
           }
           if (!doctorClinic.trim()) {
             throw new Error(
@@ -14967,6 +14983,14 @@ const AuthScreen = ({ onLogin }) => {
                 ? {
                     phone: phoneDigits,
                     specialty: doctorSpecialtyField.trim(),
+                    practitioner_tier:
+                      doctorPracticeType === "specialist"
+                        ? "specialist"
+                        : "professional",
+                    doctor_type:
+                      doctorPracticeType === "specialist"
+                        ? "specialist"
+                        : "general",
                     clinic_or_hospital: doctorClinic.trim(),
                     ...(registrationLanguage.trim()
                       ? { language: registrationLanguage.trim() }
@@ -15702,10 +15726,82 @@ const AuthScreen = ({ onLogin }) => {
                     marginBottom: RFValue(8),
                   }}
                 >
-                  Medical field / specialty
+                  Doctor type
+                </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    gap: RFValue(10),
+                    marginBottom: RFValue(14),
+                  }}
+                >
+                  <TouchableOpacity
+                    onPress={() => setDoctorPracticeType("general")}
+                    style={{
+                      flex: 1,
+                      backgroundColor: theme.card,
+                      borderRadius: RFValue(14),
+                      padding: RFValue(14),
+                      borderWidth: 2,
+                      borderColor:
+                        doctorPracticeType === "general"
+                          ? theme.accent
+                          : theme.inputBorder,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: RFValue(14),
+                        fontWeight: "800",
+                        color: theme.textPrimary,
+                      }}
+                    >
+                      General doctor
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setDoctorPracticeType("specialist")}
+                    style={{
+                      flex: 1,
+                      backgroundColor: theme.card,
+                      borderRadius: RFValue(14),
+                      padding: RFValue(14),
+                      borderWidth: 2,
+                      borderColor:
+                        doctorPracticeType === "specialist"
+                          ? theme.accent
+                          : theme.inputBorder,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: RFValue(14),
+                        fontWeight: "800",
+                        color: theme.textPrimary,
+                      }}
+                    >
+                      Specialist doctor
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    fontWeight: "700",
+                    color: theme.textSecondary,
+                    marginBottom: RFValue(8),
+                  }}
+                >
+                  {doctorPracticeType === "specialist"
+                    ? "Specialist subject"
+                    : "General subject"}
                 </Text>
                 <TextInput
-                  placeholder="e.g. Cardiology, general practice, wound care..."
+                  placeholder={
+                    doctorPracticeType === "specialist"
+                      ? "e.g. Cardiology, Neurology, Orthopedics"
+                      : "e.g. General practice, Family medicine"
+                  }
                   value={doctorSpecialtyField}
                   onChangeText={setDoctorSpecialtyField}
                   style={{
@@ -15960,6 +16056,7 @@ const AuthScreen = ({ onLogin }) => {
                 setPatientCondition("");
                 setPatientGender("");
                 setPatientRegAvatar(null);
+                setDoctorPracticeType("");
                 setDoctorSpecialtyField("");
                 setDoctorClinic("");
                 setProfilePhone("");
