@@ -156,42 +156,34 @@ export function CareModeOnboardingScreen({
   patientProfile,
   currentUser,
   onDone,
-  onLoadPackageDoctors,
-  onPaySelectedPackage,
+  onCommitPackageDoctor,
 }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
-  const [packageStep, setPackageStep] = useState(false);
-  const [packageDoctors, setPackageDoctors] = useState([]);
-  const [doctorSearch, setDoctorSearch] = useState("");
-  const [selectedDoctor, setSelectedDoctor] = useState(null);
-  const [selectedSlot, setSelectedSlot] = useState(null);
-  const [loadingDoctors, setLoadingDoctors] = useState(false);
+  const [selected, setSelected] = useState(null);
 
-  const loadPackageDoctors = useCallback(async () => {
-    if (typeof onLoadPackageDoctors !== "function") return [];
-    setLoadingDoctors(true);
-    try {
-      const list = await onLoadPackageDoctors();
-      setPackageDoctors(Array.isArray(list) ? list : []);
-      return Array.isArray(list) ? list : [];
-    } catch (e) {
-      Alert.alert("Doctors", e?.message || "Could not load doctors.");
-      setPackageDoctors([]);
-      return [];
-    } finally {
-      setLoadingDoctors(false);
+  const confirm = async () => {
+    if (!selected) {
+      Alert.alert(
+        "Choose a mode",
+        "Select Casual or Package doctor, then tap Confirm.",
+      );
+      return;
     }
-  }, [onLoadPackageDoctors]);
-
-  const pick = async (mode) => {
-    if (mode === CARE_MODE.PACKAGE) {
-      setPackageStep(true);
-      void loadPackageDoctors();
+    if (selected === "package") {
+      setBusy(true);
+      try {
+        await onCommitPackageDoctor?.();
+      } catch (e) {
+        Alert.alert("Could not continue", e?.message || "Try again.");
+      } finally {
+        setBusy(false);
+      }
       return;
     }
     try {
       setBusy(true);
+      const mode = selected === "skip" ? CARE_MODE.SKIP : CARE_MODE.CASUAL;
       await persistPatientCareMode({
         profileId: patientProfile?.id,
         userId: currentUser?.id,
@@ -205,65 +197,6 @@ export function CareModeOnboardingScreen({
     }
   };
 
-  const finishPackageMode = async () => {
-    try {
-      setBusy(true);
-      await persistPatientCareMode({
-        profileId: patientProfile?.id,
-        userId: currentUser?.id,
-        mode: CARE_MODE.PACKAGE,
-      });
-      onDone?.(CARE_MODE.PACKAGE);
-    } catch (e) {
-      Alert.alert("Could not save", e?.message || "Try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const paySelectedPackage = async () => {
-    if (!currentUser?.id) {
-      Alert.alert("Sign in", "Please sign in again before paying.");
-      return;
-    }
-    if (!selectedDoctor?.userId || !selectedSlot) {
-      Alert.alert("Package", "Choose a doctor and one package.");
-      return;
-    }
-    try {
-      setBusy(true);
-      const offer = await createPatientSelectedPackageOffer({
-        patientUserId: currentUser.id,
-        doctorUserId: selectedDoctor.userId,
-        slot: selectedSlot,
-        packageSlotIndex: selectedSlot.slot,
-      });
-      if (typeof onPaySelectedPackage === "function") {
-        await onPaySelectedPackage(offer, selectedDoctor.userId);
-      } else {
-        await patientPayPackageOfferStub(offer.id, selectedDoctor.userId);
-      }
-      await finishPackageMode();
-      Alert.alert(
-        "Package active",
-        "Your doctor is fixed for this package and your package coins are now visible on the dashboard.",
-      );
-    } catch (e) {
-      Alert.alert("Payment", e?.message || "Could not start package.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const filteredPackageDoctors = useMemo(() => {
-    const q = doctorSearch.trim().toLowerCase();
-    const base = packageDoctors || [];
-    if (!q) return base;
-    return base.filter((d) =>
-      `${d.name || ""} ${d.specialty || ""}`.toLowerCase().includes(q),
-    );
-  }, [packageDoctors, doctorSearch]);
-
   const card = {
     backgroundColor: theme.card,
     borderRadius: 20,
@@ -273,185 +206,12 @@ export function CareModeOnboardingScreen({
     borderColor: theme.cardBorder,
   };
 
-  if (packageStep) {
-    const slots = Array.isArray(selectedDoctor?.packageSlots)
-      ? selectedDoctor.packageSlots
-      : [];
-    return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: theme.bg,
-          paddingTop: insets.top + 12,
-        }}
-      >
-        <ScrollView
-          contentContainerStyle={{
-            padding: S.pad,
-            paddingBottom: insets.bottom + 24,
-          }}
-        >
-          <TouchableOpacity
-            onPress={() => setPackageStep(false)}
-            disabled={busy}
-            style={{ marginBottom: 14, alignSelf: "flex-start" }}
-          >
-            <Text style={{ color: theme.accent, fontWeight: "800" }}>
-              Back
-            </Text>
-          </TouchableOpacity>
-          <Text
-            style={{
-              color: theme.textPrimary,
-              fontSize: 24,
-              fontWeight: "800",
-            }}
-          >
-            Choose your package doctor
-          </Text>
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.body,
-              marginTop: 8,
-              marginBottom: 14,
-              lineHeight: 20,
-            }}
-          >
-            Pick a doctor and package now. If a doctor has not set a package
-            fee yet, the app uses the default amount. After Cashfree confirms
-            payment, this doctor-patient package pair becomes fixed and coins
-            are loaded to your wallet.
-          </Text>
-          <TextInput
-            placeholder="Search package doctors"
-            placeholderTextColor={theme.textTertiary}
-            value={doctorSearch}
-            onChangeText={setDoctorSearch}
-            style={slotInput(theme)}
-          />
-          {loadingDoctors ? (
-            <ActivityIndicator color={theme.accent} style={{ margin: 12 }} />
-          ) : null}
-          {!loadingDoctors && filteredPackageDoctors.length === 0 ? (
-            <Text style={{ color: theme.warning, fontSize: S.small }}>
-              No package doctors are available right now. You can continue and
-              choose one later from the dashboard.
-            </Text>
-          ) : null}
-          {filteredPackageDoctors.map((d) => {
-            const selected = selectedDoctor?.userId === d.userId;
-            return (
-              <TouchableOpacity
-                key={d.profileId || d.userId}
-                onPress={() => {
-                  setSelectedDoctor(d);
-                  const firstSlot = Array.isArray(d.packageSlots)
-                    ? d.packageSlots[0]
-                    : null;
-                  setSelectedSlot(firstSlot || null);
-                }}
-                style={{
-                  ...card,
-                  borderColor: selected ? theme.accent : theme.cardBorder,
-                  backgroundColor: selected ? theme.accentLight : theme.card,
-                }}
-              >
-                <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
-                  {d.name || "Doctor"}
-                </Text>
-                <Text
-                  style={{
-                    color: theme.textSecondary,
-                    fontSize: S.small,
-                    marginTop: 4,
-                  }}
-                >
-                  {d.specialty || "General Physician"}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-          {selectedDoctor ? (
-            <View style={{ marginTop: 8 }}>
-              <Text
-                style={{
-                  color: theme.textPrimary,
-                  fontWeight: "900",
-                  marginBottom: 8,
-                }}
-              >
-                Select package
-              </Text>
-              {slots.map((slot) => {
-                const selected = selectedSlot?.slot === slot.slot;
-                const amount = resolvePackageSlotAmountInr(slot);
-                const usesDefault = packageSlotUsesDefaultAmount(slot);
-                return (
-                  <TouchableOpacity
-                    key={slot.slot}
-                    onPress={() => setSelectedSlot(slot)}
-                    style={{
-                      padding: 12,
-                      borderRadius: 14,
-                      borderWidth: 1,
-                      borderColor: selected ? theme.accent : theme.cardBorder,
-                      backgroundColor: selected ? theme.accentLight : theme.card,
-                      marginBottom: 10,
-                    }}
-                  >
-                    <Text
-                      style={{ color: theme.textPrimary, fontWeight: "800" }}
-                    >
-                      {slot.name || packageSlotDisplayName(slot.slot)}
-                    </Text>
-                    <Text
-                      style={{
-                        color: theme.textSecondary,
-                        fontSize: S.small,
-                        marginTop: 4,
-                      }}
-                    >
-                      Pay ₹{amount}
-                      {usesDefault ? " · default amount" : " · doctor fee"}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-              <TouchableOpacity
-                onPress={paySelectedPackage}
-                disabled={busy || !selectedSlot}
-                style={{
-                  backgroundColor: theme.success,
-                  borderRadius: 16,
-                  padding: 16,
-                  alignItems: "center",
-                  opacity: busy || !selectedSlot ? 0.55 : 1,
-                }}
-              >
-                {busy ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={{ color: "#fff", fontWeight: "900" }}>
-                    Pay with Cashfree
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          ) : null}
-          <TouchableOpacity
-            onPress={finishPackageMode}
-            disabled={busy}
-            style={{ marginTop: 16, padding: 12, alignItems: "center" }}
-          >
-            <Text style={{ color: theme.textSecondary, fontWeight: "800" }}>
-              Choose package later from dashboard
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-    );
-  }
+  const cardStyle = (key) => ({
+    ...card,
+    borderColor: selected === key ? theme.accent : theme.cardBorder,
+    borderWidth: selected === key ? 2 : StyleSheet.hairlineWidth,
+    backgroundColor: selected === key ? theme.accentLight : theme.card,
+  });
 
   return (
     <View
@@ -470,7 +230,7 @@ export function CareModeOnboardingScreen({
         <Text
           style={{ color: theme.textPrimary, fontSize: 24, fontWeight: "800" }}
         >
-          How would you like to use Nvoisys?
+          Choose your care mode
         </Text>
         <Text
           style={{
@@ -478,17 +238,17 @@ export function CareModeOnboardingScreen({
             fontSize: S.body,
             marginTop: 8,
             marginBottom: 20,
+            lineHeight: 20,
           }}
         >
-          Pick one path now (Package Doctor, Casual / Normal, or skip). You can
-          switch later from Home, Profile, or the upgrade entry points - Casual
-          users always see a way to move into Package Doctor Mode.
+          Pick Casual or Package doctor, then tap Confirm. Package setup
+          continues with pharmacy, doctor, and payment.
         </Text>
 
         <TouchableOpacity
-          style={card}
+          style={cardStyle("package")}
           disabled={busy}
-          onPress={() => pick(CARE_MODE.PACKAGE)}
+          onPress={() => setSelected("package")}
           activeOpacity={0.85}
         >
           <View
@@ -512,8 +272,11 @@ export function CareModeOnboardingScreen({
                 flex: 1,
               }}
             >
-              Package Doctor Mode
+              Package doctor mode
             </Text>
+            {selected === "package" ? (
+              <Ionicons name="checkmark-circle" size={22} color={theme.accent} />
+            ) : null}
           </View>
           <Text
             style={{
@@ -522,17 +285,15 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Book a short demo with a verified professional doctor, join the
-            voice/video call, then your doctor sends package options from the
-            app - you pay to start structured care. Best for ongoing treatment
-            plans.
+            Choose a pharmacy, then a package doctor and tier, pay with Cashfree,
+            and unlock structured care, telemedicine, and package coins.
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={card}
+          style={cardStyle("casual")}
           disabled={busy}
-          onPress={() => pick(CARE_MODE.CASUAL)}
+          onPress={() => setSelected("casual")}
           activeOpacity={0.85}
         >
           <View
@@ -556,8 +317,15 @@ export function CareModeOnboardingScreen({
                 flex: 1,
               }}
             >
-              Casual / Normal Mode
+              Casual mode
             </Text>
+            {selected === "casual" ? (
+              <Ionicons
+                name="checkmark-circle"
+                size={22}
+                color={theme.success}
+              />
+            ) : null}
           </View>
           <Text
             style={{
@@ -566,16 +334,15 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Quick Solution (₹10) and Quick Counselling (₹25) with verified
-            clinics and RMP doctors. You can upgrade to Package Doctor Mode
-            whenever you like.
+            Quick Solution and Quick Counselling with verified clinics and RMP
+            doctors. You can upgrade to Package doctor mode anytime from Home.
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={card}
+          style={cardStyle("skip")}
           disabled={busy}
-          onPress={() => pick(CARE_MODE.SKIP)}
+          onPress={() => setSelected("skip")}
           activeOpacity={0.85}
         >
           <View
@@ -599,8 +366,15 @@ export function CareModeOnboardingScreen({
                 flex: 1,
               }}
             >
-              Not planning for now
+              Skip for now
             </Text>
+            {selected === "skip" ? (
+              <Ionicons
+                name="checkmark-circle"
+                size={22}
+                color={theme.textTertiary}
+              />
+            ) : null}
           </View>
           <Text
             style={{
@@ -609,12 +383,32 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Skip for now and go straight to Home. Switch modes later from
-            Profile or the upgrade button on Home.
+            Browse the app first. You can pick a mode later from Profile.
           </Text>
         </TouchableOpacity>
 
-        {busy ? (
+        <TouchableOpacity
+          onPress={() => void confirm()}
+          disabled={busy || !selected}
+          style={{
+            marginTop: 8,
+            backgroundColor: theme.accent,
+            borderRadius: 16,
+            padding: 16,
+            alignItems: "center",
+            opacity: busy || !selected ? 0.55 : 1,
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>
+              Confirm
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        {busy && !selected ? (
           <View style={{ alignItems: "center", marginTop: 12 }}>
             <ActivityIndicator color={theme.accent} />
           </View>

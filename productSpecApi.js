@@ -403,6 +403,26 @@ export async function getPatientActiveQuickCareBinding(
   };
 }
 
+/** Remaining package-pool coins for the patient's active `patient_doctor_packages` row (best-effort). */
+export async function getPatientPackagePoolCoinsRemaining(patientUserId) {
+  const pid = String(patientUserId || "").trim();
+  if (!pid) return 0;
+  try {
+    const rows = await pb.collection("patient_doctor_packages").getFullList({
+      requestKey: null,
+      filter: `patient="${pid}" && status="active"`,
+      sort: "-started_at",
+    });
+    const row = rows?.[0];
+    const n = Number(
+      row?.remaining_coins ?? row?.doctor_pool_coins ?? row?.remaining ?? 0,
+    );
+    return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 const aiUsageDayKey = () => new Date().toISOString().slice(0, 10);
 
 export async function getAiAssistantUsageToday(patientUserId) {

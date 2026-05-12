@@ -1,9 +1,10 @@
 /**
- * Post-registration primary care path: pharmacy, then General vs Specialist (package)
- * doctor choices. Specialist path includes package selection + payment.
+ * Package-doctor first setup: pharmacy → package doctor + tier → pay → dashboard.
+ * Shown when the patient chose Package doctor mode and paths are not completed yet,
+ * or after upgrading from Casual to Package.
  */
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -27,11 +28,21 @@ import {
 
 const S = { pad: 16, title: 18, body: 14, small: 12 };
 
+function formatConcernsLine(doctor) {
+  const raw = doctor?.concerns;
+  if (!Array.isArray(raw) || !raw.length) return "";
+  const parts = raw
+    .map((c) => String(c || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  if (!parts.length) return "";
+  return parts.join(", ");
+}
+
 export function PatientPrimaryCareOnboardingScreen({
   theme,
   currentUser,
   patientProfile,
-  fetchAllApprovedDoctors,
   fetchPackageModeDoctors,
   fetchPharmacies,
   onPaySelectedPackage,
@@ -40,19 +51,14 @@ export function PatientPrimaryCareOnboardingScreen({
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState("pharmacy_pick");
-  const [wantGeneral, setWantGeneral] = useState(false);
-  const [wantSpecialist, setWantSpecialist] = useState(false);
-  const [allDoctors, setAllDoctors] = useState([]);
   const [pkgDoctors, setPkgDoctors] = useState([]);
   const [pharmacyList, setPharmacyList] = useState([]);
   const [selectedPharmacy, setSelectedPharmacy] = useState(null);
   const [search, setSearch] = useState("");
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [loadingPharmacies, setLoadingPharmacies] = useState(false);
-  const [generalPick, setGeneralPick] = useState(null);
   const [specDoctor, setSpecDoctor] = useState(null);
   const [specSlot, setSpecSlot] = useState(null);
-  const generalDoctorRef = useRef(null);
 
   const uid = currentUser?.id;
   const profileId = patientProfile?.id;
@@ -62,27 +68,24 @@ export function PatientPrimaryCareOnboardingScreen({
     pharmacyName: selectedPharmacy?.name || null,
   });
 
-  const loadLists = useCallback(async () => {
+  const loadPackageDoctors = useCallback(async () => {
     setLoadingDocs(true);
     try {
-      const [all, pkg] = await Promise.all([
-        fetchAllApprovedDoctors?.() ?? [],
-        fetchPackageModeDoctors?.() ?? [],
-      ]);
-      setAllDoctors(Array.isArray(all) ? all : []);
+      const pkg = await fetchPackageModeDoctors?.();
       setPkgDoctors(Array.isArray(pkg) ? pkg : []);
     } catch (e) {
       Alert.alert("Doctors", e?.message || "Could not load doctors.");
+      setPkgDoctors([]);
     } finally {
       setLoadingDocs(false);
     }
-  }, [fetchAllApprovedDoctors, fetchPackageModeDoctors]);
+  }, [fetchPackageModeDoctors]);
 
   useEffect(() => {
-    if (step === "general_doctors" || step === "specialist_pick") {
-      void loadLists();
+    if (step === "specialist_pick") {
+      void loadPackageDoctors();
     }
-  }, [step, loadLists]);
+  }, [step, loadPackageDoctors]);
 
   const loadPharmacies = useCallback(async () => {
     setLoadingPharmacies(true);
@@ -116,21 +119,14 @@ export function PatientPrimaryCareOnboardingScreen({
     );
   }, [pharmacyList, search]);
 
-  const filteredAll = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const base = allDoctors || [];
-    if (!q) return base;
-    return base.filter((d) =>
-      `${d.name || ""} ${d.specialty || ""}`.toLowerCase().includes(q),
-    );
-  }, [allDoctors, search]);
-
   const filteredPkg = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = pkgDoctors || [];
     if (!q) return base;
     return base.filter((d) =>
-      `${d.name || ""} ${d.specialty || ""}`.toLowerCase().includes(q),
+      `${d.name || ""} ${d.specialty || ""} ${formatConcernsLine(d)}`
+        .toLowerCase()
+        .includes(q),
     );
   }, [pkgDoctors, search]);
 
@@ -149,52 +145,9 @@ export function PatientPrimaryCareOnboardingScreen({
     onFinished?.();
   };
 
-  const startChooseNext = () => {
-    if (!wantGeneral && !wantSpecialist) {
-      Alert.alert("Choose a path", "Select General doctor, Specialist doctor, or both.");
-      return;
-    }
-    if (wantGeneral) {
-      setStep("general_doctors");
-      return;
-    }
-    setStep("specialist_pick");
-  };
-
-  const afterGeneralChosen = async (doc) => {
-    if (!uid) return;
-    setBusy(true);
-    try {
-      setGeneralPick(doc);
-      generalDoctorRef.current = doc?.userId || null;
-      if (wantSpecialist) {
-        setStep("specialist_pick");
-        return;
-      }
-      await persistPatientCareMode({
-        profileId,
-        userId: uid,
-        mode: CARE_MODE.GENERAL,
-      });
-      await finishPaths({
-        ...pharmacyPathFields(),
-        wantsGeneral: true,
-        wantsSpecialist: false,
-        generalDoctorUserId: doc.userId,
-        specialistDoctorUserId: null,
-        specialistPackageSlot: null,
-        specialistOfferId: null,
-      });
-    } catch (e) {
-      Alert.alert("Save failed", e?.message || "Try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const paySpecialistPackage = async () => {
     if (!uid || !specDoctor?.userId || !specSlot) {
-      Alert.alert("Incomplete", "Choose a specialist doctor and a package.");
+      Alert.alert("Incomplete", "Choose a package doctor and a package.");
       return;
     }
     try {
@@ -215,12 +168,11 @@ export function PatientPrimaryCareOnboardingScreen({
         userId: uid,
         mode: CARE_MODE.PACKAGE,
       });
-      const genUid = generalDoctorRef.current || generalPick?.userId || null;
       await finishPaths({
         ...pharmacyPathFields(),
-        wantsGeneral: !!wantGeneral,
+        wantsGeneral: false,
         wantsSpecialist: true,
-        generalDoctorUserId: genUid,
+        generalDoctorUserId: null,
         specialistDoctorUserId: specDoctor.userId,
         specialistPackageSlot: specSlot.slot,
         specialistOfferId: offer?.id || null,
@@ -231,6 +183,10 @@ export function PatientPrimaryCareOnboardingScreen({
       setBusy(false);
     }
   };
+
+  const slots = Array.isArray(specDoctor?.packageSlots)
+    ? specDoctor.packageSlots
+    : [];
 
   if (step === "pharmacy_pick") {
     return (
@@ -265,8 +221,8 @@ export function PatientPrimaryCareOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Pick the pharmacy you will use for medicine orders and chat. You can
-            change this later from your care settings.
+            Select the pharmacy for medicine orders and chat. You can change this
+            later from your profile.
           </Text>
           <TextInput
             placeholder="Search pharmacies..."
@@ -288,8 +244,7 @@ export function PatientPrimaryCareOnboardingScreen({
           ) : null}
           {!loadingPharmacies && filteredPharmacies.length === 0 ? (
             <Text style={{ color: theme.textSecondary, marginTop: 12 }}>
-              No pharmacies are listed yet. Pull to try again after a moment, or
-              contact support.
+              No pharmacies are listed yet. Try again later or contact support.
             </Text>
           ) : null}
           {filteredPharmacies.map((p) => {
@@ -321,7 +276,7 @@ export function PatientPrimaryCareOnboardingScreen({
                     >
                       {p.name || "Pharmacy"}
                     </Text>
-                    {(p.address || p.district || p.state) ? (
+                    {p.address || p.district || p.state ? (
                       <Text
                         style={{
                           color: theme.textSecondary,
@@ -329,7 +284,9 @@ export function PatientPrimaryCareOnboardingScreen({
                           fontSize: S.small,
                         }}
                       >
-                        {[p.address, p.district, p.state].filter(Boolean).join(", ")}
+                        {[p.address, p.district, p.state]
+                          .filter(Boolean)
+                          .join(", ")}
                       </Text>
                     ) : null}
                   </View>
@@ -344,7 +301,7 @@ export function PatientPrimaryCareOnboardingScreen({
                 return;
               }
               setSearch("");
-              setStep("choose");
+              setStep("specialist_pick");
             }}
             disabled={busy}
             style={{
@@ -357,237 +314,13 @@ export function PatientPrimaryCareOnboardingScreen({
             }}
           >
             <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>
-              Continue
+              Next
             </Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
     );
   }
-
-  if (step === "choose") {
-    return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: theme.bg,
-          paddingTop: insets.top + 12,
-        }}
-      >
-        <ScrollView
-          contentContainerStyle={{
-            padding: S.pad,
-            paddingBottom: insets.bottom + 24,
-          }}
-        >
-          <TouchableOpacity
-            onPress={() => {
-              setSearch("");
-              setStep("pharmacy_pick");
-            }}
-            style={{ marginBottom: 12 }}
-          >
-            <Text style={{ color: theme.accent, fontWeight: "800" }}>Back</Text>
-          </TouchableOpacity>
-          <Text
-            style={{
-              color: theme.textPrimary,
-              fontSize: 24,
-              fontWeight: "800",
-            }}
-          >
-            How do you want to use care?
-          </Text>
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.body,
-              marginTop: 8,
-              marginBottom: 20,
-              lineHeight: 20,
-            }}
-          >
-            You can pick one or both. General doctors use paid appointments before
-            calls. Specialist doctors use a paid package — then you can chat or call
-            {
-              "Basic: during your doctor's daily hours; Gold/Premium: wider access."
-            }
-          </Text>
-
-          <TouchableOpacity
-            style={{
-              ...card,
-              borderColor: wantGeneral ? theme.accent : theme.cardBorder,
-              backgroundColor: wantGeneral ? theme.accentLight : theme.card,
-            }}
-            onPress={() => setWantGeneral(!wantGeneral)}
-            activeOpacity={0.85}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Ionicons
-                name={wantGeneral ? "checkbox" : "square-outline"}
-                size={26}
-                color={theme.accent}
-                style={{ marginRight: 12 }}
-              />
-              <Text
-                style={{
-                  color: theme.textPrimary,
-                  fontSize: S.title,
-                  fontWeight: "800",
-                  flex: 1,
-                }}
-              >
-                General doctor
-              </Text>
-            </View>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: S.small,
-                marginTop: 8,
-                lineHeight: 18,
-              }}
-            >
-              For common issues (headache, fever, etc.). Pick a doctor, then book
-              and pay for appointments before calls.
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={{
-              ...card,
-              borderColor: wantSpecialist ? theme.accent : theme.cardBorder,
-              backgroundColor: wantSpecialist ? theme.accentLight : theme.card,
-            }}
-            onPress={() => setWantSpecialist(!wantSpecialist)}
-            activeOpacity={0.85}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Ionicons
-                name={wantSpecialist ? "checkbox" : "square-outline"}
-                size={26}
-                color={theme.accent}
-                style={{ marginRight: 12 }}
-              />
-              <Text
-                style={{
-                  color: theme.textPrimary,
-                  fontSize: S.title,
-                  fontWeight: "800",
-                  flex: 1,
-                }}
-              >
-                Specialist doctor
-              </Text>
-            </View>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: S.small,
-                marginTop: 8,
-                lineHeight: 18,
-              }}
-            >
-              For focused care (e.g. thyroid). Pick a doctor, choose Basic / Gold /
-              Premium, pay, then contact them without a separate appointment.
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={startChooseNext}
-            disabled={busy}
-            style={{
-              marginTop: 8,
-              backgroundColor: theme.accent,
-              borderRadius: 16,
-              padding: 16,
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>
-              Continue
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  if (step === "general_doctors") {
-    return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: theme.bg,
-          paddingTop: insets.top + 12,
-        }}
-      >
-        <ScrollView
-          contentContainerStyle={{
-            padding: S.pad,
-            paddingBottom: insets.bottom + 24,
-          }}
-        >
-          <TouchableOpacity onPress={() => setStep("choose")} style={{ marginBottom: 12 }}>
-            <Text style={{ color: theme.accent, fontWeight: "800" }}>Back</Text>
-          </TouchableOpacity>
-          <Text
-            style={{
-              color: theme.textPrimary,
-              fontSize: 22,
-              fontWeight: "800",
-            }}
-          >
-            Choose your general doctor
-          </Text>
-          <TextInput
-            placeholder="Search doctors..."
-            placeholderTextColor={theme.textTertiary}
-            value={search}
-            onChangeText={setSearch}
-            style={{
-              marginTop: 12,
-              backgroundColor: theme.card,
-              borderRadius: 12,
-              padding: 12,
-              color: theme.textPrimary,
-              borderWidth: 1,
-              borderColor: theme.cardBorder,
-            }}
-          />
-          {loadingDocs ? (
-            <ActivityIndicator style={{ marginTop: 20 }} color={theme.accent} />
-          ) : null}
-          {filteredAll.map((d) => (
-            <TouchableOpacity
-              key={d.profileId || d.userId}
-              disabled={busy}
-              onPress={() => void afterGeneralChosen(d)}
-              style={{
-                ...card,
-                borderColor:
-                  generalPick?.userId === d.userId
-                    ? theme.accent
-                    : theme.cardBorder,
-              }}
-            >
-              <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
-                {d.name}
-              </Text>
-              <Text style={{ color: theme.textSecondary, marginTop: 4, fontSize: S.small }}>
-                {d.specialty}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  }
-
-  const slots = Array.isArray(specDoctor?.packageSlots)
-    ? specDoctor.packageSlots
-    : [];
 
   if (step === "specialist_pick") {
     return (
@@ -606,11 +339,8 @@ export function PatientPrimaryCareOnboardingScreen({
         >
           <TouchableOpacity
             onPress={() => {
-              if (wantGeneral && generalDoctorRef.current) {
-                setStep("general_doctors");
-              } else {
-                setStep("choose");
-              }
+              setSearch("");
+              setStep("pharmacy_pick");
             }}
             style={{ marginBottom: 12 }}
           >
@@ -623,7 +353,17 @@ export function PatientPrimaryCareOnboardingScreen({
               fontWeight: "800",
             }}
           >
-            Specialist doctor & package
+            Package doctor & package
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginTop: 6,
+              marginBottom: 10,
+            }}
+          >
+            Pick a doctor, then choose Basic / Gold / Premium and pay to activate.
           </Text>
           <TextInput
             placeholder="Search doctors..."
@@ -645,12 +385,15 @@ export function PatientPrimaryCareOnboardingScreen({
           ) : null}
           {filteredPkg.map((d) => {
             const sel = specDoctor?.userId === d.userId;
+            const concerns = formatConcernsLine(d);
             return (
               <TouchableOpacity
                 key={d.profileId || d.userId}
                 onPress={() => {
                   setSpecDoctor(d);
-                  const first = Array.isArray(d.packageSlots) ? d.packageSlots[0] : null;
+                  const first = Array.isArray(d.packageSlots)
+                    ? d.packageSlots[0]
+                    : null;
                   setSpecSlot(first || null);
                 }}
                 style={{
@@ -659,17 +402,42 @@ export function PatientPrimaryCareOnboardingScreen({
                   backgroundColor: sel ? theme.accentLight : theme.card,
                 }}
               >
-                <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>{d.name}</Text>
-                <Text style={{ color: theme.textSecondary, marginTop: 4, fontSize: S.small }}>
+                <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                  {d.name}
+                </Text>
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    marginTop: 4,
+                    fontSize: S.small,
+                  }}
+                >
                   {d.specialty}
                 </Text>
+                {concerns ? (
+                  <Text
+                    style={{
+                      color: theme.textSecondary,
+                      marginTop: 6,
+                      fontSize: S.small,
+                    }}
+                  >
+                    Concerns: {concerns}
+                  </Text>
+                ) : null}
               </TouchableOpacity>
             );
           })}
 
           {specDoctor ? (
             <View style={{ marginTop: 8 }}>
-              <Text style={{ color: theme.textPrimary, fontWeight: "900", marginBottom: 8 }}>
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontWeight: "900",
+                  marginBottom: 8,
+                }}
+              >
                 Select package
               </Text>
               {slots.map((slot) => {
@@ -691,7 +459,13 @@ export function PatientPrimaryCareOnboardingScreen({
                     <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
                       {slot.name || packageSlotDisplayName(slot.slot)}
                     </Text>
-                    <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}>
+                    <Text
+                      style={{
+                        color: theme.textSecondary,
+                        fontSize: S.small,
+                        marginTop: 4,
+                      }}
+                    >
                       Pay ₹{amount}
                     </Text>
                   </TouchableOpacity>
@@ -712,7 +486,9 @@ export function PatientPrimaryCareOnboardingScreen({
                 {busy ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={{ color: "#fff", fontWeight: "900" }}>Pay with Cashfree</Text>
+                  <Text style={{ color: "#fff", fontWeight: "900" }}>
+                    Pay with Cashfree
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>

@@ -108,6 +108,8 @@ import {
   needsCareOnboarding,
   migrateLegacyPatientPrimaryPathsIfNeeded,
   readPatientPrimaryCarePaths,
+  writePatientPrimaryCarePaths,
+  getPatientPackagePoolCoinsRemaining,
   PACKAGE_MEETING_STATUS,
   normalizeDoctorPackageSlots,
   normalizePharmacyProviderKind,
@@ -142,7 +144,6 @@ import {
   PatientQuickRequestsTrackerPanel,
   QuickCounsellingScreen,
   QuickSolutionScreen,
-  UpgradePackageFAB,
 } from "./productSpecScreens";
 import {
   androidKeyboardPad,
@@ -4440,6 +4441,7 @@ const PatientHomeScreen = () => {
     String(currentUser?.name || "")
       .trim()
       .split(/\s+/)[0] || "Patient";
+  const packageStyleHome = patientCareMode === CARE_MODE.PACKAGE;
   const tabNav = useMainTabNav();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
 
@@ -4573,6 +4575,8 @@ const PatientHomeScreen = () => {
     [ensureDirectConversation, sendConversationMessage],
   );
   const [selectedEmoji, setSelectedEmoji] = useState(null);
+  const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
+  const [packagePoolCoins, setPackagePoolCoins] = useState(0);
   const [startCallType, setStartCallType] = useState(null);
   const [showFindDoctor, setShowFindDoctor] = useState(false);
   const [showPrescription, setShowPrescription] = useState(false);
@@ -4610,6 +4614,27 @@ const PatientHomeScreen = () => {
       cancelled = true;
     };
   }, [currentUser?.id, dataLoading]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentUser?.id || dataLoading) return undefined;
+    (async () => {
+      try {
+        const p = await getPatientPackagePoolCoinsRemaining(currentUser.id);
+        if (!cancelled) setPackagePoolCoins(Number(p) || 0);
+      } catch {
+        if (!cancelled) setPackagePoolCoins(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentUser?.id,
+    dataLoading,
+    patientCareMode,
+    patientQuickCareBinding?.doctorUserId,
+  ]);
 
   const handleWalletDeposit = useCallback(async () => {
     const raw = String(depositAmount || "").trim();
@@ -4699,6 +4724,10 @@ const PatientHomeScreen = () => {
 
   useEffect(() => {
     const handleBack = () => {
+      if (upgradeModalVisible) {
+        setUpgradeModalVisible(false);
+        return true;
+      }
       if (startCallType) {
         setStartCallType(null);
         return true;
@@ -4763,6 +4792,7 @@ const PatientHomeScreen = () => {
     );
     return () => subscription.remove();
   }, [
+    upgradeModalVisible,
     startCallType,
     showWallet,
     showFindDoctor,
@@ -4936,6 +4966,84 @@ const PatientHomeScreen = () => {
 
   return (
     <View style={{ flex: 1 }}>
+      <Modal
+        visible={upgradeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setUpgradeModalVisible(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            padding: RFValue(24),
+            backgroundColor: "rgba(15,23,42,0.55)",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: RFValue(20),
+              padding: RFValue(22),
+              borderWidth: 1,
+              borderColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: RFValue(18),
+                fontWeight: "800",
+                color: theme.textPrimary,
+              }}
+            >
+              Upgrade to Package doctor?
+            </Text>
+            <Text
+              style={{
+                marginTop: RFValue(10),
+                fontSize: RFValue(14),
+                color: theme.textSecondary,
+                lineHeight: RFValue(20),
+              }}
+            >
+              You will choose a pharmacy, a package doctor, and a paid tier
+              (Basic / Gold / Premium). After payment, your home dashboard
+              switches to the full package experience.
+            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                setUpgradeModalVisible(false);
+                void Promise.resolve(upgradeToPackageMode?.()).catch((e) =>
+                  Alert.alert("Upgrade", e?.message || "Could not start."),
+                );
+              }}
+              style={{
+                marginTop: RFValue(18),
+                backgroundColor: theme.accent,
+                borderRadius: RFValue(14),
+                paddingVertical: RFValue(14),
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: RFValue(15) }}>
+                Upgrade
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setUpgradeModalVisible(false)}
+              style={{
+                marginTop: RFValue(10),
+                paddingVertical: RFValue(12),
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: theme.textSecondary, fontWeight: "700" }}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.bg }}
         edges={["left", "right"]}
@@ -5001,6 +5109,40 @@ const PatientHomeScreen = () => {
                   gap: RFValue(10),
                 }}
               >
+                <TouchableOpacity
+                  onPress={() => {
+                    if (patientCareMode === CARE_MODE.PACKAGE) {
+                      Alert.alert(
+                        "Package mode",
+                        "You are using Package doctor mode with the full dashboard.",
+                      );
+                      return;
+                    }
+                    setUpgradeModalVisible(true);
+                  }}
+                  activeOpacity={0.88}
+                  style={{
+                    paddingHorizontal: RFValue(14),
+                    paddingVertical: RFValue(8),
+                    borderRadius: RFValue(20),
+                    backgroundColor: "rgba(255,255,255,0.2)",
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: "rgba(255,255,255,0.45)",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "#FFF",
+                      fontWeight: "800",
+                      fontSize: RFValue(12),
+                      letterSpacing: 0.3,
+                    }}
+                  >
+                    {patientCareMode === CARE_MODE.PACKAGE
+                      ? "Package"
+                      : "Casual"}
+                  </Text>
+                </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() =>
                     Alert.alert(
@@ -5114,68 +5256,142 @@ const PatientHomeScreen = () => {
                   </Text>
                 </View>
 
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  onPress={() => setShowWallet(true)}
+                <View
                   style={{
                     marginTop: RFValue(16),
                     flexDirection: "row",
-                    alignItems: "center",
-                    backgroundColor: "#FFF",
-                    borderRadius: RFValue(18),
-                    paddingVertical: RFValue(14),
-                    paddingHorizontal: RFValue(14),
-                    shadowColor: "#000",
-                    shadowOpacity: 0.12,
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowRadius: 10,
-                    elevation: 4,
+                    alignItems: "stretch",
+                    gap: RFValue(10),
                   }}
                 >
-                  <View
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => setShowWallet(true)}
                     style={{
-                      width: RFValue(44),
-                      height: RFValue(44),
-                      borderRadius: RFValue(12),
-                      backgroundColor: "#EEF2FF",
-                      justifyContent: "center",
+                      flex: 1,
+                      flexDirection: "row",
                       alignItems: "center",
+                      backgroundColor: "#FFF",
+                      borderRadius: RFValue(18),
+                      paddingVertical: RFValue(12),
+                      paddingHorizontal: RFValue(12),
+                      shadowColor: "#000",
+                      shadowOpacity: 0.1,
+                      shadowOffset: { width: 0, height: 3 },
+                      shadowRadius: 8,
+                      elevation: 3,
                     }}
                   >
-                    <Ionicons
-                      name="wallet-outline"
-                      size={RFValue(22)}
-                      color={theme.accent}
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: RFValue(12) }}>
-                    <Text
+                    <View
                       style={{
-                        color: "#64748B",
-                        fontSize: RFValue(10),
-                        fontWeight: "800",
-                        letterSpacing: 1.2,
+                        width: RFValue(40),
+                        height: RFValue(40),
+                        borderRadius: RFValue(20),
+                        backgroundColor: "#FBBF24",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        borderWidth: 2,
+                        borderColor: "#D97706",
                       }}
                     >
-                      WALLET
-                    </Text>
-                    <Text
+                      <Text
+                        style={{
+                          fontSize: RFValue(14),
+                          fontWeight: "900",
+                          color: "#78350F",
+                        }}
+                      >
+                        ₹
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: RFValue(8) }}>
+                      <Text
+                        style={{
+                          color: "#64748B",
+                          fontSize: RFValue(9),
+                          fontWeight: "800",
+                          letterSpacing: 1,
+                        }}
+                      >
+                        CASUAL
+                      </Text>
+                      <Text
+                        style={{
+                          color: "#0F172A",
+                          fontSize: RFValue(17),
+                          fontWeight: "900",
+                          marginTop: RFValue(2),
+                        }}
+                      >
+                        {patientCoinBalance}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => setShowWallet(true)}
+                    style={{
+                      flex: 1,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      backgroundColor: "#FFF",
+                      borderRadius: RFValue(18),
+                      paddingVertical: RFValue(12),
+                      paddingHorizontal: RFValue(12),
+                      shadowColor: "#000",
+                      shadowOpacity: 0.1,
+                      shadowOffset: { width: 0, height: 3 },
+                      shadowRadius: 8,
+                      elevation: 3,
+                      opacity: packageStyleHome ? 1 : 0.55,
+                    }}
+                  >
+                    <View
                       style={{
-                        color: "#0F172A",
-                        fontSize: RFValue(18),
-                        fontWeight: "900",
-                        marginTop: RFValue(2),
+                        width: RFValue(40),
+                        height: RFValue(40),
+                        borderRadius: RFValue(20),
+                        backgroundColor: "#DDD6FE",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        borderWidth: 2,
+                        borderColor: "#6D28D9",
                       }}
                     >
-                      {patientCoinBalance} coins
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={RFValue(22)}
-                    color="#94A3B8"
-                  />
-                </TouchableOpacity>
+                      <Text
+                        style={{
+                          fontSize: RFValue(14),
+                          fontWeight: "900",
+                          color: "#5B21B6",
+                        }}
+                      >
+                        ₹
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: RFValue(8) }}>
+                      <Text
+                        style={{
+                          color: "#64748B",
+                          fontSize: RFValue(9),
+                          fontWeight: "800",
+                          letterSpacing: 1,
+                        }}
+                      >
+                        PACKAGE
+                      </Text>
+                      <Text
+                        style={{
+                          color: "#0F172A",
+                          fontSize: RFValue(17),
+                          fontWeight: "900",
+                          marginTop: RFValue(2),
+                        }}
+                      >
+                        {packageStyleHome ? packagePoolCoins : "—"}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
 
                 <View
                   style={{
@@ -5243,64 +5459,6 @@ const PatientHomeScreen = () => {
             <View
               style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
             >
-              {(patientPrimaryCarePaths?.wantsGeneral ||
-                patientPrimaryCarePaths?.wantsSpecialist) && (
-                <View
-                  style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    marginBottom: RFValue(12),
-                  }}
-                >
-                  {patientPrimaryCarePaths?.wantsGeneral ? (
-                    <View
-                      style={{
-                        paddingHorizontal: RFValue(12),
-                        paddingVertical: RFValue(6),
-                        borderRadius: RFValue(20),
-                        backgroundColor: theme.accentLight,
-                        borderWidth: 1,
-                        borderColor: theme.accent,
-                        marginRight: RFValue(8),
-                        marginBottom: RFValue(6),
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontWeight: "800",
-                          color: theme.accent,
-                          fontSize: RFValue(12),
-                        }}
-                      >
-                        General doctor
-                      </Text>
-                    </View>
-                  ) : null}
-                  {patientPrimaryCarePaths?.wantsSpecialist ? (
-                    <View
-                      style={{
-                        paddingHorizontal: RFValue(12),
-                        paddingVertical: RFValue(6),
-                        borderRadius: RFValue(20),
-                        backgroundColor: theme.successLight,
-                        borderWidth: 1,
-                        borderColor: theme.success,
-                        marginBottom: RFValue(6),
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontWeight: "800",
-                          color: theme.success,
-                          fontSize: RFValue(12),
-                        }}
-                      >
-                        Specialist doctor
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              )}
               {/* Quick Actions Grid */}
               <View
                 style={{
@@ -5326,7 +5484,10 @@ const PatientHomeScreen = () => {
                 >
                   <TouchableOpacity
                     onPress={() => void openSymptomsAssistant()}
-                    style={{ alignItems: "center", width: "25%" }}
+                    style={{
+                      alignItems: "center",
+                      width: packageStyleHome ? "25%" : "33.333%",
+                    }}
                   >
                     <View
                       style={{
@@ -5340,7 +5501,7 @@ const PatientHomeScreen = () => {
                       }}
                     >
                       <Ionicons
-                        name="pulse"
+                        name="chatbubbles-outline"
                         size={RFValue(24)}
                         color={theme.accent}
                       />
@@ -5353,12 +5514,15 @@ const PatientHomeScreen = () => {
                         textAlign: "center",
                       }}
                     >
-                      Symptoms
+                      AI Chat
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => setShowPharmacy(true)}
-                    style={{ alignItems: "center", width: "25%" }}
+                    style={{
+                      alignItems: "center",
+                      width: packageStyleHome ? "25%" : "33.333%",
+                    }}
                   >
                     <View
                       style={{
@@ -5388,41 +5552,46 @@ const PatientHomeScreen = () => {
                       Medicines
                     </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => setShowFindDoctor(true)}
-                    style={{ alignItems: "center", width: "25%" }}
-                  >
-                    <View
-                      style={{
-                        width: RFValue(48),
-                        height: RFValue(48),
-                        borderRadius: RFValue(14),
-                        backgroundColor: theme.bg,
-                        justifyContent: "center",
-                        alignItems: "center",
-                        marginBottom: RFValue(6),
-                      }}
+                  {packageStyleHome ? (
+                    <TouchableOpacity
+                      onPress={() => setShowFindDoctor(true)}
+                      style={{ alignItems: "center", width: "25%" }}
                     >
-                      <Ionicons
-                        name="calendar"
-                        size={RFValue(24)}
-                        color={theme.accent}
-                      />
-                    </View>
-                    <Text
-                      style={{
-                        fontSize: RFValue(12),
-                        color: theme.textSecondary,
-                        fontWeight: "600",
-                        textAlign: "center",
-                      }}
-                    >
-                      Book Appt
-                    </Text>
-                  </TouchableOpacity>
+                      <View
+                        style={{
+                          width: RFValue(48),
+                          height: RFValue(48),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.bg,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginBottom: RFValue(6),
+                        }}
+                      >
+                        <Ionicons
+                          name="calendar"
+                          size={RFValue(24)}
+                          color={theme.accent}
+                        />
+                      </View>
+                      <Text
+                        style={{
+                          fontSize: RFValue(12),
+                          color: theme.textSecondary,
+                          fontWeight: "600",
+                          textAlign: "center",
+                        }}
+                      >
+                        Book Appt
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity
                     onPress={() => setShowHospital(true)}
-                    style={{ alignItems: "center", width: "25%" }}
+                    style={{
+                      alignItems: "center",
+                      width: packageStyleHome ? "25%" : "33.333%",
+                    }}
                   >
                     <View
                       style={{
@@ -5449,7 +5618,7 @@ const PatientHomeScreen = () => {
                         textAlign: "center",
                       }}
                     >
-                      Hospital
+                      Hospitals
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -5493,64 +5662,132 @@ const PatientHomeScreen = () => {
                         ? "RMP / clinic doctors (1 coin = ₹1)."
                         : "Available anytime; switch care mode in Profile if needed."}
                 </Text>
-                <View
+                <TouchableOpacity
+                  onPress={() => setShowQuickSol(true)}
+                  activeOpacity={0.9}
                   style={{
                     flexDirection: "row",
-                    flexWrap: "wrap",
-                    gap: RFValue(8),
+                    alignItems: "center",
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(16),
+                    padding: RFValue(16),
+                    marginBottom: RFValue(10),
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.cardBorder,
+                    shadowColor: theme.shadowColor,
+                    shadowOpacity: 0.06,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowRadius: 12,
+                    elevation: 3,
                   }}
                 >
-                  <TouchableOpacity
-                    onPress={() => setShowQuickSol(true)}
+                  <View
                     style={{
-                      flexGrow: 1,
-                      minWidth: "45%",
-                      backgroundColor: theme.accentLight,
-                      padding: RFValue(12),
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
                       borderRadius: RFValue(14),
+                      backgroundColor: theme.accentLight,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginRight: RFValue(14),
                     }}
                   >
-                    <Text style={{ fontWeight: "800", color: theme.accent }}>
+                    <Ionicons
+                      name="flash-outline"
+                      size={RFValue(22)}
+                      color={theme.accent}
+                    />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      style={{
+                        fontSize: RFValue(14),
+                        fontWeight: "700",
+                        color: theme.textPrimary,
+                      }}
+                    >
                       Quick Solution
                     </Text>
                     <Text
                       style={{
-                        fontSize: RFValue(10),
+                        fontSize: RFValue(12),
                         color: theme.textSecondary,
-                        marginTop: 4,
+                        marginTop: RFValue(2),
                       }}
                     >
                       {patientCareMode === CARE_MODE.PACKAGE
                         ? "10 coin · Private mode available"
                         : "₹10 · Private mode available"}
                     </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => setShowQuickCounselling(true)}
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={RFValue(18)}
+                    color={theme.textTertiary}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setShowQuickCounselling(true)}
+                  activeOpacity={0.9}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(16),
+                    padding: RFValue(16),
+                    marginBottom: RFValue(0),
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.cardBorder,
+                    shadowColor: theme.shadowColor,
+                    shadowOpacity: 0.06,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowRadius: 12,
+                    elevation: 3,
+                  }}
+                >
+                  <View
                     style={{
-                      flexGrow: 1,
-                      minWidth: "45%",
-                      backgroundColor: theme.successLight,
-                      padding: RFValue(12),
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
                       borderRadius: RFValue(14),
+                      backgroundColor: theme.successLight,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginRight: RFValue(14),
                     }}
                   >
+                    <Ionicons
+                      name="heart-outline"
+                      size={RFValue(22)}
+                      color={theme.success}
+                    />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text
-                      style={{ fontWeight: "800", color: theme.success }}
+                      style={{
+                        fontSize: RFValue(14),
+                        fontWeight: "700",
+                        color: theme.textPrimary,
+                      }}
                     >
                       Quick Counselling
                     </Text>
                     <Text
                       style={{
-                        fontSize: RFValue(10),
+                        fontSize: RFValue(12),
                         color: theme.textSecondary,
-                        marginTop: 4,
+                        marginTop: RFValue(2),
                       }}
                     >
                       {patientCareMode === CARE_MODE.PACKAGE ? "25 coin" : "₹25"}
                     </Text>
-                  </TouchableOpacity>
-                </View>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={RFValue(18)}
+                    color={theme.textTertiary}
+                  />
+                </TouchableOpacity>
               </View>
 
               {/* Product spec: care mode + package journey */}
@@ -5592,252 +5829,150 @@ const PatientHomeScreen = () => {
                 >
                   {patientCareMode === CARE_MODE.PACKAGE
                     ? "Demos, paid packages, and your package journey live here."
-                    : patientCareMode === CARE_MODE.CASUAL
-                      ? "Medical records for consults."
-                      : "Explore the app; switch care mode anytime from Profile."}
+                    : "Explore the app; switch care mode anytime from Profile."}
                 </Text>
                 {patientCareMode === CARE_MODE.PACKAGE ? (
                   <>
-                    {patientQuickCareBinding?.doctorUserId ? (
-                      <>
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            gap: RFValue(8),
-                            alignItems: "stretch",
-                            marginBottom: RFValue(0),
-                          }}
-                        >
-                          <TouchableOpacity
-                            onPress={() => setShowPackageJourney(true)}
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              backgroundColor: theme.accentLight,
-                              padding: RFValue(12),
-                              borderRadius: RFValue(14),
-                            }}
-                          >
-                            <Ionicons
-                              name="git-branch-outline"
-                              size={RFValue(22)}
-                              color={theme.accent}
-                              style={{ marginBottom: RFValue(6) }}
-                            />
-                            <Text
-                              style={{ fontWeight: "800", color: theme.accent }}
-                            >
-                              Package journey
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: RFValue(10),
-                                color: theme.textSecondary,
-                                marginTop: 4,
-                              }}
-                            >
-                              Demo → pay
-                            </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => setShowMedical(true)}
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              borderWidth: 1,
-                              borderColor: theme.cardBorder,
-                              padding: RFValue(12),
-                              borderRadius: RFValue(14),
-                              backgroundColor: theme.card,
-                            }}
-                          >
-                            <Ionicons
-                              name="document-text-outline"
-                              size={RFValue(22)}
-                              color={theme.textSecondary}
-                              style={{ marginBottom: RFValue(6) }}
-                            />
-                            <Text
-                              style={{
-                                fontWeight: "800",
-                                color: theme.textPrimary,
-                              }}
-                            >
-                              Medical records
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: RFValue(10),
-                                color: theme.textSecondary,
-                                marginTop: 4,
-                              }}
-                            >
-                              Uploads for consults
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      </>
-                    ) : (
-                      <>
-                        <TouchableOpacity
-                          activeOpacity={0.9}
-                          onPress={() => setShowPackageJourney(true)}
-                          style={{
-                            backgroundColor: theme.accentLight,
-                            padding: RFValue(14),
-                            borderRadius: RFValue(14),
-                            marginBottom: RFValue(10),
-                            borderWidth: StyleSheet.hairlineWidth,
-                            borderColor: theme.cardBorder,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: RFValue(14),
-                              fontWeight: "800",
-                              color: theme.textPrimary,
-                              marginBottom: RFValue(6),
-                            }}
-                          >
-                            Quick Solve & Counselling locked
-                          </Text>
-                          <Text
-                            style={{
-                              fontSize: RFValue(11),
-                              color: theme.textSecondary,
-                              lineHeight: RFValue(16),
-                            }}
-                          >
-                            Select a doctor and activate a paid package (Basic,
-                            Gold, or Premium). They then run automatically with
-                            that doctor — no extra doctor picker.
-                          </Text>
-                          <Text
-                            style={{
-                              marginTop: RFValue(10),
-                              fontSize: RFValue(13),
-                              fontWeight: "800",
-                              color: theme.accent,
-                            }}
-                          >
-                            Open package journey →
-                          </Text>
-                        </TouchableOpacity>
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            gap: RFValue(8),
-                            alignItems: "stretch",
-                          }}
-                        >
-                          <TouchableOpacity
-                            onPress={() => setShowPackageJourney(true)}
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              backgroundColor: theme.accentLight,
-                              padding: RFValue(12),
-                              borderRadius: RFValue(14),
-                            }}
-                          >
-                            <Ionicons
-                              name="git-branch-outline"
-                              size={RFValue(22)}
-                              color={theme.accent}
-                              style={{ marginBottom: RFValue(6) }}
-                            />
-                            <Text
-                              style={{ fontWeight: "800", color: theme.accent }}
-                            >
-                              Package journey
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: RFValue(10),
-                                color: theme.textSecondary,
-                                marginTop: 4,
-                              }}
-                            >
-                              Demo → pay
-                            </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => setShowMedical(true)}
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              borderWidth: 1,
-                              borderColor: theme.cardBorder,
-                              padding: RFValue(12),
-                              borderRadius: RFValue(14),
-                              backgroundColor: theme.card,
-                            }}
-                          >
-                            <Ionicons
-                              name="document-text-outline"
-                              size={RFValue(22)}
-                              color={theme.textSecondary}
-                              style={{ marginBottom: RFValue(6) }}
-                            />
-                            <Text
-                              style={{
-                                fontWeight: "800",
-                                color: theme.textPrimary,
-                              }}
-                            >
-                              Medical records
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: RFValue(10),
-                                color: theme.textSecondary,
-                                marginTop: 4,
-                              }}
-                            >
-                              Uploads for consults
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      </>
-                    )}
-                  </>
-                ) : (
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      flexWrap: "wrap",
-                      gap: RFValue(8),
-                    }}
-                  >
-                    <TouchableOpacity
-                      onPress={() => setShowMedical(true)}
-                      style={{
-                        flexBasis: "100%",
-                        width: "100%",
-                        borderWidth: 1,
-                        borderColor: theme.cardBorder,
-                        padding: RFValue(12),
-                        borderRadius: RFValue(14),
-                        backgroundColor: theme.card,
-                      }}
-                    >
-                      <Text
-                        style={{ fontWeight: "800", color: theme.textPrimary }}
-                      >
-                        Medical records
-                      </Text>
+                    {!patientQuickCareBinding?.doctorUserId ? (
                       <Text
                         style={{
-                          fontSize: RFValue(10),
+                          fontSize: RFValue(11),
                           color: theme.textSecondary,
-                          marginTop: 4,
+                          marginBottom: RFValue(12),
+                          lineHeight: RFValue(16),
                         }}
                       >
-                        Upload prescriptions & labs to share in consults
+                        Quick Solve and Quick Counselling unlock after you
+                        choose a doctor and activate a paid package — start from
+                        Package journey below.
                       </Text>
+                    ) : null}
+                    <TouchableOpacity
+                      onPress={() => setShowPackageJourney(true)}
+                      activeOpacity={0.9}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        backgroundColor: theme.card,
+                        borderRadius: RFValue(16),
+                        padding: RFValue(16),
+                        marginBottom: RFValue(10),
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.cardBorder,
+                        shadowColor: theme.shadowColor,
+                        shadowOpacity: 0.06,
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowRadius: 12,
+                        elevation: 3,
+                      }}
+                    >
+                      <View
+                        style={{
+                          paddingHorizontal: RFValue(10),
+                          height: RFValue(36),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.accentLight,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginRight: RFValue(14),
+                        }}
+                      >
+                        <Ionicons
+                          name="git-branch-outline"
+                          size={RFValue(22)}
+                          color={theme.accent}
+                        />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text
+                          style={{
+                            fontSize: RFValue(14),
+                            fontWeight: "700",
+                            color: theme.textPrimary,
+                          }}
+                        >
+                          Package journey
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            color: theme.textSecondary,
+                            marginTop: RFValue(2),
+                          }}
+                        >
+                          Demo → pay
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={RFValue(18)}
+                        color={theme.textTertiary}
+                      />
                     </TouchableOpacity>
-                  </View>
-                )}
+                    <TouchableOpacity
+                      onPress={() => setShowMedical(true)}
+                      activeOpacity={0.9}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        backgroundColor: theme.card,
+                        borderRadius: RFValue(16),
+                        padding: RFValue(16),
+                        marginBottom: RFValue(0),
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.cardBorder,
+                        shadowColor: theme.shadowColor,
+                        shadowOpacity: 0.06,
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowRadius: 12,
+                        elevation: 3,
+                      }}
+                    >
+                      <View
+                        style={{
+                          paddingHorizontal: RFValue(10),
+                          height: RFValue(36),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.bg,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginRight: RFValue(14),
+                        }}
+                      >
+                        <Ionicons
+                          name="document-text-outline"
+                          size={RFValue(22)}
+                          color={theme.textSecondary}
+                        />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text
+                          style={{
+                            fontSize: RFValue(14),
+                            fontWeight: "700",
+                            color: theme.textPrimary,
+                          }}
+                        >
+                          Medical records
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            color: theme.textSecondary,
+                            marginTop: RFValue(2),
+                          }}
+                        >
+                          Uploads for consults
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={RFValue(18)}
+                        color={theme.textTertiary}
+                      />
+                    </TouchableOpacity>
+                  </>
+                ) : null}
               </View>
 
               {(patientCareMode === CARE_MODE.CASUAL ||
@@ -5963,133 +6098,265 @@ const PatientHomeScreen = () => {
               </View>
 
               <View style={{ marginBottom: RFValue(16) }}>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    marginBottom: RFValue(10),
-                  }}
-                >
-                  <TouchableOpacity
-                    onPress={() => setStartCallType("video")}
-                    activeOpacity={0.9}
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      backgroundColor: theme.accentLight,
-                      borderRadius: RFValue(16),
-                      padding: RFValue(16),
-                      marginRight: RFValue(10),
-                      borderWidth: StyleSheet.hairlineWidth,
-                      borderColor: theme.cardBorder,
-                      shadowColor: theme.shadowColor,
-                      shadowOpacity: 0.06,
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowRadius: 12,
-                      elevation: 3,
-                      alignItems: "center",
-                    }}
-                  >
-                    <View
+                {packageStyleHome ? (
+                  <>
+                    <TouchableOpacity
+                      onPress={() => setStartCallType("video")}
+                      activeOpacity={0.9}
                       style={{
-                        paddingHorizontal: RFValue(10),
-                        height: RFValue(36),
-                        borderRadius: RFValue(14),
-                        backgroundColor: "rgba(255,255,255,0.65)",
-                        justifyContent: "center",
+                        backgroundColor: theme.card,
+                        borderRadius: RFValue(16),
+                        padding: RFValue(16),
+                        marginBottom: RFValue(12),
+                        shadowColor: theme.shadowColor,
+                        shadowOpacity: 0.06,
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowRadius: 12,
+                        elevation: 3,
+                        flexDirection: "row",
                         alignItems: "center",
-                        marginBottom: RFValue(8),
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.cardBorder,
                       }}
                     >
+                      <View
+                        style={{
+                          paddingHorizontal: RFValue(10),
+                          height: RFValue(36),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.accentLight,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginRight: RFValue(14),
+                        }}
+                      >
+                        <Ionicons
+                          name="videocam"
+                          size={RFValue(22)}
+                          color={theme.accent}
+                        />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text
+                          style={{
+                            fontSize: RFValue(14),
+                            fontWeight: "700",
+                            color: theme.textPrimary,
+                          }}
+                        >
+                          Video Call
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            color: theme.textSecondary,
+                            marginTop: RFValue(2),
+                          }}
+                        >
+                          Start call
+                        </Text>
+                      </View>
                       <Ionicons
-                        name="videocam"
-                        size={RFValue(22)}
-                        color={theme.accent}
+                        name="chevron-forward"
+                        size={RFValue(18)}
+                        color={theme.textTertiary}
                       />
-                    </View>
-                    <Text
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setStartCallType("audio")}
+                      activeOpacity={0.9}
                       style={{
-                        fontSize: RFValue(12),
-                        fontWeight: "800",
-                        color: theme.textPrimary,
-                      }}
-                    >
-                      Video
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: RFValue(10),
-                        color: theme.textSecondary,
-                        marginTop: RFValue(4),
-                        fontWeight: "600",
-                      }}
-                    >
-                      Start call
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => setStartCallType("audio")}
-                    activeOpacity={0.9}
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      backgroundColor: theme.warningLight,
-                      borderRadius: RFValue(16),
-                      padding: RFValue(16),
-                      borderWidth: StyleSheet.hairlineWidth,
-                      borderColor: theme.cardBorder,
-                      shadowColor: theme.shadowColor,
-                      shadowOpacity: 0.06,
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowRadius: 12,
-                      elevation: 3,
-                      alignItems: "center",
-                    }}
-                  >
-                    <View
-                      style={{
-                        paddingHorizontal: RFValue(10),
-                        height: RFValue(36),
-                        borderRadius: RFValue(14),
-                        backgroundColor: "rgba(255,255,255,0.55)",
-                        justifyContent: "center",
+                        backgroundColor: theme.card,
+                        borderRadius: RFValue(16),
+                        padding: RFValue(16),
+                        marginBottom: RFValue(12),
+                        shadowColor: theme.shadowColor,
+                        shadowOpacity: 0.06,
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowRadius: 12,
+                        elevation: 3,
+                        flexDirection: "row",
                         alignItems: "center",
-                        marginBottom: RFValue(8),
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.cardBorder,
                       }}
                     >
+                      <View
+                        style={{
+                          paddingHorizontal: RFValue(10),
+                          height: RFValue(36),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.warningLight,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginRight: RFValue(14),
+                        }}
+                      >
+                        <Ionicons
+                          name="call"
+                          size={RFValue(22)}
+                          color={theme.warning}
+                        />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text
+                          style={{
+                            fontSize: RFValue(14),
+                            fontWeight: "700",
+                            color: theme.textPrimary,
+                          }}
+                        >
+                          Audio Call
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            color: theme.textSecondary,
+                            marginTop: RFValue(2),
+                          }}
+                        >
+                          Start call
+                        </Text>
+                      </View>
                       <Ionicons
-                        name="call"
-                        size={RFValue(22)}
-                        color={theme.warning}
+                        name="chevron-forward"
+                        size={RFValue(18)}
+                        color={theme.textTertiary}
                       />
-                    </View>
-                    <Text
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowFindDoctor(true)}
+                      activeOpacity={0.9}
                       style={{
-                        fontSize: RFValue(12),
-                        fontWeight: "800",
-                        color: theme.textPrimary,
+                        backgroundColor: theme.card,
+                        borderRadius: RFValue(16),
+                        padding: RFValue(16),
+                        marginBottom: RFValue(12),
+                        shadowColor: theme.shadowColor,
+                        shadowOpacity: 0.06,
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowRadius: 12,
+                        elevation: 3,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.cardBorder,
                       }}
                     >
-                      Audio
-                    </Text>
-                    <Text
+                      <View
+                        style={{
+                          paddingHorizontal: RFValue(10),
+                          height: RFValue(36),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.successLight,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginRight: RFValue(14),
+                        }}
+                      >
+                        <Ionicons
+                          name="calendar"
+                          size={RFValue(22)}
+                          color={theme.success}
+                        />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text
+                          style={{
+                            fontSize: RFValue(14),
+                            fontWeight: "700",
+                            color: theme.textPrimary,
+                          }}
+                        >
+                          Book appointment
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            color: theme.textSecondary,
+                            marginTop: RFValue(2),
+                          }}
+                        >
+                          Find a doctor and pick a time
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={RFValue(18)}
+                        color={theme.textTertiary}
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowAppointments(true)}
+                      activeOpacity={0.9}
                       style={{
-                        fontSize: RFValue(10),
-                        color: theme.textSecondary,
-                        marginTop: RFValue(4),
-                        fontWeight: "600",
+                        backgroundColor: theme.card,
+                        borderRadius: RFValue(16),
+                        padding: RFValue(16),
+                        marginBottom: RFValue(12),
+                        shadowColor: theme.shadowColor,
+                        shadowOpacity: 0.06,
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowRadius: 12,
+                        elevation: 3,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.cardBorder,
                       }}
                     >
-                      Start call
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                      <View
+                        style={{
+                          paddingHorizontal: RFValue(10),
+                          height: RFValue(36),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.accentLight,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginRight: RFValue(14),
+                        }}
+                      >
+                        <Ionicons
+                          name="calendar"
+                          size={RFValue(22)}
+                          color={theme.accent}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={{
+                            fontSize: RFValue(14),
+                            fontWeight: "700",
+                            color: theme.textPrimary,
+                          }}
+                        >
+                          My appointments
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            color: theme.textSecondary,
+                          }}
+                        >
+                          Approve, pay fee, and join your visit
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={RFValue(18)}
+                        color={theme.textTertiary}
+                      />
+                    </TouchableOpacity>
+                  </>
+                ) : null}
                 <TouchableOpacity
-                  onPress={() => setShowFindDoctor(true)}
+                  onPress={() => setShowPrescription(true)}
                   activeOpacity={0.9}
                   style={{
                     backgroundColor: theme.card,
                     borderRadius: RFValue(16),
                     padding: RFValue(16),
+                    marginBottom: RFValue(12),
                     shadowColor: theme.shadowColor,
                     shadowOpacity: 0.06,
                     shadowOffset: { width: 0, height: 4 },
@@ -6106,19 +6373,19 @@ const PatientHomeScreen = () => {
                       paddingHorizontal: RFValue(10),
                       height: RFValue(36),
                       borderRadius: RFValue(14),
-                      backgroundColor: theme.successLight,
+                      backgroundColor: theme.warningLight,
                       justifyContent: "center",
                       alignItems: "center",
                       marginRight: RFValue(14),
                     }}
                   >
                     <Ionicons
-                      name="calendar"
+                      name="document-text"
                       size={RFValue(22)}
-                      color={theme.success}
+                      color={theme.warning}
                     />
                   </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={{ flex: 1 }}>
                     <Text
                       style={{
                         fontSize: RFValue(14),
@@ -6126,16 +6393,15 @@ const PatientHomeScreen = () => {
                         color: theme.textPrimary,
                       }}
                     >
-                      Book appointment
+                      Prescriptions
                     </Text>
                     <Text
                       style={{
                         fontSize: RFValue(12),
                         color: theme.textSecondary,
-                        marginTop: RFValue(2),
                       }}
                     >
-                      Find a doctor and pick a time
+                      View your prescriptions
                     </Text>
                   </View>
                   <Ionicons
@@ -6144,314 +6410,189 @@ const PatientHomeScreen = () => {
                     color={theme.textTertiary}
                   />
                 </TouchableOpacity>
+                {packageStyleHome ? (
+                  <TouchableOpacity
+                    onPress={() => setShowMeds(true)}
+                    activeOpacity={0.9}
+                    style={{
+                      backgroundColor: theme.card,
+                      borderRadius: RFValue(16),
+                      padding: RFValue(16),
+                      marginBottom: RFValue(12),
+                      shadowColor: theme.shadowColor,
+                      shadowOpacity: 0.06,
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowRadius: 12,
+                      elevation: 3,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: theme.cardBorder,
+                    }}
+                  >
+                    <View
+                      style={{
+                        paddingHorizontal: RFValue(10),
+                        height: RFValue(36),
+                        borderRadius: RFValue(14),
+                        backgroundColor: theme.successLight,
+                        justifyContent: "center",
+                        alignItems: "center",
+                        marginRight: RFValue(14),
+                      }}
+                    >
+                      <Ionicons
+                        name="pill"
+                        size={RFValue(22)}
+                        color={theme.success}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={{
+                          fontSize: RFValue(14),
+                          fontWeight: "700",
+                          color: theme.textPrimary,
+                        }}
+                      >
+                        Medication Tracker
+                      </Text>
+                      <Text
+                        style={{
+                          fontSize: RFValue(12),
+                          color: theme.textSecondary,
+                        }}
+                      >
+                        Track your medications
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={RFValue(18)}
+                      color={theme.textTertiary}
+                    />
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  onPress={() => setShowFamily(true)}
+                  activeOpacity={0.9}
+                  style={{
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(16),
+                    padding: RFValue(16),
+                    marginBottom: packageStyleHome ? RFValue(12) : RFValue(0),
+                    shadowColor: theme.shadowColor,
+                    shadowOpacity: 0.06,
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowRadius: 12,
+                    elevation: 3,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.cardBorder,
+                  }}
+                >
+                  <View
+                    style={{
+                      paddingHorizontal: RFValue(10),
+                      height: RFValue(36),
+                      borderRadius: RFValue(14),
+                      backgroundColor: theme.accentLight,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginRight: RFValue(14),
+                    }}
+                  >
+                    <Ionicons
+                      name="people"
+                      size={RFValue(22)}
+                      color={theme.accent}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        fontSize: RFValue(14),
+                        fontWeight: "700",
+                        color: theme.textPrimary,
+                      }}
+                    >
+                      Family Health
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: RFValue(12),
+                        color: theme.textSecondary,
+                      }}
+                    >
+                      Manage family members
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={RFValue(18)}
+                    color={theme.textTertiary}
+                  />
+                </TouchableOpacity>
+                {packageStyleHome ? (
+                  <TouchableOpacity
+                    onPress={() => setShowSOS(true)}
+                    activeOpacity={0.9}
+                    style={{
+                      backgroundColor: theme.dangerLight,
+                      borderRadius: RFValue(16),
+                      padding: RFValue(16),
+                      marginBottom: RFValue(0),
+                      flexDirection: "row",
+                      alignItems: "center",
+                      borderWidth: 1,
+                      borderColor: theme.danger,
+                    }}
+                  >
+                    <View
+                      style={{
+                        paddingHorizontal: RFValue(10),
+                        height: RFValue(36),
+                        borderRadius: RFValue(14),
+                        backgroundColor: theme.danger,
+                        justifyContent: "center",
+                        alignItems: "center",
+                        marginRight: RFValue(14),
+                      }}
+                    >
+                      <Ionicons
+                        name="alert-circle"
+                        size={RFValue(22)}
+                        color="#FFF"
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={{
+                          fontSize: RFValue(14),
+                          fontWeight: "800",
+                          color: theme.danger,
+                        }}
+                      >
+                        Emergency SOS
+                      </Text>
+                      <Text
+                        style={{ fontSize: RFValue(12), color: theme.danger }}
+                      >
+                        Tap for instant emergency alert
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={RFValue(18)}
+                      color={theme.danger}
+                    />
+                  </TouchableOpacity>
+                ) : null}
               </View>
-
-              {/* My appointments - pay fee, status (Step 8) */}
-              <TouchableOpacity
-                onPress={() => setShowAppointments(true)}
-                style={{
-                  backgroundColor: theme.card,
-                  borderRadius: RFValue(16),
-                  padding: RFValue(16),
-                  marginBottom: RFValue(16),
-                  shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.06,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                  elevation: 3,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                <View
-                  style={{
-                    paddingHorizontal: RFValue(10),
-                    height: RFValue(36),
-                    borderRadius: RFValue(14),
-                    backgroundColor: theme.accentLight,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    marginRight: RFValue(14),
-                  }}
-                >
-                  <Ionicons
-                    name="calendar"
-                    size={RFValue(22)}
-                    color={theme.accent}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      fontSize: RFValue(14),
-                      fontWeight: "700",
-                      color: theme.textPrimary,
-                    }}
-                  >
-                    My appointments
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                    }}
-                  >
-                    Approve, pay fee, and join your visit
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={RFValue(18)}
-                  color={theme.textTertiary}
-                />
-              </TouchableOpacity>
-
-              {/* Prescriptions */}
-              <TouchableOpacity
-                onPress={() => setShowPrescription(true)}
-                style={{
-                  backgroundColor: theme.card,
-                  borderRadius: RFValue(16),
-                  padding: RFValue(16),
-                  marginBottom: RFValue(16),
-                  shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.06,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                  elevation: 3,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                <View
-                  style={{
-                    paddingHorizontal: RFValue(10),
-                    height: RFValue(36),
-                    borderRadius: RFValue(14),
-                    backgroundColor: theme.warningLight,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    marginRight: RFValue(14),
-                  }}
-                >
-                  <Ionicons
-                    name="document-text"
-                    size={RFValue(22)}
-                    color={theme.warning}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      fontSize: RFValue(14),
-                      fontWeight: "700",
-                      color: theme.textPrimary,
-                    }}
-                  >
-                    Prescriptions
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                    }}
-                  >
-                    View your prescriptions
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={RFValue(18)}
-                  color={theme.textTertiary}
-                />
-              </TouchableOpacity>
-
-              {/* Medication Tracker */}
-              <TouchableOpacity
-                onPress={() => setShowMeds(true)}
-                style={{
-                  backgroundColor: theme.card,
-                  borderRadius: RFValue(16),
-                  padding: RFValue(16),
-                  marginBottom: RFValue(16),
-                  shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.06,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                  elevation: 3,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                <View
-                  style={{
-                    paddingHorizontal: RFValue(10),
-                    height: RFValue(36),
-                    borderRadius: RFValue(14),
-                    backgroundColor: theme.successLight,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    marginRight: RFValue(14),
-                  }}
-                >
-                  <Ionicons
-                    name="pill"
-                    size={RFValue(22)}
-                    color={theme.success}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      fontSize: RFValue(14),
-                      fontWeight: "700",
-                      color: theme.textPrimary,
-                    }}
-                  >
-                    Medication Tracker
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                    }}
-                  >
-                    Track your medications
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={RFValue(18)}
-                  color={theme.textTertiary}
-                />
-              </TouchableOpacity>
-
-              {/* Family Health */}
-              <TouchableOpacity
-                onPress={() => setShowFamily(true)}
-                style={{
-                  backgroundColor: theme.card,
-                  borderRadius: RFValue(16),
-                  padding: RFValue(16),
-                  marginBottom: RFValue(16),
-                  shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.06,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                  elevation: 3,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                <View
-                  style={{
-                    paddingHorizontal: RFValue(10),
-                    height: RFValue(36),
-                    borderRadius: RFValue(14),
-                    backgroundColor: theme.accentLight,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    marginRight: RFValue(14),
-                  }}
-                >
-                  <Ionicons
-                    name="people"
-                    size={RFValue(22)}
-                    color={theme.accent}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      fontSize: RFValue(14),
-                      fontWeight: "700",
-                      color: theme.textPrimary,
-                    }}
-                  >
-                    Family Health
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                    }}
-                  >
-                    Manage family members
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={RFValue(18)}
-                  color={theme.textTertiary}
-                />
-              </TouchableOpacity>
-
-              {/* Emergency SOS */}
-              <TouchableOpacity
-                onPress={() => setShowSOS(true)}
-                style={{
-                  backgroundColor: theme.dangerLight,
-                  borderRadius: RFValue(16),
-                  padding: RFValue(16),
-                  marginBottom: RFValue(16),
-                  flexDirection: "row",
-                  alignItems: "center",
-                  borderWidth: 1,
-                  borderColor: theme.danger,
-                }}
-              >
-                <View
-                  style={{
-                    paddingHorizontal: RFValue(10),
-                    height: RFValue(36),
-                    borderRadius: RFValue(14),
-                    backgroundColor: theme.danger,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    marginRight: RFValue(14),
-                  }}
-                >
-                  <Ionicons
-                    name="alert-circle"
-                    size={RFValue(22)}
-                    color="#FFF"
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      fontSize: RFValue(14),
-                      fontWeight: "800",
-                      color: theme.danger,
-                    }}
-                  >
-                    Emergency SOS
-                  </Text>
-                  <Text style={{ fontSize: RFValue(12), color: theme.danger }}>
-                    Tap for instant emergency alert
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={RFValue(18)}
-                  color={theme.danger}
-                />
-              </TouchableOpacity>
             </View>
           </FadeInView>
         </ScrollView>
-        <UpgradePackageFAB
-          theme={theme}
-          visible={
-            patientCareMode === CARE_MODE.CASUAL ||
-            patientCareMode === CARE_MODE.SKIP
-          }
-          onPress={() => {
-            void Promise.resolve(upgradeToPackageMode?.()).then(() =>
-              setShowPackageJourney(true),
-            );
-          }}
-        />
       </SafeAreaView>
     </View>
   );
@@ -32780,6 +32921,26 @@ export default function App() {
     });
     setLocalCareMode(CARE_MODE.PACKAGE);
     try {
+      const prev = await readPatientPrimaryCarePaths(currentUser.id);
+      await writePatientPrimaryCarePaths(currentUser.id, {
+        ...(prev && typeof prev === "object" ? prev : {}),
+        completed: false,
+      });
+    } catch (_) {
+      try {
+        await writePatientPrimaryCarePaths(currentUser.id, {
+          completed: false,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      await reloadPatientPrimaryCarePaths();
+    } catch {
+      /* ignore */
+    }
+    try {
       const refreshed = await ensureRoleProfile("patient");
       setPatientProfile(refreshed);
     } catch (_) {
@@ -33596,15 +33757,93 @@ const AppContent = ({
   if (
     userRole === "patient" &&
     patientProfile?.id &&
+    needsCareOnboarding(patientProfile, localCareMode)
+  ) {
+    return (
+      <CareModeOnboardingScreen
+        theme={theme}
+        patientProfile={patientProfile}
+        currentUser={currentUser}
+        onCommitPackageDoctor={async () => {
+          if (!currentUser?.id) return;
+          await persistPatientCareMode({
+            profileId: patientProfile?.id,
+            userId: currentUser.id,
+            mode: CARE_MODE.PACKAGE,
+          });
+          setLocalCareMode(CARE_MODE.PACKAGE);
+          try {
+            const prev = await readPatientPrimaryCarePaths(currentUser.id);
+            await writePatientPrimaryCarePaths(currentUser.id, {
+              ...(prev && typeof prev === "object" ? prev : {}),
+              completed: false,
+            });
+          } catch (_) {
+            try {
+              await writePatientPrimaryCarePaths(currentUser.id, {
+                completed: false,
+              });
+            } catch {
+              /* ignore */
+            }
+          }
+          try {
+            const refreshed = await ensureRoleProfile("patient");
+            setPatientProfile(refreshed);
+          } catch (_) {
+            /* ignore */
+          }
+          await reloadPatientPrimaryCarePaths();
+        }}
+        onDone={async (mode) => {
+          await persistPatientCareMode({
+            profileId: patientProfile?.id,
+            userId: currentUser?.id,
+            mode,
+          });
+          setLocalCareMode(mode);
+          if (mode === CARE_MODE.CASUAL || mode === CARE_MODE.SKIP) {
+            try {
+              await writePatientPrimaryCarePaths(currentUser.id, {
+                completed: true,
+                wantsGeneral: false,
+                wantsSpecialist: false,
+                generalDoctorUserId: null,
+                specialistDoctorUserId: null,
+                specialistPackageSlot: null,
+                specialistOfferId: null,
+                pharmacyUserId: null,
+                pharmacyName: null,
+                casualDashboard: true,
+              });
+            } catch (_) {
+              /* ignore */
+            }
+          }
+          try {
+            const refreshed = await ensureRoleProfile("patient");
+            setPatientProfile(refreshed);
+          } catch (_) {
+            /* ignore */
+          }
+          await reloadPatientPrimaryCarePaths();
+        }}
+      />
+    );
+  }
+
+  if (
+    userRole === "patient" &&
+    patientProfile?.id &&
     patientPrimaryCarePathsLoaded &&
-    !patientPrimaryCarePaths?.completed
+    !patientPrimaryCarePaths?.completed &&
+    effectiveCareMode(patientProfile, localCareMode) === CARE_MODE.PACKAGE
   ) {
     return (
       <PatientPrimaryCareOnboardingScreen
         theme={theme}
         currentUser={currentUser}
         patientProfile={patientProfile}
-        fetchAllApprovedDoctors={() => fetchApprovedDoctors?.()}
         fetchPackageModeDoctors={() =>
           fetchApprovedDoctors?.({ packageModeOnly: true })
         }
@@ -33622,38 +33861,6 @@ const AppContent = ({
           if (from && currentUser?.id) {
             await writeLocalCareMode(currentUser.id, from);
             setLocalCareMode(from);
-          }
-          await reloadPatientPrimaryCarePaths();
-        }}
-      />
-    );
-  }
-
-  if (
-    userRole === "patient" &&
-    needsCareOnboarding(patientProfile, localCareMode)
-  ) {
-    return (
-      <CareModeOnboardingScreen
-        theme={theme}
-        patientProfile={patientProfile}
-        currentUser={currentUser}
-        onLoadPackageDoctors={() =>
-          fetchApprovedDoctors?.({ packageModeOnly: true })
-        }
-        onPaySelectedPackage={payForPackageOffer}
-        onDone={async (mode) => {
-          await persistPatientCareMode({
-            profileId: patientProfile?.id,
-            userId: currentUser?.id,
-            mode,
-          });
-          setLocalCareMode(mode);
-          try {
-            const refreshed = await ensureRoleProfile("patient");
-            setPatientProfile(refreshed);
-          } catch (_) {
-            // profile refresh optional
           }
           await reloadPatientPrimaryCarePaths();
         }}
