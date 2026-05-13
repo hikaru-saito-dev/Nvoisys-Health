@@ -1638,6 +1638,92 @@ const parseMedLinesFromQuickPrescribeText = (text) => {
     .filter(Boolean);
 };
 
+/** PocketBase collection + prescription relation field for each quick queue type. */
+const QUICK_REQUEST_TABLE_SPECS = [
+  {
+    kind: "solution",
+    col: "quick_solution_requests",
+    field: "quick_solution_request",
+  },
+  {
+    kind: "counselling",
+    col: "quick_counselling_requests",
+    field: "quick_counselling_request",
+  },
+];
+
+/**
+ * Find which collection holds this quick request id (fixes 404 when UI `kind`
+ * does not match the row’s real collection).
+ */
+const detectQuickRequestLocation = async (requestId) => {
+  const id = String(requestId || "").trim();
+  if (!id) return null;
+  const pbOpts = { requestKey: null, $autoCancel: false };
+  for (const spec of QUICK_REQUEST_TABLE_SPECS) {
+    try {
+      const row = await pb.collection(spec.col).getOne(id, pbOpts);
+      return { ...spec, row };
+    } catch {
+      /* try next collection */
+    }
+  }
+  return null;
+};
+
+const parseTimesOfDayInput = (raw) =>
+  String(raw || "")
+    .split(/[\s,;]+/)
+    .map((s) => s.trim())
+    .filter((s) => isValidHHMM(s));
+
+const createEmptyQuickPrescribeMedRow = () => ({
+  _key: `qm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+  name: "",
+  dosage: "",
+  frequency: "twice_daily",
+  mealTiming: "after_meal",
+  timesText: defaultTimesForFrequency("twice_daily").join(", "),
+  durationDays: "7",
+  notes: "",
+});
+
+const buildPrescriptionLinesFromQuickMedRows = (rows) => {
+  const list = safeArray(rows);
+  const out = [];
+  for (const row of list) {
+    const name = String(row?.name || "").trim();
+    if (!name) continue;
+    const freq = String(row?.frequency || "twice_daily").trim();
+    const meal = String(row?.mealTiming || "no_preference").trim();
+    const parsed = parseTimesOfDayInput(row?.timesText);
+    const times =
+      parsed.length > 0 ? parsed : defaultTimesForFrequency(freq);
+    const dRaw = String(row?.durationDays ?? "")
+      .replace(/[^\d]/g, "")
+      .trim();
+    const dNum = dRaw ? Math.max(0, parseInt(dRaw, 10) || 0) : 0;
+    const base = normalizePrescriptionLineFromUnknown({
+      name,
+      dosage: String(row?.dosage || "").trim(),
+      frequency: freq,
+      mealTiming: meal,
+      timesOfDay: [...times],
+      durationDays: dNum,
+      duration: dNum > 0 ? `${dNum} day${dNum === 1 ? "" : "s"}` : "",
+      notes: String(row?.notes || "").trim(),
+      whenToTake: "",
+    });
+    if (!base) continue;
+    const whenToTake =
+      String(base.whenToTake || "").trim() ||
+      describeStructuredTiming(base) ||
+      "";
+    out.push({ ...base, whenToTake });
+  }
+  return out;
+};
+
 // ---------------------------------------------------------------------------
 // Step 7b - local notification helpers for medication reminders.
 // These are best-effort: if the user denies permission or the device doesn't
@@ -17796,15 +17882,14 @@ const buildDefaultQuickPrescribeDiagnosis = (kind, record) => {
 
 const quickRequestModalPatientLabel = (record) => {
   const u = record?.expand?.patient;
-  const n = String(u?.name || "").trim();
-  if (n) return n;
-  return "Patient";
+  if (!u || typeof u !== "object") return "Patient";
+  return resolveListingDisplayName(u, u.expand?.user) || "Patient";
 };
 
 /** Debounced AI interaction hints (same engine as patient PrescriptionScreen). */
 const useQuickPrescribeSideEffectHints = ({
   quickPrescribeTarget,
-  quickPrescribeMeds,
+  quickPrescribeMedRows,
   runSideEffectCheck,
 }) => {
   const [warnings, setWarnings] = useState([]);
@@ -17819,7 +17904,7 @@ const useQuickPrescribeSideEffectHints = ({
     const patient = quickPrescribeTarget.record.expand?.patient || {};
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const lines = parseMedLinesFromQuickPrescribeText(quickPrescribeMeds);
+      const lines = buildPrescriptionLinesFromQuickMedRows(quickPrescribeMedRows);
       const items = lines
         .map((line) => ({
           name: String(prescriptionLineName(line) || "").trim(),
@@ -17846,7 +17931,7 @@ const useQuickPrescribeSideEffectHints = ({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [quickPrescribeTarget, quickPrescribeMeds, runSideEffectCheck]);
+  }, [quickPrescribeTarget, quickPrescribeMedRows, runSideEffectCheck]);
 
   return { warnings, loading };
 };
@@ -17859,8 +17944,8 @@ const QuickRequestPrescribeModal = ({
   previewText,
   diagnosis,
   onDiagnosisChange,
-  medLinesText,
-  onMedLinesChange,
+  medicineRows,
+  onMedicineRowsChange,
   busy,
   onClose,
   onSubmit,
@@ -17870,6 +17955,47 @@ const QuickRequestPrescribeModal = ({
   const kindTitle =
     requestKind === "counselling" ? "Quick Counselling" : "Quick Solution";
   const warnings = Array.isArray(sideEffectWarnings) ? sideEffectWarnings : [];
+  const rows = safeArray(medicineRows);
+
+  const patchRow = (index, patch) => {
+    onMedicineRowsChange((prev) =>
+      safeArray(prev).map((r, i) => (i === index ? { ...r, ...patch } : r)),
+    );
+  };
+
+  const setFrequency = (index, freqId) => {
+    patchRow(index, {
+      frequency: freqId,
+      timesText: defaultTimesForFrequency(freqId).join(", "),
+    });
+  };
+
+  const addMedicine = () => {
+    onMedicineRowsChange((prev) => [
+      ...safeArray(prev),
+      createEmptyQuickPrescribeMedRow(),
+    ]);
+  };
+
+  const removeMedicine = (index) => {
+    onMedicineRowsChange((prev) => {
+      const list = safeArray(prev);
+      if (list.length <= 1) return list;
+      return list.filter((_, i) => i !== index);
+    });
+  };
+
+  const chipBase = (selected) => ({
+    paddingHorizontal: RFValue(10),
+    paddingVertical: RFValue(6),
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: selected ? theme.accent : theme.cardBorder,
+    backgroundColor: selected ? theme.accentLight : theme.bg,
+    marginRight: RFValue(6),
+    marginBottom: RFValue(6),
+  });
+
   return (
     <Modal
       visible={visible}
@@ -17963,46 +18089,303 @@ const QuickRequestPrescribeModal = ({
                   marginBottom: RFValue(14),
                 }}
               />
+
               <Text
                 style={{
                   fontSize: RFValue(12),
-                  fontWeight: "700",
-                  color: theme.textSecondary,
-                  marginBottom: RFValue(6),
-                }}
-              >
-                Medicines (one per line)
-              </Text>
-              <Text
-                style={{
-                  fontSize: RFValue(11),
-                  color: theme.textTertiary,
-                  marginBottom: RFValue(6),
-                }}
-              >
-                Optional: Name | dosage | when | duration
-              </Text>
-              <TextInput
-                value={medLinesText}
-                onChangeText={onMedLinesChange}
-                editable={!busy}
-                multiline
-                placeholder="Paracetamol 500mg
-Amoxicillin 250mg"
-                placeholderTextColor={theme.textTertiary}
-                textAlignVertical="top"
-                style={{
-                  minHeight: RFValue(120),
-                  borderRadius: RFValue(12),
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                  padding: RFValue(12),
-                  fontSize: RFValue(14),
+                  fontWeight: "800",
                   color: theme.textPrimary,
-                  backgroundColor: theme.bg,
                   marginBottom: RFValue(8),
                 }}
-              />
+              >
+                Medicines
+              </Text>
+
+              {rows.map((row, idx) => (
+                <View
+                  key={row._key || `med-${idx}`}
+                  style={{
+                    marginBottom: RFValue(14),
+                    padding: RFValue(12),
+                    borderRadius: RFValue(14),
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.bg,
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: RFValue(8),
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: RFValue(12),
+                        fontWeight: "700",
+                        color: theme.textSecondary,
+                      }}
+                    >
+                      Medicine {idx + 1}
+                    </Text>
+                    {rows.length > 1 ? (
+                      <TouchableOpacity
+                        onPress={() => removeMedicine(idx)}
+                        disabled={busy}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            fontWeight: "700",
+                            color: theme.danger,
+                          }}
+                        >
+                          Remove
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  <Text
+                    style={{
+                      fontSize: RFValue(11),
+                      fontWeight: "600",
+                      color: theme.textSecondary,
+                      marginBottom: RFValue(4),
+                    }}
+                  >
+                    Name
+                  </Text>
+                  <TextInput
+                    value={row.name}
+                    onChangeText={(t) => patchRow(idx, { name: t })}
+                    editable={!busy}
+                    placeholder="Medicine name"
+                    placeholderTextColor={theme.textTertiary}
+                    style={{
+                      borderRadius: RFValue(10),
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                      padding: RFValue(10),
+                      fontSize: RFValue(14),
+                      color: theme.textPrimary,
+                      backgroundColor: theme.card,
+                      marginBottom: RFValue(8),
+                    }}
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: RFValue(11),
+                      fontWeight: "600",
+                      color: theme.textSecondary,
+                      marginBottom: RFValue(4),
+                    }}
+                  >
+                    Dosage (e.g. 500 mg, 1 tablet)
+                  </Text>
+                  <TextInput
+                    value={row.dosage}
+                    onChangeText={(t) => patchRow(idx, { dosage: t })}
+                    editable={!busy}
+                    placeholder="500 mg"
+                    placeholderTextColor={theme.textTertiary}
+                    style={{
+                      borderRadius: RFValue(10),
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                      padding: RFValue(10),
+                      fontSize: RFValue(14),
+                      color: theme.textPrimary,
+                      backgroundColor: theme.card,
+                      marginBottom: RFValue(8),
+                    }}
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: RFValue(11),
+                      fontWeight: "600",
+                      color: theme.textSecondary,
+                      marginBottom: RFValue(4),
+                    }}
+                  >
+                    Frequency
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                    {FREQUENCY_OPTIONS.map((opt) => (
+                      <TouchableOpacity
+                        key={`${row._key}-freq-${opt.id}`}
+                        onPress={() => setFrequency(idx, opt.id)}
+                        disabled={busy}
+                        style={chipBase(row.frequency === opt.id)}
+                      >
+                        <Text
+                          style={{
+                            fontSize: RFValue(11),
+                            fontWeight: "600",
+                            color:
+                              row.frequency === opt.id
+                                ? theme.accent
+                                : theme.textSecondary,
+                          }}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text
+                    style={{
+                      fontSize: RFValue(11),
+                      fontWeight: "600",
+                      color: theme.textSecondary,
+                      marginTop: RFValue(6),
+                      marginBottom: RFValue(4),
+                    }}
+                  >
+                    Meal timing
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                    {MEAL_TIMING_OPTIONS.map((opt) => (
+                      <TouchableOpacity
+                        key={`${row._key}-meal-${opt.id}`}
+                        onPress={() => patchRow(idx, { mealTiming: opt.id })}
+                        disabled={busy}
+                        style={chipBase(row.mealTiming === opt.id)}
+                      >
+                        <Text
+                          style={{
+                            fontSize: RFValue(11),
+                            fontWeight: "600",
+                            color:
+                              row.mealTiming === opt.id
+                                ? theme.accent
+                                : theme.textSecondary,
+                          }}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text
+                    style={{
+                      fontSize: RFValue(11),
+                      fontWeight: "600",
+                      color: theme.textSecondary,
+                      marginTop: RFValue(6),
+                      marginBottom: RFValue(4),
+                    }}
+                  >
+                    Times (24h, comma-separated)
+                  </Text>
+                  <TextInput
+                    value={row.timesText}
+                    onChangeText={(t) => patchRow(idx, { timesText: t })}
+                    editable={!busy}
+                    placeholder="08:00, 20:00"
+                    placeholderTextColor={theme.textTertiary}
+                    style={{
+                      borderRadius: RFValue(10),
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                      padding: RFValue(10),
+                      fontSize: RFValue(13),
+                      color: theme.textPrimary,
+                      backgroundColor: theme.card,
+                      marginBottom: RFValue(8),
+                    }}
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: RFValue(11),
+                      fontWeight: "600",
+                      color: theme.textSecondary,
+                      marginBottom: RFValue(4),
+                    }}
+                  >
+                    How long (days)
+                  </Text>
+                  <TextInput
+                    value={String(row.durationDays ?? "")}
+                    onChangeText={(t) => patchRow(idx, { durationDays: t })}
+                    editable={!busy}
+                    keyboardType="number-pad"
+                    placeholder="7"
+                    placeholderTextColor={theme.textTertiary}
+                    style={{
+                      borderRadius: RFValue(10),
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                      padding: RFValue(10),
+                      fontSize: RFValue(14),
+                      color: theme.textPrimary,
+                      backgroundColor: theme.card,
+                      marginBottom: RFValue(8),
+                    }}
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: RFValue(11),
+                      fontWeight: "600",
+                      color: theme.textSecondary,
+                      marginBottom: RFValue(4),
+                    }}
+                  >
+                    Notes (optional)
+                  </Text>
+                  <TextInput
+                    value={row.notes}
+                    onChangeText={(t) => patchRow(idx, { notes: t })}
+                    editable={!busy}
+                    placeholder="Special instructions"
+                    placeholderTextColor={theme.textTertiary}
+                    style={{
+                      borderRadius: RFValue(10),
+                      borderWidth: 1,
+                      borderColor: theme.cardBorder,
+                      padding: RFValue(10),
+                      fontSize: RFValue(13),
+                      color: theme.textPrimary,
+                      backgroundColor: theme.card,
+                      minHeight: RFValue(44),
+                    }}
+                  />
+                </View>
+              ))}
+
+              <TouchableOpacity
+                onPress={addMedicine}
+                disabled={busy}
+                style={{
+                  alignSelf: "flex-start",
+                  paddingHorizontal: RFValue(14),
+                  paddingVertical: RFValue(10),
+                  borderRadius: RFValue(10),
+                  borderWidth: 1,
+                  borderColor: theme.accent,
+                  marginBottom: RFValue(10),
+                }}
+              >
+                <Text
+                  style={{
+                    fontWeight: "800",
+                    color: theme.accent,
+                    fontSize: RFValue(13),
+                  }}
+                >
+                  + Add medicine
+                </Text>
+              </TouchableOpacity>
+
               {sideEffectLoading ? (
                 <View style={{ marginBottom: RFValue(10) }}>
                   <Text
@@ -18137,12 +18520,14 @@ const DoctorDashboard = ({ wounds, patients }) => {
 
   const [quickPrescribeTarget, setQuickPrescribeTarget] = useState(null);
   const [quickPrescribeDiagnosis, setQuickPrescribeDiagnosis] = useState("");
-  const [quickPrescribeMeds, setQuickPrescribeMeds] = useState("");
+  const [quickPrescribeMedRows, setQuickPrescribeMedRows] = useState(() => [
+    createEmptyQuickPrescribeMedRow(),
+  ]);
   const [quickPrescribeBusy, setQuickPrescribeBusy] = useState(false);
   const { warnings: quickPrescribeWarnings, loading: quickPrescribeWarnLoading } =
     useQuickPrescribeSideEffectHints({
       quickPrescribeTarget,
-      quickPrescribeMeds,
+      quickPrescribeMedRows,
       runSideEffectCheck,
     });
 
@@ -18155,23 +18540,23 @@ const DoctorDashboard = ({ wounds, patients }) => {
     if (!record?.id) return;
     setQuickPrescribeTarget({ kind, record });
     setQuickPrescribeDiagnosis(buildDefaultQuickPrescribeDiagnosis(kind, record));
-    setQuickPrescribeMeds("");
+    setQuickPrescribeMedRows([createEmptyQuickPrescribeMedRow()]);
   }, []);
 
   const closeQuickPrescribeModal = useCallback(() => {
     if (quickPrescribeBusy) return;
     setQuickPrescribeTarget(null);
     setQuickPrescribeDiagnosis("");
-    setQuickPrescribeMeds("");
+    setQuickPrescribeMedRows([createEmptyQuickPrescribeMedRow()]);
   }, [quickPrescribeBusy]);
 
   const submitQuickPrescribeModal = useCallback(async () => {
     if (!quickPrescribeTarget?.record) return;
-    const lines = parseMedLinesFromQuickPrescribeText(quickPrescribeMeds);
+    const lines = buildPrescriptionLinesFromQuickMedRows(quickPrescribeMedRows);
     if (!lines.length) {
       Alert.alert(
         "Medicines required",
-        "Enter at least one medicine (one per line).",
+        "Add at least one medicine with a name.",
       );
       return;
     }
@@ -18192,7 +18577,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
       });
       setQuickPrescribeTarget(null);
       setQuickPrescribeDiagnosis("");
-      setQuickPrescribeMeds("");
+      setQuickPrescribeMedRows([createEmptyQuickPrescribeMedRow()]);
     } catch (e) {
       Alert.alert(
         "Could not prescribe",
@@ -18203,7 +18588,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
     }
   }, [
     quickPrescribeTarget,
-    quickPrescribeMeds,
+    quickPrescribeMedRows,
     quickPrescribeDiagnosis,
     prescribeForQuickRequest,
   ]);
@@ -18544,8 +18929,8 @@ const DoctorDashboard = ({ wounds, patients }) => {
         previewText={quickPrescribePreview}
         diagnosis={quickPrescribeDiagnosis}
         onDiagnosisChange={setQuickPrescribeDiagnosis}
-        medLinesText={quickPrescribeMeds}
-        onMedLinesChange={setQuickPrescribeMeds}
+        medicineRows={quickPrescribeMedRows}
+        onMedicineRowsChange={setQuickPrescribeMedRows}
         busy={quickPrescribeBusy}
         onClose={closeQuickPrescribeModal}
         onSubmit={submitQuickPrescribeModal}
@@ -28193,12 +28578,14 @@ const PharmacyDashboard = ({ orders }) => {
 
   const [quickPrescribeTarget, setQuickPrescribeTarget] = useState(null);
   const [quickPrescribeDiagnosis, setQuickPrescribeDiagnosis] = useState("");
-  const [quickPrescribeMeds, setQuickPrescribeMeds] = useState("");
+  const [quickPrescribeMedRows, setQuickPrescribeMedRows] = useState(() => [
+    createEmptyQuickPrescribeMedRow(),
+  ]);
   const [quickPrescribeBusy, setQuickPrescribeBusy] = useState(false);
   const { warnings: quickPrescribeWarnings, loading: quickPrescribeWarnLoading } =
     useQuickPrescribeSideEffectHints({
       quickPrescribeTarget,
-      quickPrescribeMeds,
+      quickPrescribeMedRows,
       runSideEffectCheck,
     });
 
@@ -28206,23 +28593,23 @@ const PharmacyDashboard = ({ orders }) => {
     if (!record?.id) return;
     setQuickPrescribeTarget({ kind, record });
     setQuickPrescribeDiagnosis(buildDefaultQuickPrescribeDiagnosis(kind, record));
-    setQuickPrescribeMeds("");
+    setQuickPrescribeMedRows([createEmptyQuickPrescribeMedRow()]);
   }, []);
 
   const closeQuickPrescribeModal = useCallback(() => {
     if (quickPrescribeBusy) return;
     setQuickPrescribeTarget(null);
     setQuickPrescribeDiagnosis("");
-    setQuickPrescribeMeds("");
+    setQuickPrescribeMedRows([createEmptyQuickPrescribeMedRow()]);
   }, [quickPrescribeBusy]);
 
   const submitQuickPrescribeModal = useCallback(async () => {
     if (!quickPrescribeTarget?.record) return;
-    const lines = parseMedLinesFromQuickPrescribeText(quickPrescribeMeds);
+    const lines = buildPrescriptionLinesFromQuickMedRows(quickPrescribeMedRows);
     if (!lines.length) {
       Alert.alert(
         "Medicines required",
-        "Enter at least one medicine (one per line).",
+        "Add at least one medicine with a name.",
       );
       return;
     }
@@ -28243,7 +28630,7 @@ const PharmacyDashboard = ({ orders }) => {
       });
       setQuickPrescribeTarget(null);
       setQuickPrescribeDiagnosis("");
-      setQuickPrescribeMeds("");
+      setQuickPrescribeMedRows([createEmptyQuickPrescribeMedRow()]);
     } catch (e) {
       Alert.alert(
         "Could not prescribe",
@@ -28254,7 +28641,7 @@ const PharmacyDashboard = ({ orders }) => {
     }
   }, [
     quickPrescribeTarget,
-    quickPrescribeMeds,
+    quickPrescribeMedRows,
     quickPrescribeDiagnosis,
     prescribeForQuickRequest,
   ]);
@@ -28553,8 +28940,8 @@ const PharmacyDashboard = ({ orders }) => {
         previewText={quickPrescribePreview}
         diagnosis={quickPrescribeDiagnosis}
         onDiagnosisChange={setQuickPrescribeDiagnosis}
-        medLinesText={quickPrescribeMeds}
-        onMedLinesChange={setQuickPrescribeMeds}
+        medicineRows={quickPrescribeMedRows}
+        onMedicineRowsChange={setQuickPrescribeMedRows}
         busy={quickPrescribeBusy}
         onClose={closeQuickPrescribeModal}
         onSubmit={submitQuickPrescribeModal}
@@ -30649,28 +31036,50 @@ export default function App() {
   };
 
   const prescribeForQuickRequest = async ({
-    kind,
+    kind: _kindHint,
     record,
     prescriptionInput,
   }) => {
-    const requestKind = kind === "counselling" ? "counselling" : "solution";
-    const requestId = record?.id;
+    const requestId = String(record?.id || "").trim();
     if (!requestId) throw new Error("Quick request not found.");
+    if (!currentUser?.id) throw new Error("Sign in required.");
+
+    const detected = await detectQuickRequestLocation(requestId);
+    if (!detected) {
+      throw new Error(
+        "This quick request was not found, or your account cannot read it. Refresh the queue and try again.",
+      );
+    }
+    const {
+      col: quickCol,
+      field: quickField,
+      kind: locatedKind,
+      row: serverRow,
+    } = detected;
+    const effectiveRecord = {
+      ...record,
+      ...serverRow,
+      expand: {
+        ...(record?.expand || {}),
+        ...(serverRow?.expand || {}),
+      },
+    };
+
     const patientId =
-      (typeof record?.patient === "string" && record.patient) ||
-      record?.patient?.id ||
+      (typeof effectiveRecord?.patient === "string" &&
+        effectiveRecord.patient) ||
+      effectiveRecord?.patient?.id ||
       "";
     if (!patientId) throw new Error("Patient not found on this request.");
-    if (!currentUser?.id) throw new Error("Sign in required.");
 
     let prescription = prescriptionInput;
     if (Array.isArray(prescriptionInput)) {
       prescription = {
         disease:
-          requestKind === "counselling"
-            ? String(record?.topic || "").trim().slice(0, 120) ||
+          locatedKind === "counselling"
+            ? String(effectiveRecord?.topic || "").trim().slice(0, 120) ||
               "Quick counselling"
-            : String(displayQuickSolutionNotes(record) || "")
+            : String(displayQuickSolutionNotes(effectiveRecord) || "")
                 .trim()
                 .slice(0, 120) || "Quick solution",
         lines: prescriptionInput.map((name) => ({
@@ -30769,15 +31178,6 @@ export default function App() {
         whenToTake,
       };
     });
-
-    const quickCol =
-      requestKind === "counselling"
-        ? "quick_counselling_requests"
-        : "quick_solution_requests";
-    const quickField =
-      requestKind === "counselling"
-        ? "quick_counselling_request"
-        : "quick_solution_request";
 
     let savedPrescriptionId = null;
     try {
@@ -30893,25 +31293,53 @@ export default function App() {
       lastMessageAt: new Date().toISOString(),
     });
 
+    const rid = String(serverRow?.id || requestId).trim();
+    const recipientRaw =
+      typeof serverRow?.recipient === "string"
+        ? serverRow.recipient
+        : serverRow?.recipient?.id || "";
+    const recipientStr = String(recipientRaw || "").trim();
+    if (
+      recipientStr &&
+      recipientStr !== String(currentUser.id || "").trim()
+    ) {
+      throw new Error(
+        "This quick request belongs to a different recipient. Sign in as the RMP/pharmacy user shown as recipient for this row, then prescribe again.",
+      );
+    }
+
+    const pbNoCancel = { requestKey: null, $autoCancel: false };
+    const prevAutoCancel = !!pb.enableAutoCancellation;
+    pb.autoCancellation(false);
     try {
-      await pb.collection(quickCol).update(requestId, {
-        status: QUICK_REQUEST_STATUS.ASSIGNED,
-      });
+      await pb.collection(quickCol).getOne(rid, pbNoCancel);
+      await pb.collection(quickCol).update(
+        rid,
+        {
+          status: QUICK_REQUEST_STATUS.ASSIGNED,
+        },
+        pbNoCancel,
+      );
     } catch (statusErr) {
+      const http = statusErr?.status || statusErr?.response?.status || "";
       const detail =
         formatPocketBaseClientError(statusErr) ||
         statusErr?.message ||
         "Forbidden";
-      console.log("quick request status assigned failed:", detail);
+      console.log("quick request status assigned failed:", detail, http);
       throw new Error(
-        `Prescription was saved, but this request could not be marked assigned (${detail}). In PocketBase Admin, set the **Update** rule on ${quickCol} so the recipient doctor can write the row, e.g. patient = @request.auth.id || recipient = @request.auth.id`,
+        `Prescription was saved, but this request could not be marked assigned (${detail}${http ? `; HTTP ${http}` : ""}). ` +
+          `If you see HTTP 404, PocketBase rejected the write (often missing **Update** rule for the recipient on ${quickCol}). ` +
+          `Set update rule to: patient = @request.auth.id || recipient = @request.auth.id`,
       );
+    } finally {
+      pb.autoCancellation(prevAutoCancel);
     }
 
     try {
       await recordQuickHelpOffer({
         requestId,
-        requestKind,
+        requestKind: locatedKind,
         doctorUserId: currentUser.id,
         patientUserId: patientId,
         conversationId,

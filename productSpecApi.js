@@ -114,6 +114,7 @@ export async function fetchUsersAuthByIds(userIds) {
         const rows = await pb.collection(coll).getFullList({
           filter,
           requestKey: null,
+          $autoCancel: false,
         });
         (rows || []).forEach((row) => {
           if (row?.id && !byId.has(row.id)) byId.set(row.id, row);
@@ -128,6 +129,7 @@ export async function fetchUsersAuthByIds(userIds) {
         try {
           const row = await pb.collection(coll).getOne(id, {
             requestKey: null,
+            $autoCancel: false,
           });
           if (row?.id) {
             byId.set(id, row);
@@ -177,11 +179,23 @@ export async function fetchPatientProfilesByIds(profileIds) {
 /**
  * Doctor queue rows: merge expanded UsersAuth onto `expand.patient` when PB only
  * returns the profile (or strips nested user fields).
+ *
+ * Also handles rows where `patient` is only a relation id string with **no**
+ * `expand.patient` (common under strict list rules) by batch-fetching UsersAuth.
  */
 export async function hydrateRowsPatientAuthUsers(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return rows;
+
   const ids = new Set();
   for (const row of rows) {
+    const direct =
+      typeof row?.patient === "string"
+        ? row.patient
+        : row?.patient?.id && typeof row.patient === "object"
+          ? row.patient.id
+          : null;
+    if (direct) ids.add(String(direct).trim());
+
     const p = row.expand?.patient;
     if (!p || typeof p !== "object") continue;
     if (p.expand?.user?.id) ids.add(p.expand.user.id);
@@ -192,6 +206,30 @@ export async function hydrateRowsPatientAuthUsers(rows) {
   if (!ids.size) return rows;
   const byId = await fetchUsersAuthByIds([...ids]);
   return rows.map((row) => {
+    const directId = String(
+      (typeof row?.patient === "string" && row.patient) ||
+        (row?.patient?.id && typeof row.patient === "object"
+          ? row.patient.id
+          : "") ||
+        "",
+    ).trim();
+
+    if (
+      directId &&
+      (!row.expand?.patient || typeof row.expand.patient !== "object")
+    ) {
+      const u = byId.get(directId);
+      if (u) {
+        return {
+          ...row,
+          expand: {
+            ...(row.expand || {}),
+            patient: { ...u, expand: { ...(u.expand || {}), user: u } },
+          },
+        };
+      }
+    }
+
     const p = row.expand?.patient;
     if (!p || typeof p !== "object") return row;
     let uid =
@@ -4377,7 +4415,10 @@ export async function listQueuedQuickSolutionRequestsForProvider() {
       requestKey: null,
       sort: "-created",
       filter,
-      expand: "patient.user,recipient",
+      // Avoid nested `patient.user` here: if the nested expand is blocked by
+      // UsersAuth rules, PocketBase can omit `expand.patient` entirely and the
+      // doctor UI falls back to "Patient". `patient` alone + hydrate is enough.
+      expand: "patient,recipient",
     });
   } catch (e1) {
     try {
@@ -4413,7 +4454,7 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
       requestKey: null,
       sort: "-created",
       filter,
-      expand: "patient.user,recipient",
+      expand: "patient,recipient",
     });
   } catch (e1) {
     try {
