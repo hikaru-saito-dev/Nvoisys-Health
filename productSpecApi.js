@@ -71,17 +71,17 @@ export function resolveListingDisplayName(profileRecord, authUserRecord) {
   const u =
     uRaw && typeof uRaw === "object" && !Array.isArray(uRaw) ? uRaw : {};
   const r = profileRecord || {};
-  const firstLast = [
-    pick(u.first_name),
-    pick(u.last_name),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
+  const firstLastFrom = (o) =>
+    [pick(o.first_name), pick(o.last_name)].filter(Boolean).join(" ").trim();
+  const firstLastU = firstLastFrom(u);
+  const firstLastR = firstLastFrom(r);
   const candidates = [
     pick(u.name),
-    firstLast,
+    firstLastU,
     pick(u.username),
+    pick(r.name),
+    firstLastR,
+    pick(r.username),
     pick(r.store_name),
   ];
   for (const c of candidates) {
@@ -4466,7 +4466,8 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
 //   list:   doctor = @request.auth.id || patient = @request.auth.id
 //   view:   doctor = @request.auth.id || patient = @request.auth.id
 //   create: doctor = @request.auth.id
-//   update: doctor = @request.auth.id || patient = @request.auth.id
+//   update: patient = @request.auth.id || recipient = @request.auth.id
+//           (recipient must be able to set status → assigned after prescribing.)
 //   delete: (admin only)
 export const QUICK_REQUEST_STATUS = {
   QUEUED: "queued",

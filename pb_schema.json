@@ -3513,7 +3513,7 @@
     "listRule": "",
     "viewRule": "",
     "createRule": "",
-    "updateRule": "patient = @request.auth.id",
+    "updateRule": "patient = @request.auth.id || recipient = @request.auth.id",
     "deleteRule": "",
     "options": {}
   },
@@ -3772,7 +3772,7 @@
     "listRule": "",
     "viewRule": "",
     "createRule": "",
-    "updateRule": "patient = @request.auth.id",
+    "updateRule": "patient = @request.auth.id || recipient = @request.auth.id",
     "deleteRule": "",
     "options": {}
   },

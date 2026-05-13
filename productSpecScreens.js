@@ -64,13 +64,11 @@ import {
   listActivePackagePairsForPatient,
   listActiveQuickRequestsForPatient,
   listCoinLedgerForUser,
-  listInferredOffersByDoctor,
   listPackageMeetingsForDoctor,
   listPackageMeetingsForPatient,
   listPackageOffersForPatient,
   listQueuedQuickCounsellingRequestsForProvider,
   listQueuedQuickSolutionRequestsForProvider,
-  listQuickHelpOffersByDoctor,
   listPackageReferralsForDoctor,
   mergeLocalFeesOntoSlots,
   normalizeDoctorPackageSlots,
@@ -5306,13 +5304,13 @@ function truncateOneLine(s, max) {
 }
 
 /**
- * Primary action per card: **Prescribe** (opens parent composer) until an offer
- * exists for that request, then **Chat** to open the thread.
+ * Primary action per card: **Prescribe** until PocketBase `status` is no longer
+ * `queued`, then **Open chat** (opens the direct thread by patient id).
  *
  *   onPrescribeQuickRequest({ kind, record })
  *
- * `onOpenHelpChat(conversationId, patientUserId)` opens the conversation after
- * prescribe (or a prior help flow) created one.
+ * `onOpenHelpChat(conversationId, patientUserId)` — pass empty conversationId to
+ * resolve by patient user id when only the peer is known.
  *
  * `combined` — single “Quick Queues” card (default).
  * `split_tracks` — two dashboard cards: Quick Solution Tracks + Quick Counselling Tracks.
@@ -5336,10 +5334,6 @@ export function DoctorQuickRequestsPanel({
   const [counsellingRows, setCounsellingRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-
-  // Map of `${kind}:${requestId}` → { conversationId, offerId } for prescribe /
-  // help flows so the primary action can switch to Chat.
-  const [offerMap, setOfferMap] = useState({});
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
@@ -5373,46 +5367,6 @@ export function DoctorQuickRequestsPanel({
     }
     setSolutionRows(sol || []);
     setCounsellingRows(cou || []);
-
-    // Build a flat tagged list for the inferred-offers helper.
-    const tagged = [
-      ...(sol || []).map((row) => ({ ...row, kind: "solution" })),
-      ...(cou || []).map((row) => ({ ...row, kind: "counselling" })),
-    ];
-
-    // Existing offers - silently ignore if collection/rules are missing.
-    let realOffers = [];
-    try {
-      realOffers = (await listQuickHelpOffersByDoctor(effectiveDoctorId)) || [];
-    } catch (e) {
-      console.log("listQuickHelpOffersByDoctor ignored:", e?.message);
-    }
-    // Inferred offers - works even when the optional `quick_help_offers`
-    // collection is missing, by reading conversations + messages directly.
-    let inferredOffers = [];
-    try {
-      inferredOffers =
-        (await listInferredOffersByDoctor(effectiveDoctorId, tagged)) || [];
-    } catch (e) {
-      console.log("listInferredOffersByDoctor ignored:", e?.message);
-    }
-
-    const next = {};
-    const consume = (o) => {
-      const kind = o.request_kind || o.requestKind;
-      const reqId = o.request_id || o.requestId;
-      const convId =
-        (typeof o.conversation === "string" ? o.conversation : null) ||
-        o?.expand?.conversation?.id ||
-        o.conversation?.id ||
-        "";
-      if (kind && reqId && !next[`${kind}:${reqId}`]) {
-        next[`${kind}:${reqId}`] = { conversationId: convId, offerId: o.id };
-      }
-    };
-    for (const o of realOffers) consume(o);
-    for (const o of inferredOffers) consume(o);
-    setOfferMap(next);
 
     if (parts.length) setErr(parts.join("\n"));
     if (!silent) setLoading(false);
@@ -5458,16 +5412,16 @@ export function DoctorQuickRequestsPanel({
     String(record?.status || "queued").toLowerCase();
 
   const renderPrescribeOrChat = (record, kind) => {
-    const key = `${kind}:${record.id}`;
-    const existing = offerMap[key];
     const patientUserId = quickRequestPatientUserId(record);
+    const status = quickRequestStatusLabel(record);
+    const showChat = status !== "queued";
 
-    if (existing) {
+    if (showChat) {
       return (
         <TouchableOpacity
           onPress={() => {
             if (typeof onOpenHelpChat === "function") {
-              onOpenHelpChat(existing.conversationId || "", patientUserId);
+              onOpenHelpChat("", patientUserId);
             } else {
               Alert.alert(
                 "Chat unavailable",
@@ -5488,7 +5442,7 @@ export function DoctorQuickRequestsPanel({
           }}
         >
           <Ionicons
-            name="chatbubbles-outline"
+            name="checkmark-circle-outline"
             size={14}
             color={theme.accent}
             style={{ marginRight: 6 }}
@@ -5496,7 +5450,7 @@ export function DoctorQuickRequestsPanel({
           <Text
             style={{ color: theme.accent, fontWeight: "700", fontSize: 12 }}
           >
-            Chat
+            Open chat
           </Text>
         </TouchableOpacity>
       );

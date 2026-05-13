@@ -17801,6 +17801,56 @@ const quickRequestModalPatientLabel = (record) => {
   return "Patient";
 };
 
+/** Debounced AI interaction hints (same engine as patient PrescriptionScreen). */
+const useQuickPrescribeSideEffectHints = ({
+  quickPrescribeTarget,
+  quickPrescribeMeds,
+  runSideEffectCheck,
+}) => {
+  const [warnings, setWarnings] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!quickPrescribeTarget?.record || typeof runSideEffectCheck !== "function") {
+      setWarnings([]);
+      setLoading(false);
+      return undefined;
+    }
+    const patient = quickPrescribeTarget.record.expand?.patient || {};
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const lines = parseMedLinesFromQuickPrescribeText(quickPrescribeMeds);
+      const items = lines
+        .map((line) => ({
+          name: String(prescriptionLineName(line) || "").trim(),
+        }))
+        .filter((it) => it.name);
+      if (!items.length) {
+        if (!cancelled) {
+          setWarnings([]);
+          setLoading(false);
+        }
+        return;
+      }
+      if (!cancelled) setLoading(true);
+      try {
+        const w = await runSideEffectCheck({ items, patient });
+        if (!cancelled) setWarnings(Array.isArray(w) ? w : []);
+      } catch {
+        if (!cancelled) setWarnings([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [quickPrescribeTarget, quickPrescribeMeds, runSideEffectCheck]);
+
+  return { warnings, loading };
+};
+
 const QuickRequestPrescribeModal = ({
   theme,
   visible,
@@ -17814,9 +17864,12 @@ const QuickRequestPrescribeModal = ({
   busy,
   onClose,
   onSubmit,
+  sideEffectLoading = false,
+  sideEffectWarnings = [],
 }) => {
   const kindTitle =
     requestKind === "counselling" ? "Quick Counselling" : "Quick Solution";
+  const warnings = Array.isArray(sideEffectWarnings) ? sideEffectWarnings : [];
   return (
     <Modal
       visible={visible}
@@ -17859,7 +17912,7 @@ const QuickRequestPrescribeModal = ({
                   marginBottom: RFValue(4),
                 }}
               >
-                Prescribe
+                Write prescription
               </Text>
               <Text
                 style={{
@@ -17950,6 +18003,71 @@ Amoxicillin 250mg"
                   marginBottom: RFValue(8),
                 }}
               />
+              {sideEffectLoading ? (
+                <View style={{ marginBottom: RFValue(10) }}>
+                  <Text
+                    style={{ fontSize: RFValue(11), color: theme.textSecondary }}
+                  >
+                    Checking medicines against the patient profile…
+                  </Text>
+                </View>
+              ) : warnings.length > 0 ? (
+                <View
+                  style={{
+                    marginBottom: RFValue(12),
+                    padding: RFValue(12),
+                    borderRadius: RFValue(12),
+                    backgroundColor: theme.warningLight,
+                    borderWidth: 1,
+                    borderColor: theme.warning,
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      marginBottom: RFValue(6),
+                    }}
+                  >
+                    <Ionicons
+                      name="alert-circle"
+                      size={RFValue(18)}
+                      color={theme.warning}
+                    />
+                    <Text
+                      style={{
+                        marginLeft: 6,
+                        fontWeight: "800",
+                        color: theme.warning,
+                        fontSize: RFValue(12),
+                      }}
+                    >
+                      AI side-effect check ({warnings.length})
+                    </Text>
+                  </View>
+                  {warnings.map((w, widx) => (
+                    <Text
+                      key={`rx-warn-${widx}`}
+                      style={{
+                        fontSize: RFValue(11),
+                        color: theme.textPrimary,
+                        marginBottom: RFValue(4),
+                      }}
+                    >
+                      • {w.medicine}: {w.message}
+                    </Text>
+                  ))}
+                  <Text
+                    style={{
+                      fontSize: RFValue(10),
+                      color: theme.textSecondary,
+                      marginTop: RFValue(4),
+                    }}
+                  >
+                    Ask your doctor or pharmacist if you have questions.
+                  </Text>
+                </View>
+              ) : null}
             </ScrollView>
             <View
               style={{
@@ -18013,6 +18131,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
     requestOpenConversation,
     requestOpenDirectChatWithPatient,
     prescribeForQuickRequest,
+    runSideEffectCheck,
   } = useAppData();
   const tabNav = useMainTabNav();
 
@@ -18020,6 +18139,12 @@ const DoctorDashboard = ({ wounds, patients }) => {
   const [quickPrescribeDiagnosis, setQuickPrescribeDiagnosis] = useState("");
   const [quickPrescribeMeds, setQuickPrescribeMeds] = useState("");
   const [quickPrescribeBusy, setQuickPrescribeBusy] = useState(false);
+  const { warnings: quickPrescribeWarnings, loading: quickPrescribeWarnLoading } =
+    useQuickPrescribeSideEffectHints({
+      quickPrescribeTarget,
+      quickPrescribeMeds,
+      runSideEffectCheck,
+    });
 
   const pendingWounds = (wounds || []).filter(
     (w) => w.status === "Review Pending",
@@ -18424,6 +18549,8 @@ const DoctorDashboard = ({ wounds, patients }) => {
         busy={quickPrescribeBusy}
         onClose={closeQuickPrescribeModal}
         onSubmit={submitQuickPrescribeModal}
+        sideEffectLoading={quickPrescribeWarnLoading}
+        sideEffectWarnings={quickPrescribeWarnings}
       />
     </SafeAreaView>
   );
@@ -18431,6 +18558,8 @@ const DoctorDashboard = ({ wounds, patients }) => {
 
 const DoctorPatientsScreen = ({ patients }) => {
   const { theme } = useTheme();
+
+  const riskColor = (level) =>
     level === "High" ? "#DC2626" : level === "Medium" ? "#D97706" : "#059669";
   const riskBg = (level) =>
     level === "High" ? "#FEF2F2" : level === "Medium" ? "#FEF3C7" : "#ECFDF5";
@@ -28054,6 +28183,7 @@ const PharmacyDashboard = ({ orders }) => {
     requestOpenConversation,
     requestOpenDirectChatWithPatient,
     prescribeForQuickRequest,
+    runSideEffectCheck,
   } = useAppData();
   const tabNav = useMainTabNav();
   const receivesMeds = pharmacyReceivesMedicineOrders(patientProfile);
@@ -28065,6 +28195,12 @@ const PharmacyDashboard = ({ orders }) => {
   const [quickPrescribeDiagnosis, setQuickPrescribeDiagnosis] = useState("");
   const [quickPrescribeMeds, setQuickPrescribeMeds] = useState("");
   const [quickPrescribeBusy, setQuickPrescribeBusy] = useState(false);
+  const { warnings: quickPrescribeWarnings, loading: quickPrescribeWarnLoading } =
+    useQuickPrescribeSideEffectHints({
+      quickPrescribeTarget,
+      quickPrescribeMeds,
+      runSideEffectCheck,
+    });
 
   const openQuickPrescribeModal = useCallback(({ kind, record }) => {
     if (!record?.id) return;
@@ -28422,6 +28558,8 @@ const PharmacyDashboard = ({ orders }) => {
         busy={quickPrescribeBusy}
         onClose={closeQuickPrescribeModal}
         onSubmit={submitQuickPrescribeModal}
+        sideEffectLoading={quickPrescribeWarnLoading}
+        sideEffectWarnings={quickPrescribeWarnings}
       />
     </SafeAreaView>
   );
@@ -30760,7 +30898,14 @@ export default function App() {
         status: QUICK_REQUEST_STATUS.ASSIGNED,
       });
     } catch (statusErr) {
-      console.log("quick request status assigned skipped:", statusErr?.message);
+      const detail =
+        formatPocketBaseClientError(statusErr) ||
+        statusErr?.message ||
+        "Forbidden";
+      console.log("quick request status assigned failed:", detail);
+      throw new Error(
+        `Prescription was saved, but this request could not be marked assigned (${detail}). In PocketBase Admin, set the **Update** rule on ${quickCol} so the recipient doctor can write the row, e.g. patient = @request.auth.id || recipient = @request.auth.id`,
+      );
     }
 
     try {
