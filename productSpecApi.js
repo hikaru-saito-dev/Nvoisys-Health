@@ -519,7 +519,10 @@ function quickServiceMarkerEligible(value) {
     marker === "rmp" ||
     marker === "rmp_doctor" ||
     marker === "clinic" ||
-    marker === "clinic_doctor"
+    marker === "clinic_doctor" ||
+    marker === "gp" ||
+    marker === "general_physician" ||
+    marker === "mbbs"
   ) {
     return true;
   }
@@ -541,9 +544,7 @@ export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
     userOrProfileOrTier && typeof userOrProfileOrTier === "object"
       ? userOrProfileOrTier
       : null;
-  if (doctorProfileIsPackageDoctor(row)) return false;
   const raw = row?.raw && typeof row.raw === "object" ? row.raw : null;
-  if (doctorProfileIsPackageDoctor(raw)) return false;
   const sources = [row, raw].filter(Boolean);
   const tierFields = sources.flatMap((src) => [
     src.practitioner_tier,
@@ -557,11 +558,30 @@ export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
     src.providerKind,
   ]);
   const explicitTier = tierFields.find((value) => String(value || "").trim());
+  // RMP / clinic markers win first so doctors who also completed package fee
+  // setup still see Quick queues when their tier is rmp/clinic (or GP/mbbs).
   if (tierFields.some(quickServiceMarkerEligible)) return true;
-  if (doctorTierEligibleForPackageMode(explicitTier)) return false;
-  return sources.some((src) =>
+  if (sources.some((src) =>
     quickServiceMarkerEligible(src.clinic_or_hospital || src.clinicOrHospital),
-  );
+  )) {
+    return true;
+  }
+
+  const isPkg =
+    doctorProfileIsPackageDoctor(row) || doctorProfileIsPackageDoctor(raw);
+
+  // Package-care doctors (completed fee setup) without RMP/clinic markers stay
+  // on package flows only.
+  if (isPkg) return false;
+
+  // Professional / specialist tier: quick queues are for RMP/clinic routing.
+  if (doctorTierEligibleForPackageMode(explicitTier)) return false;
+
+  // Legacy / partial onboarding: no tier stored → treat as RMP-style quick queue
+  // (recipient-based lists still need the doctor to load their assigned rows).
+  if (!explicitTier) return true;
+
+  return false;
 }
 
 /** PocketBase `pharmacy_profile.provider_kind` — drives medicine orders vs quick queues only. */
@@ -4329,12 +4349,19 @@ async function assertCurrentUserCanAccessQuickQueues() {
   }
   if (role === "doctor") {
     try {
-      const profile = await pb
+      await pb
         .collection("doctor_profile")
         .getFirstListItem(`user="${uid}"`, { requestKey: null });
-      if (doctorTierEligibleForQuickService(profile)) return true;
-    } catch {
-      // fall through to deny
+      // Any doctor with a readable profile may list rows where `recipient` is
+      // their user id; PocketBase list rules still enforce access. Tier checks
+      // apply to routing new patient requests, not to reading assigned queue work.
+      return true;
+    } catch (e) {
+      throw new Error(
+        formatPocketBaseClientError(e) ||
+          e?.message ||
+          "Could not read doctor_profile for quick queues. Check PocketBase API rules.",
+      );
     }
   }
   throw new Error("Quick queues are only for RMP, clinic, or clinic-doctor accounts.");

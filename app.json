@@ -79,9 +79,9 @@
       "aiBaseUrl": "https://api.groq.com/openai/v1/chat/completions",
       "aiModel": "llama-3.3-70b-versatile",
       "eas": {
-        "projectId": "e790b0b4-378e-4e41-9c48-f6cb85bd0adf"
+        "projectId": "7e784527-38d6-49f6-869a-0bfc8c42812b"
       }
     },
-    "owner": "kokoshiro_dev_5"
+    "owner": "kokoshiro_dev_6"
   }
 }

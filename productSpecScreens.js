@@ -6237,14 +6237,8 @@ export function DoctorQuickRequestsPanel({
 }
 
 /**
- * Patient-side Quick Solution / Quick Counselling entry + tracking.
- *
- * Dashboard: short hint, refresh icon, and two full-width rows (same layout as
- * Telemedicine “Video Call” tiles) that open a modal with the detailed tracking
- * list for that type (queued cards, offers, Close / Cancel).
- *
- * Props:
- *   - patientUserId, onOpenConversation, refreshTrigger — see previous docstring.
+ * Patient-side tracking for Quick Solution / Quick Counselling requests already
+ * submitted (distinct from the “send new request” tiles in General).
  */
 export function PatientQuickRequestsTrackerPanel({
   theme,
@@ -6566,86 +6560,142 @@ export function PatientQuickRequestsTrackerPanel({
         ? solutionItems
         : [];
 
-  const quickRowShell = ({
+  const trackingEntryRow = ({
     onPress,
     iconName,
-    iconColor,
-    iconBg,
+    accentColor,
     title,
     subtitle,
   }) => (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={0.9}
+      activeOpacity={0.88}
       style={{
-        backgroundColor: theme.card,
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: 12,
-        shadowColor: theme.shadowColor,
-        shadowOpacity: 0.06,
-        shadowOffset: { width: 0, height: 4 },
-        shadowRadius: 12,
-        elevation: 3,
         flexDirection: "row",
         alignItems: "center",
-        borderWidth: StyleSheet.hairlineWidth,
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+        marginBottom: 10,
+        borderRadius: 14,
+        backgroundColor: theme.card,
+        borderWidth: 1,
         borderColor: theme.cardBorder,
       }}
     >
       <View
         style={{
-          paddingHorizontal: 10,
+          width: 36,
           height: 36,
-          borderRadius: 14,
-          backgroundColor: iconBg,
+        borderRadius: 10,
+        borderWidth: 2,
+        borderStyle: "solid",
+        borderColor: accentColor,
           justifyContent: "center",
           alignItems: "center",
-          marginRight: 14,
+          marginRight: 12,
+          backgroundColor: theme.bg,
         }}
       >
-        <Ionicons name={iconName} size={22} color={iconColor} />
+        <Ionicons name={iconName} size={20} color={accentColor} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text
-          style={{
-            fontSize: 14,
-            fontWeight: "700",
-            color: theme.textPrimary,
-          }}
-        >
-          {title}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            {title}
+          </Text>
+          <View
+            style={{
+              marginLeft: 8,
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+              borderRadius: 8,
+              backgroundColor: theme.accentLight,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 10,
+                fontWeight: "800",
+                color: theme.accent,
+                letterSpacing: 0.4,
+              }}
+            >
+              TRACKING
+            </Text>
+          </View>
+        </View>
         <Text
           style={{
             fontSize: 12,
             color: theme.textSecondary,
-            marginTop: 2,
+            marginTop: 4,
           }}
         >
           {subtitle}
         </Text>
       </View>
-      <Ionicons
-        name="chevron-forward"
-        size={18}
-        color={theme.textTertiary}
-      />
+      <Ionicons name="albums-outline" size={20} color={theme.textTertiary} />
     </TouchableOpacity>
   );
 
   return (
-    <View style={{ marginTop: 4 }}>
+    <View
+      style={{
+        marginTop: 4,
+        borderRadius: 18,
+        padding: 14,
+        borderLeftWidth: 5,
+        borderLeftColor: theme.accent,
+        backgroundColor: theme.inputBg,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderRightWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.cardBorder,
+        borderRightColor: theme.cardBorder,
+        borderBottomColor: theme.cardBorder,
+      }}
+    >
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
-          marginBottom: 8,
+          marginBottom: 10,
         }}
       >
-        <Text style={{ color: theme.textPrimary, fontWeight: "800", flex: 1 }}>
-          My Quick requests
-        </Text>
+        <View
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            backgroundColor: theme.accent,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: 10,
+          }}
+        >
+          <Ionicons name="pulse-outline" size={20} color="#FFF" />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ color: theme.textPrimary, fontWeight: "800", fontSize: 15 }}>
+            My Quick requests
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: 11,
+              marginTop: 2,
+              fontWeight: "600",
+            }}
+          >
+            Track requests you already sent — not where you start new ones.
+          </Text>
+        </View>
         <TouchableOpacity
           onPress={() => void load()}
           disabled={loading}
@@ -6654,9 +6704,11 @@ export function PatientQuickRequestsTrackerPanel({
             width: 40,
             height: 40,
             borderRadius: 12,
-            backgroundColor: theme.accentLight,
+            backgroundColor: theme.card,
             justifyContent: "center",
             alignItems: "center",
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
           }}
         >
           {loading ? (
@@ -6674,7 +6726,7 @@ export function PatientQuickRequestsTrackerPanel({
           lineHeight: 17,
         }}
       >
-        See active requests and doctor offers. Open each type for details.
+        See status, doctor offers, and close or cancel from here.
       </Text>
       {err ? (
         <Text
@@ -6684,27 +6736,25 @@ export function PatientQuickRequestsTrackerPanel({
         </Text>
       ) : null}
 
-      {quickRowShell({
+      {trackingEntryRow({
         onPress: () => setTrackingModalKind("solution"),
         iconName: "medkit-outline",
-        iconColor: theme.accent,
-        iconBg: theme.accentLight,
+        accentColor: theme.accent,
         title: "Quick Solution",
         subtitle:
           solutionItems.length > 0
-            ? `${solutionItems.length} active — tap to manage`
-            : "Track photo & note requests",
+            ? `${solutionItems.length} active — open to manage`
+            : "No active solution requests",
       })}
-      {quickRowShell({
+      {trackingEntryRow({
         onPress: () => setTrackingModalKind("counselling"),
         iconName: "chatbubbles-outline",
-        iconColor: theme.success,
-        iconBg: theme.successLight,
+        accentColor: theme.success,
         title: "Quick Counselling",
         subtitle:
           counsellingItems.length > 0
-            ? `${counsellingItems.length} active — tap to manage`
-            : "Track text counselling requests",
+            ? `${counsellingItems.length} active — open to manage`
+            : "No active counselling requests",
       })}
 
       <Modal

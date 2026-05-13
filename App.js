@@ -6438,16 +6438,7 @@ const PatientHomeScreen = () => {
               </View>
 
               {currentUser?.id ? (
-                <View
-                  style={{
-                    backgroundColor: theme.card,
-                    borderRadius: RFValue(20),
-                    padding: RFValue(16),
-                    marginBottom: RFValue(16),
-                    borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: theme.cardBorder,
-                  }}
-                >
+                <View style={{ marginBottom: RFValue(16) }}>
                   <PatientQuickRequestsTrackerPanel
                     theme={theme}
                     patientUserId={currentUser?.id}
@@ -17777,7 +17768,6 @@ const DoctorDashboard = ({ wounds, patients }) => {
     (w) => w.status === "Review Pending",
   ).length;
   const isPackageDoctor = doctorProfileIsPackageDoctor(doctorProfile);
-  const quickServiceDoctor = doctorTierEligibleForQuickService(doctorProfile);
 
   // Doctor "Help" flow per spec:
   //   ensure conversation → send first message → record offer →
@@ -18064,14 +18054,12 @@ const DoctorDashboard = ({ wounds, patients }) => {
           {isPackageDoctor ? (
             <>
               <PackageMeetingDoctorPanel theme={theme} />
-              {quickServiceDoctor ? (
-                <DoctorQuickRequestsPanel
-                  theme={theme}
-                  doctorUserId={currentUser?.id}
-                  onHelpPatient={handleHelpQuickPatient}
-                  onOpenHelpChat={handleOpenExistingHelpChat}
-                />
-              ) : null}
+              <DoctorQuickRequestsPanel
+                theme={theme}
+                doctorUserId={currentUser?.id}
+                onHelpPatient={handleHelpQuickPatient}
+                onOpenHelpChat={handleOpenExistingHelpChat}
+              />
 
               <DoctorUpcomingAppointmentsSection />
 
@@ -23233,7 +23221,7 @@ const PrescriptionScreen = ({
   };
 
   const toggleRxExpanded = (rxId) => {
-    if (cards.length <= 1) return;
+    if (!cards.length) return;
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setRxExpandedById((p) => ({ ...p, [rxId]: !p[rxId] }));
   };
@@ -23260,8 +23248,9 @@ const PrescriptionScreen = ({
       <View
         style={{
           backgroundColor: theme.card,
-          padding: RFValue(20),
-          paddingTop: RFValue(16),
+          paddingHorizontal: RFValue(16),
+          paddingTop: RFValue(8),
+          paddingBottom: RFValue(10),
           borderBottomWidth: 1,
           borderBottomColor: theme.cardBorder,
         }}
@@ -23270,7 +23259,7 @@ const PrescriptionScreen = ({
           style={{
             flexDirection: "row",
             alignItems: "center",
-            marginBottom: RFValue(16),
+            marginBottom: 0,
           }}
         >
           <TouchableOpacity
@@ -23318,8 +23307,8 @@ const PrescriptionScreen = ({
             if (typeof h === "number" && h > 0) setRxScrollContentH(h);
           }}
           contentContainerStyle={{
-            padding: RFValue(16),
-            paddingTop: RFValue(8),
+            paddingHorizontal: RFValue(16),
+            paddingTop: RFValue(4),
             paddingBottom: Math.max(RFValue(12), tabScrollBottomPadding()),
           }}
         >
@@ -23344,8 +23333,13 @@ const PrescriptionScreen = ({
           </View>
         ) : (
           cards.map((rx) => {
-            const multiCard = cards.length > 1;
-            const expanded = !multiCard || !!rxExpandedById[rx.id];
+            const canTogglePrescription = cards.length >= 1;
+            const storedExpanded = rxExpandedById[rx.id];
+            const expanded =
+              storedExpanded !== undefined
+                ? !!storedExpanded
+                : cards.length <= 1 ||
+                  highlightPrescriptionId === rx.id;
             return (
             <View
               key={rx.id}
@@ -23358,7 +23352,7 @@ const PrescriptionScreen = ({
               style={{
                 backgroundColor: theme.card,
                 borderRadius: RFValue(18),
-                marginBottom: RFValue(16),
+                marginBottom: RFValue(12),
                 shadowColor: theme.shadowColor,
                 shadowOpacity: 0.06,
                 shadowOffset: { width: 0, height: 4 },
@@ -23376,8 +23370,8 @@ const PrescriptionScreen = ({
               }}
             >
               <TouchableOpacity
-                activeOpacity={multiCard ? 0.9 : 1}
-                disabled={!multiCard}
+                activeOpacity={canTogglePrescription ? 0.9 : 1}
+                disabled={!canTogglePrescription}
                 onPress={() => toggleRxExpanded(rx.id)}
                 style={{
                   backgroundColor: theme.accentBg,
@@ -23428,7 +23422,7 @@ const PrescriptionScreen = ({
                     </Text>
                   </View>
                 </View>
-                {multiCard ? (
+                {canTogglePrescription ? (
                   <Ionicons
                     name={expanded ? "chevron-up" : "chevron-down"}
                     size={RFValue(20)}
@@ -23458,7 +23452,7 @@ const PrescriptionScreen = ({
                 </View>
               </TouchableOpacity>
 
-              {!expanded && multiCard ? (
+              {!expanded ? (
                 <TouchableOpacity
                   activeOpacity={0.92}
                   onPress={() => toggleRxExpanded(rx.id)}
