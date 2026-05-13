@@ -37,6 +37,7 @@ import {
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
   createQuickSolutionRequest,
+  pickRandomQuickCareRecipient,
   entitlementsForConsumerPlan,
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
@@ -2164,9 +2165,7 @@ export function QuickSolutionScreen({
   theme,
   onBack,
   patientUserId,
-  /** RMP / clinic / general only (`fetchApprovedDoctors({ quickServiceOnly: true })`). */
-  loadQuickPickDoctors,
-  /** Optional package binding; pre-selects linked doctor only when they appear in the quick list. */
+  /** Optional package binding (consult minutes hint only). */
   quickCareBinding = null,
   consultMinutesUsed = 0,
   consultMinutesLimit = 0,
@@ -2183,47 +2182,7 @@ export function QuickSolutionScreen({
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiReply, setAiReply] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
-  const [pickDoctors, setPickDoctors] = useState([]);
-  const [pickListsLoading, setPickListsLoading] = useState(true);
-  const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
   const [imagePart, setImagePart] = useState(null);
-
-  const rmpQuickDoctors = useMemo(
-    () => pickDoctors.filter((d) => doctorTierEligibleForQuickService(d)),
-    [pickDoctors],
-  );
-
-  const loadDoctorsRef = useRef(loadQuickPickDoctors);
-  loadDoctorsRef.current = loadQuickPickDoctors;
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setPickListsLoading(true);
-      try {
-        const d = await loadDoctorsRef.current?.().catch(() => []);
-        if (!cancelled) {
-          setPickDoctors(Array.isArray(d) ? d : []);
-        }
-      } finally {
-        if (!cancelled) setPickListsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [patientUserId]);
-
-  useEffect(() => {
-    const bindId = String(quickCareBinding?.doctorUserId || "").trim();
-    if (!bindId || rmpQuickDoctors.length === 0) return;
-    const match = rmpQuickDoctors.find(
-      (d) => String(d.userId || "").trim() === bindId,
-    );
-    if (match && doctorTierEligibleForQuickService(match)) {
-      setSelectedDoctorUserId(bindId);
-    }
-  }, [quickCareBinding?.doctorUserId, rmpQuickDoctors]);
 
   const ent = useMemo(
     () =>
@@ -2277,18 +2236,6 @@ export function QuickSolutionScreen({
     }
   };
 
-  const onSelectDoctor = (uid) => {
-    const id = String(uid || "").trim();
-    if (!id) return;
-    setSelectedDoctorUserId(id);
-  };
-
-  const onSelectPharmacy = () => {};
-
-  const onClearSelection = () => {
-    setSelectedDoctorUserId(null);
-  };
-
   const pickOptionalImage = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -2317,11 +2264,6 @@ export function QuickSolutionScreen({
   };
 
   const submit = async () => {
-    const doc = String(selectedDoctorUserId || "").trim();
-    if (!doc) {
-      Alert.alert("Recipient", "Select an RMP or clinic doctor first.");
-      return;
-    }
     const body = String(notes || "").trim();
     if (!body && !imagePart?.uri) {
       Alert.alert("Details", "Add a short description or attach a photo.");
@@ -2329,18 +2271,22 @@ export function QuickSolutionScreen({
     }
     try {
       setBusy(true);
+      const route = await pickRandomQuickCareRecipient(patientUserId);
       await createQuickSolutionRequest({
         patientUserId,
         notes,
         privateMode,
         imagePart,
-        targetDoctorUserId: doc,
+        targetDoctorUserId:
+          route.kind === "doctor" ? route.userId : undefined,
+        targetPharmacyUserId:
+          route.kind === "pharmacy" ? route.userId : undefined,
       });
       Alert.alert(
         "Submitted",
         privateMode
-          ? "Private mode is on: your name, photo, and contact details are hidden from the clinic side."
-          : "Your query is queued for a verified clinic (10 coins / ₹10).",
+          ? "Private mode is on: your name, photo, and contact details are hidden from the provider side."
+          : "Your request was sent (10 coins). A randomly chosen RMP doctor or pharmacy will see it in their queue.",
       );
       onBack?.();
     } catch (e) {
@@ -2359,18 +2305,8 @@ export function QuickSolutionScreen({
       ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
       : "";
 
-  const bindDoctorId = String(quickCareBinding?.doctorUserId || "").trim();
-  const bindDoctorInQuickList =
-    Boolean(bindDoctorId) &&
-    rmpQuickDoctors.some((d) => String(d.userId || "").trim() === bindDoctorId);
-  const showLinkedDoctorQuickBanner =
-    Boolean(bindDoctorId) && bindDoctorInQuickList && !pickListsLoading;
-  const showPackageDoctorExcludedBanner =
-    Boolean(bindDoctorId) && !pickListsLoading && !bindDoctorInQuickList;
-
-  const hasRecipient = Boolean(selectedDoctorUserId);
   const hasBody = Boolean(String(notes || "").trim() || imagePart?.uri);
-  const canSubmit = hasRecipient && hasBody && !busy;
+  const canSubmit = hasBody && !busy;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -2407,85 +2343,18 @@ export function QuickSolutionScreen({
           paddingBottom: scrollBottomPad,
         }}
       >
-        {showLinkedDoctorQuickBanner ? (
-          <View
-            style={{
-              backgroundColor: theme.accentLight,
-              padding: 12,
-              borderRadius: 14,
-              marginBottom: 12,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: S.small,
-                fontWeight: "800",
-              }}
-            >
-              Linked doctor on your list
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 11,
-                marginTop: 4,
-                lineHeight: 16,
-              }}
-            >
-              {quickCareBinding?.doctor
-                ? `${quickCareBinding.doctor} is pre-selected when they are an RMP/clinic doctor. You can change the recipient below.`
-                : "Your linked doctor is pre-selected when they can receive Quick requests. You can change the recipient below."}
-            </Text>
-          </View>
-        ) : showPackageDoctorExcludedBanner ? (
-          <View
-            style={{
-              backgroundColor: theme.warningLight || theme.accentLight,
-              padding: 12,
-              borderRadius: 14,
-              marginBottom: 12,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: S.small,
-                fontWeight: "800",
-              }}
-            >
-              Package doctor cannot receive Quick requests
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 11,
-                marginTop: 4,
-                lineHeight: 16,
-              }}
-            >
-              {quickCareBinding?.doctor
-                ? `${quickCareBinding.doctor} is not in the RMP/clinic list below. Quick Solution only goes to general physicians (RMP) and clinic doctors.`
-                : "Your linked package doctor cannot receive Quick Solution requests. Pick an RMP or clinic doctor below."}
-            </Text>
-          </View>
-        ) : !bindDoctorId ? (
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.small,
-              marginBottom: 12,
-              lineHeight: 18,
-            }}
-          >
-            Pick an RMP or clinic doctor from the list below, add details (and an
-            optional photo), then send (10 coins).
-          </Text>
-        ) : null}
+        <Text
+          style={{
+            color: theme.textSecondary,
+            fontSize: S.small,
+            marginBottom: 12,
+            lineHeight: 18,
+          }}
+        >
+          Add details and an optional photo, then send (10 coins). The app picks
+          a random RMP doctor (non–package setup) or pharmacy to receive your
+          request — you do not choose the recipient.
+        </Text>
 
         {consultHint ? (
           <Text
@@ -2500,19 +2369,6 @@ export function QuickSolutionScreen({
           </Text>
         ) : null}
 
-        <QuickRecipientPickerPanel
-          theme={theme}
-          doctors={rmpQuickDoctors}
-          listsLoading={pickListsLoading}
-          selectedDoctorUserId={selectedDoctorUserId}
-          selectedPharmacyUserId={null}
-          onSelectDoctor={onSelectDoctor}
-          onSelectPharmacy={onSelectPharmacy}
-          onClearSelection={onClearSelection}
-          showPharmacySection={false}
-          panelTitle="Doctors (RMP / clinic)"
-        />
-
         <Text
           style={{
             color: theme.textPrimary,
@@ -2521,7 +2377,7 @@ export function QuickSolutionScreen({
             fontSize: S.body,
           }}
         >
-          Doctor review (10 coins)
+          Doctor / clinic review (10 coins)
         </Text>
         <Text
           style={{
@@ -2530,8 +2386,7 @@ export function QuickSolutionScreen({
             fontSize: S.small,
           }}
         >
-          ₹10 (10 coins) per snap or query — platform 5 coins, clinic 5 coins.
-          Verified clinics and RMP doctors only.
+          ₹10 (10 coins) per snap or query — platform 5 coins, provider 5 coins.
         </Text>
         <TouchableOpacity
           onPress={() => setPrivateMode((v) => !v)}
@@ -2738,10 +2593,7 @@ export function QuickCounsellingScreen({
   theme,
   onBack,
   patientUserId,
-  fromWoundTracker = false,
   quickCareBinding = null,
-  /** RMP / clinic / general only (`fetchApprovedDoctors({ quickServiceOnly: true })`). */
-  loadQuickPickDoctors,
   consultMinutesUsed = 0,
   consultMinutesLimit = 0,
   scrollContentBottomInset = 100,
@@ -2754,81 +2606,29 @@ export function QuickCounsellingScreen({
   const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
-  const [pickDoctors, setPickDoctors] = useState([]);
-  const [pickListsLoading, setPickListsLoading] = useState(true);
-  const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
-
-  const rmpQuickDoctors = useMemo(
-    () => pickDoctors.filter((d) => doctorTierEligibleForQuickService(d)),
-    [pickDoctors],
-  );
-
-  const loadDoctorsRef = useRef(loadQuickPickDoctors);
-  loadDoctorsRef.current = loadQuickPickDoctors;
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setPickListsLoading(true);
-      try {
-        const d = await loadDoctorsRef.current?.().catch(() => []);
-        if (!cancelled) {
-          setPickDoctors(Array.isArray(d) ? d : []);
-        }
-      } finally {
-        if (!cancelled) setPickListsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [patientUserId]);
-
-  useEffect(() => {
-    const bindId = String(quickCareBinding?.doctorUserId || "").trim();
-    if (!bindId || rmpQuickDoctors.length === 0) return;
-    const match = rmpQuickDoctors.find(
-      (d) => String(d.userId || "").trim() === bindId,
-    );
-    if (match && doctorTierEligibleForQuickService(match)) {
-      setSelectedDoctorUserId(bindId);
-    }
-  }, [quickCareBinding?.doctorUserId, rmpQuickDoctors]);
-
-  const onSelectDoctor = (uid) => {
-    const id = String(uid || "").trim();
-    if (!id) return;
-    setSelectedDoctorUserId(id);
-  };
-
-  const onSelectPharmacy = () => {};
-
-  const onClearSelection = () => {
-    setSelectedDoctorUserId(null);
-  };
 
   const submit = async () => {
-    const doc = String(selectedDoctorUserId || "").trim();
-    if (!doc) {
-      Alert.alert("Recipient", "Select an RMP or clinic doctor first.");
-      return;
-    }
     if (!String(topic || "").trim()) {
-      Alert.alert("Description", "Please describe what you would like to discuss.");
+      Alert.alert(
+        "Description",
+        "Please describe what you would like to discuss.",
+      );
       return;
     }
     try {
       setBusy(true);
+      const route = await pickRandomQuickCareRecipient(patientUserId);
       await createQuickCounsellingRequest({
         patientUserId,
         topic,
-        targetDoctorUserId: doc,
+        targetDoctorUserId:
+          route.kind === "doctor" ? route.userId : undefined,
+        targetPharmacyUserId:
+          route.kind === "pharmacy" ? route.userId : undefined,
       });
       Alert.alert(
         "Queued",
-        fromWoundTracker
-          ? "Quick Counselling (25 coins). An RMP/clinic doctor will reach out for a video call. Platform 10, doctor/clinic 15 coins."
-          : "Quick Counselling (25 coins). Platform 10, doctor/clinic 15.",
+        "Quick Counselling (25 coins). A randomly chosen RMP doctor or pharmacy will see your request. Platform 10, provider 15.",
       );
       onBack?.();
     } catch (e) {
@@ -2838,9 +2638,8 @@ export function QuickCounsellingScreen({
     }
   };
 
-  const hasRecipient = Boolean(selectedDoctorUserId);
   const hasTopic = Boolean(String(topic || "").trim());
-  const canSubmit = hasRecipient && hasTopic && !busy;
+  const canSubmit = hasTopic && !busy;
 
   const ent = useMemo(
     () =>
@@ -2853,15 +2652,6 @@ export function QuickCounsellingScreen({
     ent && consultMinutesLimit > 0 && quickCareBinding?.doctorUserId
       ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
       : "";
-
-  const bindDoctorId = String(quickCareBinding?.doctorUserId || "").trim();
-  const bindDoctorInQuickList =
-    Boolean(bindDoctorId) &&
-    rmpQuickDoctors.some((d) => String(d.userId || "").trim() === bindDoctorId);
-  const showLinkedDoctorQuickBanner =
-    Boolean(bindDoctorId) && bindDoctorInQuickList && !pickListsLoading;
-  const showPackageDoctorExcludedBanner =
-    Boolean(bindDoctorId) && !pickListsLoading && !bindDoctorInQuickList;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -2898,85 +2688,17 @@ export function QuickCounsellingScreen({
           paddingBottom: scrollBottomPad,
         }}
       >
-        {showLinkedDoctorQuickBanner ? (
-          <View
-            style={{
-              backgroundColor: theme.successLight || theme.accentLight,
-              padding: 12,
-              borderRadius: 14,
-              marginBottom: 12,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: S.small,
-                fontWeight: "800",
-              }}
-            >
-              Linked doctor on your list
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 11,
-                marginTop: 4,
-                lineHeight: 16,
-              }}
-            >
-              {quickCareBinding?.doctor
-                ? `${quickCareBinding.doctor} is pre-selected when they are an RMP/clinic doctor. You can change the recipient below.`
-                : "Your linked doctor is pre-selected when they can receive Quick requests. You can change the recipient below."}
-            </Text>
-          </View>
-        ) : showPackageDoctorExcludedBanner ? (
-          <View
-            style={{
-              backgroundColor: theme.warningLight || theme.accentLight,
-              padding: 12,
-              borderRadius: 14,
-              marginBottom: 12,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: S.small,
-                fontWeight: "800",
-              }}
-            >
-              Package doctor cannot receive Quick Counselling
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 11,
-                marginTop: 4,
-                lineHeight: 16,
-              }}
-            >
-              {quickCareBinding?.doctor
-                ? `${quickCareBinding.doctor} is not in the RMP/clinic list below. Quick Counselling only goes to general physicians (RMP) and clinic doctors.`
-                : "Your linked package doctor cannot receive Quick Counselling. Pick an RMP or clinic doctor below."}
-            </Text>
-          </View>
-        ) : !bindDoctorId ? (
-          <Text
-            style={{
-              color: theme.textSecondary,
-              marginBottom: 12,
-              fontSize: S.small,
-              lineHeight: 18,
-            }}
-          >
-            Pick an RMP or clinic doctor from the list below, describe your
-            request, then send (25 coins).
-          </Text>
-        ) : null}
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 12,
+            fontSize: S.small,
+            lineHeight: 18,
+          }}
+        >
+          Text-only request (25 coins). The app assigns a random RMP doctor
+          (non–package setup) or pharmacy — you do not pick the recipient.
+        </Text>
 
         {consultHint ? (
           <Text
@@ -2991,25 +2713,8 @@ export function QuickCounsellingScreen({
           </Text>
         ) : null}
 
-        <QuickRecipientPickerPanel
-          theme={theme}
-          doctors={rmpQuickDoctors}
-          listsLoading={pickListsLoading}
-          selectedDoctorUserId={selectedDoctorUserId}
-          selectedPharmacyUserId={null}
-          onSelectDoctor={onSelectDoctor}
-          onSelectPharmacy={onSelectPharmacy}
-          onClearSelection={onClearSelection}
-          showPharmacySection={false}
-          panelTitle="Doctors (RMP / clinic)"
-        />
-
         <TextInput
-          placeholder={
-            fromWoundTracker
-              ? "Describe symptoms, pain, or questions for your video consultation…"
-              : "What would you like to talk about?"
-          }
+          placeholder="What would you like to talk about?"
           placeholderTextColor={theme.textTertiary}
           value={topic}
           onChangeText={setTopic}
@@ -3017,7 +2722,7 @@ export function QuickCounsellingScreen({
           textAlignVertical="top"
           onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
           style={{
-            minHeight: fromWoundTracker ? 140 : 88,
+            minHeight: 120,
             backgroundColor: theme.card,
             borderRadius: 14,
             padding: 14,
@@ -5611,14 +5316,15 @@ function truncateOneLine(s, max) {
  * presses "Open chat" on a card they already offered help on (so we don't
  * duplicate the first message or the offer row in PocketBase).
  *
- * `doctorUserId` is the current doctor's UsersAuth id, used to fetch existing
- * offers so we can flip the button to "Open chat" on previously-offered cards.
+ * `onPrescribeQuickRequest({ kind, record })` — optional; shows a Prescribe
+ * button on each queued card so the provider can open the prescription composer.
  */
 export function DoctorQuickRequestsPanel({
   theme,
   doctorUserId,
   onHelpPatient,
   onOpenHelpChat,
+  onPrescribeQuickRequest,
   /** When true, hide the manual Refresh control and keep lists fresh via poll + PocketBase realtime. */
   autoRefreshQuickQueues = false,
   /**
@@ -5855,7 +5561,6 @@ export function DoctorQuickRequestsPanel({
             }
           }}
           style={{
-            marginTop: 10,
             alignSelf: "flex-start",
             flexDirection: "row",
             alignItems: "center",
@@ -5886,7 +5591,6 @@ export function DoctorQuickRequestsPanel({
       <TouchableOpacity
         onPress={() => openHelpModal(record, kind)}
         style={{
-          marginTop: 10,
           alignSelf: "flex-start",
           flexDirection: "row",
           alignItems: "center",
@@ -5908,6 +5612,45 @@ export function DoctorQuickRequestsPanel({
       </TouchableOpacity>
     );
   };
+
+  const renderQuickActionsRow = (record, kind) => (
+    <View
+      style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        alignItems: "center",
+        marginTop: 10,
+      }}
+    >
+      {renderHelpButton(record, kind)}
+      {onPrescribeQuickRequest ? (
+        <TouchableOpacity
+          onPress={() => onPrescribeQuickRequest({ kind, record })}
+          style={{
+            marginLeft: 8,
+            marginTop: 0,
+            alignSelf: "flex-start",
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: 14,
+            paddingVertical: 8,
+            borderRadius: 999,
+            backgroundColor: theme.success,
+          }}
+        >
+          <Ionicons
+            name="reader-outline"
+            size={14}
+            color="#FFF"
+            style={{ marginRight: 6 }}
+          />
+          <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 12 }}>
+            Prescribe
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
 
   const renderSolutionCard = (r) => (
     <View
@@ -5937,7 +5680,7 @@ export function DoctorQuickRequestsPanel({
       <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
         {r.created ? new Date(r.created).toLocaleString() : ""}
       </Text>
-      {renderHelpButton(r, "solution")}
+      {renderQuickActionsRow(r, "solution")}
     </View>
   );
 
@@ -5969,7 +5712,7 @@ export function DoctorQuickRequestsPanel({
       <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
         {r.created ? new Date(r.created).toLocaleString() : ""}
       </Text>
-      {renderHelpButton(r, "counselling")}
+      {renderQuickActionsRow(r, "counselling")}
     </View>
   );
 
@@ -6846,9 +6589,10 @@ export function PatientQuickRequestsTrackerPanel({
           marginBottom: 10,
         }}
       >
-        Track Quick Solution / Counselling requests you submitted. When a doctor
-        offers help, tap the arrow to choose that doctor, credit their share,
-        close the request, and open the chat. Use{" "}
+        Track Quick Solution / Counselling requests you submitted. Each request is
+        routed automatically to a random RMP doctor or pharmacy. When someone
+        offers help, tap the arrow to accept, credit their share, close the
+        request, and open the chat. Use{" "}
         <Text style={{ fontWeight: "700" }}>Cancel</Text> if you no longer need
         help.
       </Text>

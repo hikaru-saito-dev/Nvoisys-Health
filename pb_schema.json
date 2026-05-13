@@ -3321,6 +3321,38 @@
       },
       {
         "system": false,
+        "id": "qksolreq1",
+        "name": "quick_solution_request",
+        "type": "relation",
+        "required": false,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "collectionId": "hgy88jprf1stm19",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": null
+        }
+      },
+      {
+        "system": false,
+        "id": "qkcounselreq1",
+        "name": "quick_counselling_request",
+        "type": "relation",
+        "required": false,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "collectionId": "re7kdy76kx8ardy",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": null
+        }
+      },
+      {
+        "system": false,
         "id": "swmzcbtm",
         "name": "items",
         "type": "json",

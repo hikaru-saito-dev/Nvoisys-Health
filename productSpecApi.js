@@ -4009,20 +4009,96 @@ export async function doctorWithdrawCoinsStub(doctorUserId, coins) {
 }
 
 // --- Quick Solution (10 coins) / Quick Counselling (25 coins) ---
+
+function pickRandomArrayItem(items) {
+  if (!Array.isArray(items) || !items.length) return null;
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+/**
+ * Approved doctors whose `package_setup` is not `true` (false or unset), plus
+ * every `pharmacy_profile`, for Quick Solution / Quick Counselling routing.
+ */
+export async function pickRandomQuickCareRecipient(excludeUserId = null) {
+  const ex = String(excludeUserId || "").trim();
+
+  let doctorProfiles = [];
+  try {
+    doctorProfiles = await pb.collection("doctor_profile").getFullList({
+      requestKey: null,
+      filter: `status="approved"`,
+      expand: "user",
+    });
+  } catch (e) {
+    console.log("pickRandomQuickCareRecipient doctors:", e?.message);
+    doctorProfiles = [];
+  }
+  const nonPackageDoctors = (doctorProfiles || []).filter(
+    (rec) => rec?.package_setup !== true,
+  );
+
+  let pharmacyProfiles = [];
+  try {
+    pharmacyProfiles = await pb.collection("pharmacy_profile").getFullList({
+      requestKey: null,
+      expand: "user",
+    });
+  } catch (e) {
+    console.log("pickRandomQuickCareRecipient pharmacies:", e?.message);
+    pharmacyProfiles = [];
+  }
+
+  const candidates = [];
+  for (const rec of nonPackageDoctors) {
+    const uid =
+      typeof rec.user === "string"
+        ? rec.user
+        : rec.user?.id || rec.expand?.user?.id || "";
+    const id = String(uid || "").trim();
+    if (!id || id === ex) continue;
+    candidates.push({ kind: "doctor", userId: id });
+  }
+  for (const rec of pharmacyProfiles || []) {
+    const uid =
+      typeof rec.user === "string"
+        ? rec.user
+        : rec.user?.id || rec.expand?.user?.id || "";
+    const id = String(uid || "").trim();
+    if (!id || id === ex) continue;
+    candidates.push({ kind: "pharmacy", userId: id });
+  }
+
+  const picked = pickRandomArrayItem(candidates);
+  if (!picked) {
+    throw new Error(
+      "No RMP-style doctors (without package setup) or pharmacies are available to receive this request yet.",
+    );
+  }
+  return picked;
+}
+
 export async function createQuickSolutionRequest({
   patientUserId,
   notes,
   privateMode,
   imagePart,
-  /** RMP / clinic / general doctor only (not package-tier). */
+  /** RMP / clinic doctor (UsersAuth id). */
   targetDoctorUserId,
+  /** Pharmacy account (UsersAuth id). Mutually exclusive with `targetDoctorUserId`. */
+  targetPharmacyUserId,
 }) {
   await assertUserHasCoins(patientUserId, 10);
   const td = String(targetDoctorUserId || "").trim();
-  if (!td) {
-    throw new Error("Select an RMP or clinic doctor before sending.");
+  const tp = String(targetPharmacyUserId || "").trim();
+  if (!td && !tp) {
+    throw new Error("Internal routing error: no recipient.");
   }
-  const routingNote = `\n\n— Recipient: doctor user id ${td}`;
+  if (td && tp) {
+    throw new Error("Internal routing error: both doctor and pharmacy set.");
+  }
+  const routingNote = td
+    ? `\n\n— Recipient: doctor user id ${td}`
+    : `\n\n— Recipient: pharmacy user id ${tp}`;
   const mergedNotes = `${String(notes || "").trim()}${routingNote}`.trim();
   const base = {
     patient: patientUserId,
@@ -4036,8 +4112,8 @@ export async function createQuickSolutionRequest({
   const coinMeta = {
     platform_fee_coins: 5,
     provider_coins: 5,
-    target_doctor: td,
-    target_pharmacy: null,
+    target_doctor: td || null,
+    target_pharmacy: tp || null,
   };
   try {
     let row;
@@ -4121,20 +4197,27 @@ export async function createQuickCounsellingRequest({
   patientUserId,
   topic,
   targetDoctorUserId,
+  targetPharmacyUserId,
 }) {
   await assertUserHasCoins(patientUserId, 25);
   const td = String(targetDoctorUserId || "").trim();
-  if (!td) {
-    throw new Error("Select an RMP or clinic doctor before sending.");
+  const tp = String(targetPharmacyUserId || "").trim();
+  if (!td && !tp) {
+    throw new Error("Internal routing error: no recipient.");
   }
-  const routingNote = `\n\n— Recipient: doctor user id ${td}`;
+  if (td && tp) {
+    throw new Error("Internal routing error: both doctor and pharmacy set.");
+  }
+  const routingNote = td
+    ? `\n\n— Recipient: doctor user id ${td}`
+    : `\n\n— Recipient: pharmacy user id ${tp}`;
   const mergedTopic =
     `${String(topic || "").trim() || "General"}${routingNote}`.trim();
   const coinMeta = {
     platform_fee_coins: 10,
     provider_coins: 15,
-    target_doctor: td,
-    target_pharmacy: null,
+    target_doctor: td || null,
+    target_pharmacy: tp || null,
   };
   try {
     const row = await pb.collection("quick_counselling_requests").create({
@@ -4166,7 +4249,7 @@ export async function createQuickCounsellingRequest({
     }
     await notifyLocal(
       "Quick Counselling",
-      "An RMP doctor will connect shortly.",
+      "A provider will connect shortly.",
     );
     return row;
   } catch (error) {

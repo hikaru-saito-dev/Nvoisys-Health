@@ -17886,125 +17886,93 @@ const DoctorDashboard = ({ wounds, patients }) => {
                 {String(doctorProfile?.specialty || "Your practice").trim()}
               </Text>
             </View>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: RFValue(10),
+              }}
+            >
               <TouchableOpacity
-                style={{
-                  width: RFValue(40),
-                  height: RFValue(40),
-                  borderRadius: RFValue(12),
-                  backgroundColor: "rgba(255,255,255,0.15)",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(10),
+                onPress={() => {
+                  if (isPackageDoctor) {
+                    Alert.alert(
+                      "Package mode",
+                      "You are using Package doctor mode with care-package billing. This cannot be switched back to RMP from here.",
+                    );
+                    return;
+                  }
+                  doctorPackageFeeSetupOpener.request?.();
                 }}
-              >
-                <Ionicons
-                  name="notifications-outline"
-                  size={RFValue(22)}
-                  color="#FFF"
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
+                activeOpacity={0.88}
                 style={{
-                  width: RFValue(40),
-                  height: RFValue(40),
-                  borderRadius: RFValue(12),
-                  backgroundColor: "#EF4444",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="alert-circle" size={RFValue(22)} color="#FFF" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {!isPackageDoctor ? (
-            <View style={{ alignItems: "center", marginBottom: RFValue(18) }}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  borderRadius: 999,
-                  padding: RFValue(4),
-                  backgroundColor: "rgba(255,255,255,0.14)",
-                }}
-              >
-                <View
-                  style={{
-                    paddingVertical: RFValue(8),
-                    paddingHorizontal: RFValue(20),
-                    borderRadius: 999,
-                    backgroundColor: "rgba(255,255,255,0.32)",
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: "#FFF",
-                      fontWeight: "800",
-                      fontSize: RFValue(13),
-                    }}
-                  >
-                    RMP
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => doctorPackageFeeSetupOpener.request?.()}
-                  activeOpacity={0.85}
-                  style={{
-                    paddingVertical: RFValue(8),
-                    paddingHorizontal: RFValue(20),
-                    borderRadius: 999,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: "rgba(255,255,255,0.88)",
-                      fontWeight: "800",
-                      fontSize: RFValue(13),
-                    }}
-                  >
-                    Package
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              <Text
-                style={{
-                  color: "rgba(255,255,255,0.65)",
-                  fontSize: RFValue(11),
-                  marginTop: RFValue(8),
-                  textAlign: "center",
-                  paddingHorizontal: RFValue(12),
-                }}
-              >
-                Tap Package to set your care-package fees and move to package mode.
-              </Text>
-            </View>
-          ) : (
-            <View style={{ alignItems: "center", marginBottom: RFValue(18) }}>
-              <View
-                style={{
+                  paddingHorizontal: RFValue(14),
                   paddingVertical: RFValue(8),
-                  paddingHorizontal: RFValue(22),
-                  borderRadius: 999,
-                  backgroundColor: "rgba(255,255,255,0.22)",
+                  borderRadius: RFValue(20),
+                  backgroundColor: "rgba(255,255,255,0.2)",
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: "rgba(255,255,255,0.45)",
                 }}
               >
                 <Text
                   style={{
                     color: "#FFF",
                     fontWeight: "800",
-                    fontSize: RFValue(13),
+                    fontSize: RFValue(12),
+                    letterSpacing: 0.3,
                   }}
                 >
-                  Package mode
+                  {isPackageDoctor ? "Package" : "RMP"}
                 </Text>
-              </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() =>
+                  Alert.alert(
+                    "Notifications",
+                    "Care alerts follow your Profile → Notifications setting.",
+                    [{ text: "OK", style: "cancel" }],
+                  )
+                }
+                activeOpacity={0.85}
+                style={{
+                  width: RFValue(46),
+                  height: RFValue(46),
+                  borderRadius: RFValue(15),
+                  backgroundColor: "rgba(255,255,255,0.22)",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: "rgba(255,255,255,0.38)",
+                }}
+              >
+                <Ionicons
+                  name="notifications-outline"
+                  size={RFValue(23)}
+                  color="#FFF"
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  width: RFValue(46),
+                  height: RFValue(46),
+                  borderRadius: RFValue(15),
+                  backgroundColor: "#EF4444",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons name="alert-circle" size={RFValue(23)} color="#FFF" />
+              </TouchableOpacity>
             </View>
-          )}
+          </View>
 
-            <View
-              style={{ flexDirection: "row", justifyContent: "space-between" }}
-            >
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              marginTop: RFValue(2),
+            }}
+          >
               <View
                 style={{
                   flex: 1,
