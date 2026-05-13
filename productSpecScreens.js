@@ -39,6 +39,8 @@ import {
   createQuickSolutionRequest,
   pickRandomQuickCareRecipient,
   entitlementsForConsumerPlan,
+  displayQuickCounsellingTopic,
+  displayQuickSolutionNotes,
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
   doctorPackageFeeErrors,
@@ -5484,8 +5486,8 @@ export function DoctorQuickRequestsPanel({
       patientLabel: quickRequestPatientLabel(record),
       preview:
         kind === "solution"
-          ? truncateOneLine(record.notes, 120)
-          : `Topic: ${truncateOneLine(record.topic, 100) || "General"}`,
+          ? truncateOneLine(displayQuickSolutionNotes(record), 120)
+          : `Topic: ${truncateOneLine(displayQuickCounsellingTopic(record), 100) || "General"}`,
     });
     setHelpMessage(
       kind === "solution"
@@ -5675,7 +5677,7 @@ export function DoctorQuickRequestsPanel({
       <Text
         style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}
       >
-        {truncateOneLine(r.notes, 160) || "-"}
+        {truncateOneLine(displayQuickSolutionNotes(r), 160) || "-"}
       </Text>
       <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
         {r.created ? new Date(r.created).toLocaleString() : ""}
@@ -5707,7 +5709,7 @@ export function DoctorQuickRequestsPanel({
       <Text
         style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}
       >
-        Topic: {truncateOneLine(r.topic, 120) || "-"}
+        Topic: {truncateOneLine(displayQuickCounsellingTopic(r), 120) || "-"}
       </Text>
       <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
         {r.created ? new Date(r.created).toLocaleString() : ""}
@@ -6235,20 +6237,14 @@ export function DoctorQuickRequestsPanel({
 }
 
 /**
- * Patient-side tracking list for Quick Solution / Quick Counselling.
+ * Patient-side Quick Solution / Quick Counselling entry + tracking.
  *
- * Shows the patient's active (status="queued") requests with:
- *   - request info + a Cancel button (patient no longer needs help) and a
- *     Close button (patient picked a doctor and is moving the chat into the
- *     normal Chat tab).
- *   - one alert per doctor offer ("Dr. X wants to help you") with an arrow
- *     button that pre-selects that conversation in the Chat tab.
+ * Dashboard: short hint, refresh icon, and two full-width rows (same layout as
+ * Telemedicine “Video Call” tiles) that open a modal with the detailed tracking
+ * list for that type (queued cards, offers, Close / Cancel).
  *
- * The parent passes:
- *   - patientUserId (string): current patient user id
- *   - onOpenConversation(conversationId, patientUserId): switch to Chat tab
- *     and open the matching conversation (no-op when missing).
- *   - refreshTrigger (any): bump to force a reload from outside (optional).
+ * Props:
+ *   - patientUserId, onOpenConversation, refreshTrigger — see previous docstring.
  */
 export function PatientQuickRequestsTrackerPanel({
   theme,
@@ -6256,10 +6252,13 @@ export function PatientQuickRequestsTrackerPanel({
   onOpenConversation,
   refreshTrigger,
 }) {
+  const insets = useSafeAreaInsets();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busyRowId, setBusyRowId] = useState(null);
   const [err, setErr] = useState("");
+  /** `null` = closed; which kind's tracking list to show in the modal. */
+  const [trackingModalKind, setTrackingModalKind] = useState(null);
 
   const load = useCallback(async () => {
     if (!patientUserId) {
@@ -6365,6 +6364,7 @@ export function PatientQuickRequestsTrackerPanel({
         patientUserId,
       });
       removeRowLocally(row.kind, row.id);
+      setTrackingModalKind(null);
       if (typeof onOpenConversation === "function") {
         onOpenConversation(conversationId, doctorId);
       }
@@ -6444,8 +6444,8 @@ export function PatientQuickRequestsTrackerPanel({
       row.kind === "counselling" ? "Quick Counselling" : "Quick Solution";
     const summary =
       row.kind === "counselling"
-        ? `Topic: ${truncateOneLine(row.topic, 140) || "General"}`
-        : truncateOneLine(row.notes, 200) || "-";
+        ? `Topic: ${truncateOneLine(displayQuickCounsellingTopic(row), 140) || "General"}`
+        : truncateOneLine(displayQuickSolutionNotes(row), 200) || "-";
     const isBusy = busyRowId === `${row.kind}::${row.id}`;
     const offers = Array.isArray(row.offers) ? row.offers : [];
     const hasOffers = offers.length > 0;
@@ -6557,10 +6557,91 @@ export function PatientQuickRequestsTrackerPanel({
 
   if (!patientUserId) return null;
 
+  const solutionItems = items.filter((row) => row.kind === "solution");
+  const counsellingItems = items.filter((row) => row.kind === "counselling");
+  const modalItems =
+    trackingModalKind === "counselling"
+      ? counsellingItems
+      : trackingModalKind === "solution"
+        ? solutionItems
+        : [];
+
+  const quickRowShell = ({
+    onPress,
+    iconName,
+    iconColor,
+    iconBg,
+    title,
+    subtitle,
+  }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.9}
+      style={{
+        backgroundColor: theme.card,
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 12,
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.06,
+        shadowOffset: { width: 0, height: 4 },
+        shadowRadius: 12,
+        elevation: 3,
+        flexDirection: "row",
+        alignItems: "center",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.cardBorder,
+      }}
+    >
+      <View
+        style={{
+          paddingHorizontal: 10,
+          height: 36,
+          borderRadius: 14,
+          backgroundColor: iconBg,
+          justifyContent: "center",
+          alignItems: "center",
+          marginRight: 14,
+        }}
+      >
+        <Ionicons name={iconName} size={22} color={iconColor} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={{
+            fontSize: 14,
+            fontWeight: "700",
+            color: theme.textPrimary,
+          }}
+        >
+          {title}
+        </Text>
+        <Text
+          style={{
+            fontSize: 12,
+            color: theme.textSecondary,
+            marginTop: 2,
+          }}
+        >
+          {subtitle}
+        </Text>
+      </View>
+      <Ionicons
+        name="chevron-forward"
+        size={18}
+        color={theme.textTertiary}
+      />
+    </TouchableOpacity>
+  );
+
   return (
     <View style={{ marginTop: 4 }}>
       <View
-        style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          marginBottom: 8,
+        }}
       >
         <Text style={{ color: theme.textPrimary, fontWeight: "800", flex: 1 }}>
           My Quick requests
@@ -6568,33 +6649,32 @@ export function PatientQuickRequestsTrackerPanel({
         <TouchableOpacity
           onPress={() => void load()}
           disabled={loading}
+          accessibilityLabel="Refresh quick requests"
           style={{
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 10,
+            width: 40,
+            height: 40,
+            borderRadius: 12,
             backgroundColor: theme.accentLight,
+            justifyContent: "center",
+            alignItems: "center",
           }}
         >
-          <Text
-            style={{ color: theme.accent, fontWeight: "700", fontSize: 12 }}
-          >
-            {loading ? "…" : "Refresh"}
-          </Text>
+          {loading ? (
+            <ActivityIndicator size="small" color={theme.accent} />
+          ) : (
+            <Ionicons name="refresh-outline" size={22} color={theme.accent} />
+          )}
         </TouchableOpacity>
       </View>
       <Text
         style={{
           color: theme.textSecondary,
           fontSize: S.small,
-          marginBottom: 10,
+          marginBottom: 12,
+          lineHeight: 17,
         }}
       >
-        Track Quick Solution / Counselling requests you submitted. Each request is
-        routed automatically to a random RMP doctor or pharmacy. When someone
-        offers help, tap the arrow to accept, credit their share, close the
-        request, and open the chat. Use{" "}
-        <Text style={{ fontWeight: "700" }}>Cancel</Text> if you no longer need
-        help.
+        See active requests and doctor offers. Open each type for details.
       </Text>
       {err ? (
         <Text
@@ -6603,21 +6683,143 @@ export function PatientQuickRequestsTrackerPanel({
           {err}
         </Text>
       ) : null}
-      {items.length === 0 ? (
-        <Text
+
+      {quickRowShell({
+        onPress: () => setTrackingModalKind("solution"),
+        iconName: "medkit-outline",
+        iconColor: theme.accent,
+        iconBg: theme.accentLight,
+        title: "Quick Solution",
+        subtitle:
+          solutionItems.length > 0
+            ? `${solutionItems.length} active — tap to manage`
+            : "Track photo & note requests",
+      })}
+      {quickRowShell({
+        onPress: () => setTrackingModalKind("counselling"),
+        iconName: "chatbubbles-outline",
+        iconColor: theme.success,
+        iconBg: theme.successLight,
+        title: "Quick Counselling",
+        subtitle:
+          counsellingItems.length > 0
+            ? `${counsellingItems.length} active — tap to manage`
+            : "Track text counselling requests",
+      })}
+
+      <Modal
+        visible={trackingModalKind !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setTrackingModalKind(null)}
+      >
+        <View
           style={{
-            color: theme.textTertiary,
-            fontSize: S.small,
-            marginBottom: 8,
+            flex: 1,
+            backgroundColor: theme.bg,
+            paddingTop: insets.top,
           }}
         >
-          {loading
-            ? "Loading your tracking list…"
-            : "No active Quick requests."}
-        </Text>
-      ) : (
-        items.map(renderCard)
-      )}
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: theme.cardBorder,
+              backgroundColor: theme.card,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => setTrackingModalKind(null)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel="Close"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Ionicons name="close" size={26} color={theme.textPrimary} />
+            </TouchableOpacity>
+            <Text
+              style={{
+                flex: 1,
+                marginLeft: 4,
+                fontSize: S.title,
+                fontWeight: "800",
+                color: theme.textPrimary,
+              }}
+              numberOfLines={1}
+            >
+              {trackingModalKind === "counselling"
+                ? "Quick Counselling"
+                : "Quick Solution"}
+            </Text>
+            <TouchableOpacity
+              onPress={() => void load()}
+              disabled={loading}
+              accessibilityLabel="Refresh list"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                backgroundColor: theme.accentLight,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color={theme.accent} />
+              ) : (
+                <Ionicons
+                  name="refresh-outline"
+                  size={22}
+                  color={theme.accent}
+                />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{
+              padding: S.pad,
+              paddingBottom: insets.bottom + 28,
+            }}
+          >
+            {loading && modalItems.length === 0 ? (
+              <Text
+                style={{
+                  color: theme.textTertiary,
+                  fontSize: S.small,
+                  marginTop: 8,
+                }}
+              >
+                Loading…
+              </Text>
+            ) : null}
+            {!loading && modalItems.length === 0 ? (
+              <Text
+                style={{
+                  color: theme.textTertiary,
+                  fontSize: S.small,
+                  marginTop: 8,
+                }}
+              >
+                {trackingModalKind === "counselling"
+                  ? "No active Quick Counselling requests."
+                  : "No active Quick Solution requests."}
+              </Text>
+            ) : (
+              modalItems.map(renderCard)
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }

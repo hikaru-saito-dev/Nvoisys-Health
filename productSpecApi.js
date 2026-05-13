@@ -357,6 +357,8 @@ function filterQuickRowsForDoctor(rows, doctorUserId) {
   const id = String(doctorUserId || "").trim();
   if (!id) return rows || [];
   return (rows || []).filter((row) => {
+    const rid = relationId(row?.recipient);
+    if (rid) return rid === id;
     const raw =
       row.notes ??
       row.topic ??
@@ -367,6 +369,26 @@ function filterQuickRowsForDoctor(rows, doctorUserId) {
     if (!tagged) return true;
     return tagged === id;
   });
+}
+
+/** Strip legacy suffix appended to notes/topic before `recipient` existed in PocketBase. */
+export function stripLegacyQuickRecipientSuffix(text) {
+  let s = String(text || "").trim();
+  const marker = "\n\n— Recipient:";
+  const i = s.indexOf(marker);
+  if (i !== -1) s = s.slice(0, i).trim();
+  return s;
+}
+
+/** Notes / topic text for UI (no routing metadata). */
+export function displayQuickSolutionNotes(record) {
+  const raw = stripLegacyQuickRecipientSuffix(String(record?.notes || ""));
+  return parseQuickRequestDoctorTag(raw).body.trim();
+}
+
+export function displayQuickCounsellingTopic(record) {
+  const raw = stripLegacyQuickRecipientSuffix(String(record?.topic || ""));
+  return parseQuickRequestDoctorTag(raw).body.trim() || "General";
 }
 
 export async function getPatientActiveQuickCareBinding(
@@ -4096,13 +4118,12 @@ export async function createQuickSolutionRequest({
   if (td && tp) {
     throw new Error("Internal routing error: both doctor and pharmacy set.");
   }
-  const routingNote = td
-    ? `\n\n— Recipient: doctor user id ${td}`
-    : `\n\n— Recipient: pharmacy user id ${tp}`;
-  const mergedNotes = `${String(notes || "").trim()}${routingNote}`.trim();
+  const recipientUserId = td || tp;
+  const cleanNotes = String(notes || "").trim();
   const base = {
     patient: patientUserId,
-    notes: mergedNotes,
+    recipient: recipientUserId,
+    notes: cleanNotes,
     private_mode: Boolean(privateMode),
     patient_cost_coins: 10,
     platform_fee_coins: 5,
@@ -4120,6 +4141,7 @@ export async function createQuickSolutionRequest({
     if (imagePart?.uri) {
       const form = new FormData();
       form.append("patient", patientUserId);
+      form.append("recipient", recipientUserId);
       form.append("notes", base.notes);
       form.append("private_mode", privateMode ? "true" : "false");
       form.append("patient_cost_coins", "10");
@@ -4161,7 +4183,7 @@ export async function createQuickSolutionRequest({
     const msg = formatPocketBaseClientError(error) || error?.message;
     throw new Error(
       msg ||
-        "Could not submit. Add `quick_solution_requests` (patient, notes, private_mode, image file, coin splits, status).",
+        "Could not submit. Add `quick_solution_requests` (patient, recipient, notes, private_mode, image file, coin splits, status).",
     );
   }
 }
@@ -4208,11 +4230,8 @@ export async function createQuickCounsellingRequest({
   if (td && tp) {
     throw new Error("Internal routing error: both doctor and pharmacy set.");
   }
-  const routingNote = td
-    ? `\n\n— Recipient: doctor user id ${td}`
-    : `\n\n— Recipient: pharmacy user id ${tp}`;
-  const mergedTopic =
-    `${String(topic || "").trim() || "General"}${routingNote}`.trim();
+  const recipientUserId = td || tp;
+  const cleanTopic = String(topic || "").trim() || "General";
   const coinMeta = {
     platform_fee_coins: 10,
     provider_coins: 15,
@@ -4222,7 +4241,8 @@ export async function createQuickCounsellingRequest({
   try {
     const row = await pb.collection("quick_counselling_requests").create({
       patient: patientUserId,
-      topic: mergedTopic,
+      recipient: recipientUserId,
+      topic: cleanTopic,
       patient_cost_coins: 25,
       platform_fee_coins: 10,
       provider_coins: 15,
@@ -4322,19 +4342,22 @@ async function assertCurrentUserCanAccessQuickQueues() {
 
 export async function listQueuedQuickSolutionRequestsForProvider() {
   await assertCurrentUserCanAccessQuickQueues();
+  const uid = String(getAuthUser()?.id || "").trim();
+  if (!uid) throw new Error("Sign in required.");
+  const filter = `status="queued" && recipient="${uid}"`;
   try {
     return await pb.collection("quick_solution_requests").getFullList({
       requestKey: null,
       sort: "-created",
-      filter: `status="queued"`,
-      expand: "patient.user",
+      filter,
+      expand: "patient.user,recipient",
     });
   } catch (e1) {
     try {
       return await pb.collection("quick_solution_requests").getFullList({
         requestKey: null,
         sort: "-created",
-        filter: `status="queued"`,
+        filter,
         expand: "patient",
       });
     } catch (e2) {
@@ -4355,19 +4378,22 @@ export async function listQueuedQuickSolutionRequestsForProvider() {
  */
 export async function listQueuedQuickCounsellingRequestsForProvider() {
   await assertCurrentUserCanAccessQuickQueues();
+  const uid = String(getAuthUser()?.id || "").trim();
+  if (!uid) throw new Error("Sign in required.");
+  const filter = `status="queued" && recipient="${uid}"`;
   try {
     return await pb.collection("quick_counselling_requests").getFullList({
       requestKey: null,
       sort: "-created",
-      filter: `status="queued"`,
-      expand: "patient.user",
+      filter,
+      expand: "patient.user,recipient",
     });
   } catch (e1) {
     try {
       return await pb.collection("quick_counselling_requests").getFullList({
         requestKey: null,
         sort: "-created",
-        filter: `status="queued"`,
+        filter,
         expand: "patient",
       });
     } catch (e2) {
@@ -4388,6 +4414,10 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
 //   "queued"    - initial state set on submit; visible in doctor queues and the patient tracking list.
 //   "closed"    - patient picked a doctor and closed the request from their tracking list (still in DB).
 //   "cancelled" - patient withdrew the request from their tracking list (still in DB).
+//
+// `recipient` (relation → same Users collection as `patient`): the randomly chosen RMP/clinic
+// doctor or pharmacy account that should see this row in their queue. Do not append routing text
+// to `notes` / `topic`; store description-only text there.
 //
 // Doctor "help" offers are stored in an optional collection `quick_help_offers`. Add it in
 // PocketBase Admin to enable the "(Doctor) wants to help you" alert + arrow button on the

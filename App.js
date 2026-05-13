@@ -31,6 +31,7 @@ import {
   InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Linking,
   Modal,
   PixelRatio,
@@ -43,6 +44,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  UIManager,
   View,
 } from "react-native";
 import {
@@ -4487,6 +4489,7 @@ const PatientHomeScreen = () => {
     fetchPharmacies,
     patientCareMode,
     patientPrimaryCarePaths,
+    nearbyPharmaciesOpenNonce,
     dataLoading,
     CARE_MODE,
     currentUser,
@@ -4669,6 +4672,12 @@ const PatientHomeScreen = () => {
   const [showWallet, setShowWallet] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [patientCoinBalance, setPatientCoinBalance] = useState(0);
+
+  useEffect(() => {
+    if (!nearbyPharmaciesOpenNonce) return;
+    setShowPrescription(false);
+    setShowPharmacy(true);
+  }, [nearbyPharmaciesOpenNonce]);
 
   useEffect(() => {
     void fetchHospitals();
@@ -5165,7 +5174,13 @@ const PatientHomeScreen = () => {
   if (showPrescription)
     return (
       <SlideScreen onBack={() => setShowPrescription(false)}>
-        <PrescriptionScreen onBack={null} />
+        <PrescriptionScreen
+          onBack={null}
+          onNavigateNearbyPharmacies={() => {
+            setShowPrescription(false);
+            setShowPharmacy(true);
+          }}
+        />
       </SlideScreen>
     );
   if (showMeds)
@@ -8423,8 +8438,10 @@ const PatientChatScreen = () => {
     dataError,
     pendingChatRequest,
     consumePendingChatRequest,
+    requestOpenNearbyPharmacies,
   } = useAppData();
   const patientQuickCareBinding = usePatientQuickCareBinding();
+  const tabNav = useMainTabNav();
   const [selectedContact, setSelectedContact] = useState(null);
   const [message, setMessage] = useState("");
   const [contactMessages, setContactMessages] = useState([]);
@@ -8965,7 +8982,14 @@ const PatientChatScreen = () => {
         style={{ flex: 1, backgroundColor: theme.bg }}
         edges={["top", "left", "right"]}
       >
-        <PrescriptionScreen onBack={() => setShowPrescriptionViewer(false)} />
+        <PrescriptionScreen
+          onBack={() => setShowPrescriptionViewer(false)}
+          onNavigateNearbyPharmacies={() => {
+            setShowPrescriptionViewer(false);
+            tabNav?.navigateTab?.("Home");
+            requestOpenNearbyPharmacies?.();
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -22975,7 +22999,11 @@ const savePrescriptionPdfToDevice = async (rx, sideWarnings) => {
   );
 };
 
-const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
+const PrescriptionScreen = ({
+  onBack,
+  highlightPrescriptionId = null,
+  onNavigateNearbyPharmacies,
+}) => {
   const { theme } = useTheme();
   const tabNav = useMainTabNav();
   const {
@@ -22997,6 +23025,7 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   const [rxScrollContentH, setRxScrollContentH] = useState(0);
   const [savingPdfRxId, setSavingPdfRxId] = useState(null);
   const [orderMedsBusy, setOrderMedsBusy] = useState(false);
+  const [rxExpandedById, setRxExpandedById] = useState({});
 
   const cards = React.useMemo(() => {
     const list = [...(prescriptionRecords || [])].sort(
@@ -23100,6 +23129,42 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
   }, [highlightPrescriptionId, cards]);
 
   React.useEffect(() => {
+    if (
+      Platform.OS === "android" &&
+      UIManager.setLayoutAnimationEnabledExperimental
+    ) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const multi = cards.length > 1;
+    if (!multi) {
+      const sole = cards[0];
+      setRxExpandedById(sole ? { [sole.id]: true } : {});
+      return;
+    }
+    setRxExpandedById((prev) => {
+      const next = { ...prev };
+      for (const rx of cards) {
+        if (next[rx.id] === undefined) next[rx.id] = false;
+      }
+      for (const id of Object.keys(next)) {
+        if (!cards.some((c) => c.id === id)) delete next[id];
+      }
+      return next;
+    });
+  }, [cards]);
+
+  React.useEffect(() => {
+    if (!highlightPrescriptionId) return;
+    setRxExpandedById((p) => ({
+      ...p,
+      [highlightPrescriptionId]: true,
+    }));
+  }, [highlightPrescriptionId]);
+
+  React.useEffect(() => {
     setRxScrollContentH(0);
   }, [cards]);
 
@@ -23166,6 +23231,22 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
       setOrderMedsBusy(false);
     }
   };
+
+  const toggleRxExpanded = (rxId) => {
+    if (cards.length <= 1) return;
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setRxExpandedById((p) => ({ ...p, [rxId]: !p[rxId] }));
+  };
+
+  const handleOrderMedsPress = (rx) => {
+    if (typeof onNavigateNearbyPharmacies === "function") {
+      onNavigateNearbyPharmacies();
+      return;
+    }
+    void handleOrderMedsWithPharmacy(rx);
+  };
+
+  const orderMedsUsesLegacy = typeof onNavigateNearbyPharmacies !== "function";
 
   return (
     <SafeAreaView
@@ -23262,7 +23343,10 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
             </Text>
           </View>
         ) : (
-          cards.map((rx) => (
+          cards.map((rx) => {
+            const multiCard = cards.length > 1;
+            const expanded = !multiCard || !!rxExpandedById[rx.id];
+            return (
             <View
               key={rx.id}
               onLayout={(event) => {
@@ -23291,16 +23375,25 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     : theme.cardBorder,
               }}
             >
-              <View
+              <TouchableOpacity
+                activeOpacity={multiCard ? 0.9 : 1}
+                disabled={!multiCard}
+                onPress={() => toggleRxExpanded(rx.id)}
                 style={{
                   backgroundColor: theme.accentBg,
                   padding: RFValue(16),
                   flexDirection: "row",
-                  justifyContent: "space-between",
                   alignItems: "center",
                 }}
               >
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
                   <View
                     style={{
                       width: RFValue(36),
@@ -23314,8 +23407,9 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   >
                     <Ionicons name="medical" size={RFValue(18)} color="#FFF" />
                   </View>
-                  <View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text
+                      numberOfLines={1}
                       style={{
                         color: "#FFF",
                         fontSize: RFValue(14),
@@ -23334,15 +23428,25 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     </Text>
                   </View>
                 </View>
+                {multiCard ? (
+                  <Ionicons
+                    name={expanded ? "chevron-up" : "chevron-down"}
+                    size={RFValue(20)}
+                    color="rgba(255,255,255,0.95)"
+                    style={{ marginRight: RFValue(8) }}
+                  />
+                ) : null}
                 <View
                   style={{
                     backgroundColor: "rgba(255,255,255,0.2)",
                     paddingHorizontal: RFValue(10),
                     paddingVertical: RFValue(4),
                     borderRadius: RFValue(8),
+                    maxWidth: "42%",
                   }}
                 >
                   <Text
+                    numberOfLines={1}
                     style={{
                       color: "#FFF",
                       fontSize: RFValue(10),
@@ -23352,8 +23456,57 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     Rx #{rx.id}
                   </Text>
                 </View>
-              </View>
+              </TouchableOpacity>
 
+              {!expanded && multiCard ? (
+                <TouchableOpacity
+                  activeOpacity={0.92}
+                  onPress={() => toggleRxExpanded(rx.id)}
+                  style={{
+                    paddingHorizontal: RFValue(16),
+                    paddingVertical: RFValue(12),
+                    backgroundColor: theme.accentLight,
+                    borderBottomWidth: 1,
+                    borderBottomColor: theme.cardBorder,
+                    flexDirection: "row",
+                    alignItems: "center",
+                  }}
+                >
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      numberOfLines={2}
+                      style={{
+                        fontSize: RFValue(13),
+                        fontWeight: "700",
+                        color: theme.textPrimary,
+                      }}
+                    >
+                      {rx.diagnosis ||
+                        (rx.medicines[0]?.name
+                          ? String(rx.medicines[0].name)
+                          : "Prescription")}
+                    </Text>
+                    <Text
+                      style={{
+                        marginTop: RFValue(4),
+                        fontSize: RFValue(11),
+                        color: theme.textSecondary,
+                      }}
+                    >
+                      {rx.medicines.length} medicine
+                      {rx.medicines.length === 1 ? "" : "s"} · Tap for details
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={RFValue(18)}
+                    color={theme.accent}
+                  />
+                </TouchableOpacity>
+              ) : null}
+
+              {expanded ? (
+              <>
               {rx.woundId ? (
                 <View
                   style={{
@@ -23605,8 +23758,11 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  disabled={!!savingPdfRxId || orderMedsBusy}
-                  onPress={() => void handleOrderMedsWithPharmacy(rx)}
+                  disabled={
+                    !!savingPdfRxId ||
+                    (orderMedsUsesLegacy && orderMedsBusy)
+                  }
+                  onPress={() => handleOrderMedsPress(rx)}
                   style={{
                     flex: 1,
                     flexDirection: "row",
@@ -23616,10 +23772,14 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                     backgroundColor: theme.accentLight,
                     borderRadius: RFValue(10),
                     marginLeft: RFValue(8),
-                    opacity: savingPdfRxId || orderMedsBusy ? 0.45 : 1,
+                    opacity:
+                      savingPdfRxId ||
+                      (orderMedsUsesLegacy && orderMedsBusy)
+                        ? 0.45
+                        : 1,
                   }}
                 >
-                  {orderMedsBusy ? (
+                  {orderMedsUsesLegacy && orderMedsBusy ? (
                     <ActivityIndicator
                       size="small"
                       color={theme.accent}
@@ -23644,8 +23804,11 @@ const PrescriptionScreen = ({ onBack, highlightPrescriptionId = null }) => {
                   </Text>
                 </TouchableOpacity>
               </View>
+              </>
+              ) : null}
             </View>
-          ))
+            );
+          })
         )}
         </ScrollView>
       </View>
@@ -26966,8 +27129,24 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
 const CustomTabNavigator = ({ routes, activeColor }) => {
   const [activeIndex, setActiveIndex] = useState(0);
   const routesRef = useRef(routes);
+  const lastRoutesRef = useRef(routes);
   routesRef.current = routes;
   const { registerNavigateToChatTab } = useAppData();
+
+  useEffect(() => {
+    const old = lastRoutesRef.current;
+    const changed =
+      old.length !== routes.length ||
+      old.some((r, i) => r.name !== routes[i]?.name);
+    if (!changed) return;
+    lastRoutesRef.current = routes;
+    setActiveIndex((prev) => {
+      const safePrev = Math.min(Math.max(prev, 0), old.length - 1);
+      const prevName = old[safePrev]?.name;
+      const next = routes.findIndex((r) => r.name === prevName);
+      return next !== -1 ? next : 0;
+    });
+  }, [routes]);
 
   useEffect(() => {
     registerNavigateToChatTab?.(() => {
@@ -27577,2101 +27756,6 @@ const PharmacyProfileScreen = ({ onLogout }) => {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
-};
-
-// ========================================
-// WOUND MANAGEMENT SCREENS
-// ========================================
-
-const ModernHeader = ({ title, subtitle }) => {
-  const { theme } = useTheme();
-  return (
-    <View
-      style={{
-        backgroundColor: theme.card,
-        padding: RFValue(20),
-        borderBottomWidth: 1,
-        borderBottomColor: theme.cardBorder,
-      }}
-    >
-      <Text
-        style={{
-          fontSize: RFValue(20),
-          fontWeight: "800",
-          color: theme.textPrimary,
-        }}
-      >
-        {title}
-      </Text>
-      {subtitle && (
-        <Text
-          style={{
-            fontSize: RFValue(12),
-            color: theme.textSecondary,
-            marginTop: RFValue(2),
-          }}
-        >
-          {subtitle}
-        </Text>
-      )}
-    </View>
-  );
-};
-
-const PatientWoundScreen = () => {
-  const { theme } = useTheme();
-  const tabNav = useMainTabNav();
-  const {
-    wounds,
-    setWounds,
-    patientSelectedWoundId,
-    setPatientSelectedWoundId,
-    patientShowNewWound,
-    setPatientShowNewWound,
-    currentUser,
-    refreshAllData,
-    requestOpenConversation,
-    fetchApprovedDoctors,
-    fetchPharmacies,
-  } = useAppData();
-  const patientQuickCareBinding = usePatientQuickCareBinding();
-  const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
-  const handleOpenOfferConversation = useCallback(
-    (conversationId, peerUserId) => {
-      requestOpenConversation?.(conversationId, {
-        patientUserId: peerUserId,
-      });
-      tabNav?.navigateTab?.("Chat");
-    },
-    [requestOpenConversation, tabNav],
-  );
-  const [showWoundTabQuickCounselling, setShowWoundTabQuickCounselling] =
-    useState(false);
-  const selectedWound = (wounds || []).find(
-    (item) => item.id === patientSelectedWoundId,
-  );
-  const onSelectWound = setPatientSelectedWoundId;
-  const onClearWoundSelection = () => setPatientSelectedWoundId(null);
-  const onSetShowNewWound = setPatientShowNewWound;
-
-  if (showWoundTabQuickCounselling) {
-    return (
-      <QuickCounsellingScreen
-        theme={theme}
-        fromWoundTracker
-        onBack={() => {
-          setShowWoundTabQuickCounselling(false);
-          setQuickRequestsRefreshKey((k) => k + 1);
-          void refreshAllData?.().catch(() => {});
-        }}
-        patientUserId={currentUser?.id}
-        quickCareBinding={patientQuickCareBinding}
-        loadQuickPickDoctors={() =>
-          fetchApprovedDoctors({ quickServiceOnly: true })
-        }
-        consultMinutesUsed={
-          patientQuickCareBinding?.consultMinutesUsed ?? 0
-        }
-        consultMinutesLimit={
-          patientQuickCareBinding?.consultMinutesLimit ?? 0
-        }
-        scrollContentBottomInset={patientFullScreenScrollBottomInset()}
-      />
-    );
-  }
-
-  if (patientShowNewWound)
-    return (
-      <NewWoundScreen
-        onBack={() => onSetShowNewWound(false)}
-        setWounds={setWounds}
-        wounds={wounds}
-      />
-    );
-  if (selectedWound)
-    return (
-      <WoundDetailScreen
-        key={selectedWound.id}
-        wound={selectedWound}
-        onBack={() => onClearWoundSelection()}
-        userRole="patient"
-        setWounds={setWounds}
-      />
-    );
-
-  return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["left", "right"]}
-    >
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
-      <ModernHeader title="Wound Tracker" subtitle="Manage your recovery" />
-
-      <ScrollView
-        contentContainerStyle={{
-          padding: RFValue(16),
-          paddingBottom: tabScrollBottomPadding(),
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            gap: RFValue(10),
-            marginBottom: RFValue(20),
-          }}
-        >
-          <TouchableOpacity
-            onPress={() => onSetShowNewWound(true)}
-            style={{
-              flex: 1,
-              backgroundColor: "#EEF2FF",
-              borderStyle: "dashed",
-              borderWidth: 2,
-              borderColor: "#4338CA",
-              borderRadius: RFValue(16),
-              padding: RFValue(16),
-              alignItems: "center",
-            }}
-          >
-            <Ionicons name="add-circle" size={RFValue(28)} color="#4338CA" />
-            <Text
-              style={{
-                color: "#4338CA",
-                fontWeight: "700",
-                marginTop: RFValue(8),
-                textAlign: "center",
-                fontSize: RFValue(13),
-              }}
-            >
-              Report New Wound
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setShowWoundTabQuickCounselling(true)}
-            style={{
-              flex: 1,
-              backgroundColor: "#ECFDF5",
-              borderStyle: "dashed",
-              borderWidth: 2,
-              borderColor: "#059669",
-              borderRadius: RFValue(16),
-              padding: RFValue(16),
-              alignItems: "center",
-            }}
-          >
-            <Ionicons name="videocam" size={RFValue(28)} color="#059669" />
-            <Text
-              style={{
-                color: "#059669",
-                fontWeight: "700",
-                marginTop: RFValue(8),
-                textAlign: "center",
-                fontSize: RFValue(13),
-              }}
-            >
-              Quick Counselling
-            </Text>
-            <Text
-              style={{
-                color: "#6B7280",
-                fontSize: RFValue(10),
-                marginTop: RFValue(4),
-                textAlign: "center",
-              }}
-            >
-              ₹25 · text only, no photo
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View
-          style={{
-            backgroundColor: theme.card,
-            borderRadius: RFValue(16),
-            padding: RFValue(16),
-            marginBottom: RFValue(20),
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: theme.cardBorder,
-          }}
-        >
-          <PatientQuickRequestsTrackerPanel
-            theme={theme}
-            patientUserId={currentUser?.id}
-            onOpenConversation={handleOpenOfferConversation}
-            refreshTrigger={quickRequestsRefreshKey}
-          />
-        </View>
-
-        <Text
-          style={{
-            fontSize: RFValue(16),
-            fontWeight: "800",
-            color: theme.textPrimary,
-            marginBottom: RFValue(12),
-          }}
-        >
-          Your Wound Reports
-        </Text>
-
-        {wounds && wounds.length > 0 ? (
-          wounds.map((w) => (
-            <TouchableOpacity
-              key={w.id}
-              onPress={() => onSelectWound(w.id)}
-              style={{
-                backgroundColor: theme.card,
-                borderRadius: RFValue(16),
-                padding: RFValue(16),
-                marginBottom: RFValue(12),
-                shadowColor: theme.shadowColor,
-                shadowOpacity: 0.05,
-                elevation: 2,
-                flexDirection: "row",
-                alignItems: "center",
-              }}
-            >
-              <View
-                style={{
-                  width: RFValue(50),
-                  height: RFValue(50),
-                  borderRadius: RFValue(10),
-                  backgroundColor: theme.bg,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(12),
-                  overflow: "hidden",
-                }}
-              >
-                {w.imageUrl ? (
-                  <Image
-                    source={{ uri: w.imageUrl }}
-                    style={{ width: RFValue(50), height: RFValue(50) }}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <Ionicons
-                    name="bandage-outline"
-                    size={RFValue(24)}
-                    color={theme.accent}
-                  />
-                )}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text
-                  style={{
-                    fontSize: RFValue(15),
-                    fontWeight: "700",
-                    color: theme.textPrimary,
-                  }}
-                >
-                  {w.description}
-                </Text>
-                <Text
-                  style={{ fontSize: RFValue(12), color: theme.textSecondary }}
-                >
-                  {w.date}
-                </Text>
-              </View>
-              <View
-                style={{
-                  backgroundColor:
-                    w.status === "Medication Prescribed"
-                      ? theme.successLight
-                      : theme.warningLight,
-                  paddingHorizontal: RFValue(8),
-                  paddingVertical: RFValue(4),
-                  borderRadius: RFValue(8),
-                }}
-              >
-                <Text
-                  style={{
-                    color:
-                      w.status === "Medication Prescribed"
-                        ? theme.success
-                        : theme.warning,
-                    fontSize: RFValue(10),
-                    fontWeight: "700",
-                  }}
-                >
-                  {w.status}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ))
-        ) : (
-          <View style={{ alignItems: "center", marginTop: RFValue(40) }}>
-            <Ionicons
-              name="medkit-outline"
-              size={RFValue(48)}
-              color={theme.cardBorder}
-            />
-            <Text style={{ color: theme.textTertiary, marginTop: RFValue(12) }}>
-              No wound reports yet
-            </Text>
-          </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
-  );
-};
-
-const NewWoundScreen = ({ onBack, setWounds, wounds }) => {
-  const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const [desc, setDesc] = useState("");
-  const [image, setImage] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState("");
-  const [pickDoctors, setPickDoctors] = useState([]);
-  const [pickListsLoading, setPickListsLoading] = useState(true);
-  const [selectedDoctorUserId, setSelectedDoctorUserId] = useState(null);
-  const submitInFlightRef = useRef(false);
-  const { createWoundReport, fetchApprovedDoctors } = useAppData();
-
-  const rmpWoundDoctors = useMemo(
-    () => pickDoctors.filter((d) => doctorTierEligibleForQuickService(d)),
-    [pickDoctors],
-  );
-
-  const fetchDoctorsRef = useRef(fetchApprovedDoctors);
-  fetchDoctorsRef.current = fetchApprovedDoctors;
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setPickListsLoading(true);
-      try {
-        const d = await fetchDoctorsRef
-          .current({ quickServiceOnly: true })
-          .catch(() => []);
-        if (!cancelled) {
-          setPickDoctors(Array.isArray(d) ? d : []);
-        }
-      } catch (error) {
-        console.log("load lists for wound report:", error);
-        if (!cancelled) {
-          setPickDoctors([]);
-        }
-      } finally {
-        if (!cancelled) setPickListsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!submitting) return undefined;
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
-    return () => sub.remove();
-  }, [submitting]);
-
-  const onSelectDoctor = (uid) => {
-    const id = String(uid || "").trim();
-    if (!id) return;
-    setSelectedDoctorUserId(id);
-  };
-
-  const onSelectPharmacy = () => {};
-
-  const onClearSelection = () => {
-    setSelectedDoctorUserId(null);
-  };
-
-  const pickWoundPhoto = async (source) => {
-    try {
-      if (source === "camera") {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permission?.granted) {
-          Alert.alert(
-            "Permission needed",
-            "Please allow camera access to take a photo.",
-          );
-          return;
-        }
-      } else {
-        const permission =
-          await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission?.granted) {
-          Alert.alert(
-            "Permission needed",
-            "Please allow photo library access to pick a photo.",
-          );
-          return;
-        }
-      }
-      const pickerOptions = {
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
-      };
-      const result =
-        source === "camera"
-          ? await ImagePicker.launchCameraAsync(pickerOptions)
-          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
-      if (!result || result.canceled) return;
-      const asset = result.assets?.[0];
-      if (asset?.uri) setImage(asset);
-    } catch (error) {
-      console.log("pickWoundPhoto error:", error);
-      Alert.alert("Photo", error?.message || "Could not add photo.");
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (submitInFlightRef.current || submitting) return;
-    if (!desc.trim()) {
-      Alert.alert("Description", "Please describe the wound.");
-      return;
-    }
-    if (!selectedDoctorUserId) {
-      Alert.alert(
-        "Recipient",
-        "Select an RMP or clinic doctor to receive this report.",
-      );
-      return;
-    }
-    submitInFlightRef.current = true;
-    setSubmitting(true);
-    setSubmitError("");
-    try {
-      await createWoundReport({
-        description: desc.trim(),
-        image,
-        doctorUserId: selectedDoctorUserId || undefined,
-      });
-      onBack();
-    } catch (error) {
-      console.log("Create wound error:", error);
-      setSubmitError(error?.message || "Unable to submit wound report");
-      setSubmitting(false);
-      submitInFlightRef.current = false;
-    }
-  };
-
-  const handleBack = () => {
-    if (submitInFlightRef.current || submitting) return;
-    onBack();
-  };
-
-  const canSubmit =
-    Boolean(desc.trim()) && Boolean(selectedDoctorUserId) && !submitting;
-
-  return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["left", "right"]}
-    >
-      <Modal visible={submitting} transparent animationType="fade">
-        <GlassOverlay>
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              paddingVertical: RFValue(28),
-              paddingHorizontal: RFValue(32),
-              alignItems: "center",
-              maxWidth: 320,
-              width: "100%",
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.18,
-              shadowOffset: { width: 0, height: 8 },
-              shadowRadius: 24,
-              elevation: 16,
-            }}
-          >
-            <ActivityIndicator size="large" color={theme.accent} />
-            <Text
-              style={{
-                marginTop: RFValue(18),
-                fontSize: RFValue(16),
-                fontWeight: "800",
-                color: theme.textPrimary,
-                textAlign: "center",
-              }}
-            >
-              Sending your report…
-            </Text>
-            <Text
-              style={{
-                marginTop: RFValue(10),
-                fontSize: RFValue(13),
-                color: theme.textSecondary,
-                textAlign: "center",
-              }}
-            >
-              Please wait. You will return to Wound Tracker when this finishes.
-            </Text>
-          </View>
-        </GlassOverlay>
-      </Modal>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          paddingHorizontal: RFValue(20),
-          paddingBottom: RFValue(12),
-          paddingTop: (insets.top || 0) + RFValue(8),
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: theme.cardBorder,
-        }}
-      >
-        <TouchableOpacity
-          onPress={handleBack}
-          disabled={submitting}
-          style={{ marginRight: RFValue(16), opacity: submitting ? 0.35 : 1 }}
-        >
-          <Ionicons
-            name="arrow-back"
-            size={RFValue(24)}
-            color={theme.textPrimary}
-          />
-        </TouchableOpacity>
-        <Text
-          style={{
-            fontSize: RFValue(18),
-            fontWeight: "800",
-            color: theme.textPrimary,
-          }}
-        >
-          Report Wound
-        </Text>
-      </View>
-
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        scrollEnabled={!submitting}
-        style={{ flex: 1, minHeight: 0 }}
-        contentContainerStyle={{
-          padding: RFValue(20),
-          paddingBottom: tabScrollBottomPadding(),
-        }}
-      >
-        <Text
-          style={{
-            color: theme.textSecondary,
-            fontSize: RFValue(13),
-            lineHeight: RFValue(20),
-            marginBottom: RFValue(14),
-          }}
-        >
-          Choose an RMP or clinic doctor below, add an optional photo, describe the
-          wound, then submit (same doctor list as Quick Solution).
-        </Text>
-
-        <QuickRecipientPickerPanel
-          theme={theme}
-          doctors={rmpWoundDoctors}
-          listsLoading={pickListsLoading}
-          selectedDoctorUserId={selectedDoctorUserId}
-          selectedPharmacyUserId={null}
-          onSelectDoctor={onSelectDoctor}
-          onSelectPharmacy={onSelectPharmacy}
-          onClearSelection={onClearSelection}
-          showPharmacySection={false}
-          panelTitle="Doctors (RMP / clinic)"
-        />
-
-        <Text
-          style={{
-            fontSize: RFValue(15),
-            fontWeight: "800",
-            color: theme.textPrimary,
-            marginBottom: RFValue(8),
-            marginTop: RFValue(8),
-          }}
-        >
-          Wound photo (optional)
-        </Text>
-        <TouchableOpacity
-          disabled={submitting}
-          style={{
-            width: "100%",
-            height: RFValue(200),
-            backgroundColor: theme.card,
-            borderRadius: RFValue(16),
-            justifyContent: "center",
-            alignItems: "center",
-            marginBottom: RFValue(18),
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: theme.cardBorder,
-            overflow: "hidden",
-            opacity: submitting ? 0.55 : 1,
-          }}
-          activeOpacity={0.85}
-          onPress={() =>
-            Alert.alert("Wound photo", "Choose a source", [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Camera",
-                onPress: () => pickWoundPhoto("camera"),
-              },
-              {
-                text: "Photo library",
-                onPress: () => pickWoundPhoto("library"),
-              },
-            ])
-          }
-        >
-          {image?.uri ? (
-            <Image
-              source={{ uri: image.uri }}
-              style={{ width: "100%", height: "100%" }}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={{ alignItems: "center", padding: RFValue(16) }}>
-              <Ionicons
-                name="camera"
-                size={RFValue(48)}
-                color={theme.textTertiary}
-              />
-              <Text
-                style={{ color: theme.textTertiary, marginTop: RFValue(8) }}
-              >
-                Tap to capture or upload photo
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
-
-        <Text
-          style={{
-            fontSize: RFValue(15),
-            fontWeight: "800",
-            color: theme.textPrimary,
-            marginBottom: RFValue(8),
-          }}
-        >
-          Description
-        </Text>
-        <TextInput
-          multiline
-          placeholder="Describe how it happened, pain level, etc."
-          style={{
-            backgroundColor: theme.card,
-            borderRadius: RFValue(14),
-            padding: RFValue(14),
-            minHeight: RFValue(120),
-            textAlignVertical: "top",
-            fontSize: RFValue(14),
-            color: theme.textPrimary,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: theme.cardBorder,
-          }}
-          value={desc}
-          onChangeText={setDesc}
-          editable={!submitting}
-        />
-
-        {submitError ? (
-          <Text
-            style={{
-              marginTop: RFValue(14),
-              color: theme.danger,
-              fontWeight: "600",
-            }}
-          >
-            {submitError}
-          </Text>
-        ) : null}
-
-        <TouchableOpacity
-          onPress={handleSubmit}
-          disabled={!canSubmit}
-          style={{
-            backgroundColor: theme.accent,
-            borderRadius: RFValue(16),
-            paddingVertical: RFValue(16),
-            alignItems: "center",
-            marginTop: RFValue(22),
-            opacity: canSubmit ? 1 : 0.45,
-            flexDirection: "row",
-            justifyContent: "center",
-          }}
-        >
-          {submitting ? (
-            <ActivityIndicator
-              color="#FFF"
-              style={{ marginRight: RFValue(10) }}
-            />
-          ) : null}
-          <Text
-            style={{
-              color: "#FFF",
-              fontWeight: "800",
-              fontSize: RFValue(16),
-            }}
-          >
-            {submitting ? "Submitting…" : "Submit report"}
-          </Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
-  );
-};
-
-const WoundDetailScreen = ({
-  wound,
-  onBack,
-  userRole,
-  setWounds,
-  setMedOrders,
-}) => {
-  const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const [message, setMessage] = useState("");
-  const [chat, setChat] = useState([]);
-  const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
-  const [showPrescriptionViewer, setShowPrescriptionViewer] = useState(false);
-  const [loadingChat, setLoadingChat] = useState(true);
-  const [localWound, setLocalWound] = useState(wound);
-  const conversationIdRef = useRef(wound?.conversation || null);
-  const {
-    currentUserId,
-    currentUser,
-    loadConversationMessages,
-    ensureConversationForWound,
-    sendConversationMessage,
-    prescribeForWound,
-    refreshAllData,
-    updateOrderStatus,
-    medOrders,
-    prescriptions,
-  } = useAppData();
-  const linkedPrescription = React.useMemo(() => {
-    if (!wound?.id) return null;
-    return (
-      (prescriptions || [])
-        .filter((record) => record.wound === wound.id)
-        .sort(
-          (left, right) =>
-            new Date(right.raw?.created || 0).getTime() -
-            new Date(left.raw?.created || 0).getTime(),
-        )[0] || null
-    );
-  }, [prescriptions, wound?.id]);
-
-  const [androidComposerLift, setAndroidComposerLift] = useState(0);
-  const keyboardInset = useKeyboardBottomInset();
-
-  useEffect(() => {
-    if (Platform.OS !== "android") return undefined;
-    const onShow = Keyboard.addListener("keyboardDidShow", (e) => {
-      setAndroidComposerLift(androidComposerKeyboardLift(e));
-    });
-    const onHide = Keyboard.addListener("keyboardDidHide", () => {
-      setAndroidComposerLift(0);
-    });
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    conversationIdRef.current = localWound?.conversation || null;
-  }, [localWound?.conversation]);
-
-  useEffect(() => {
-    if (!wound?.id) return;
-    setLocalWound((prev) => (prev?.id === wound.id ? prev : wound));
-  }, [wound?.id]);
-
-  const hydrateConversation = async (woundLike) => {
-    const target = woundLike || localWound;
-    if (!target?.id) return;
-    try {
-      setLoadingChat(true);
-      const conversation = await ensureConversationForWound(target, {
-        includeCurrentUser: userRole !== "patient",
-      });
-      const messages = await loadConversationMessages(conversation.id);
-      setChat(messages);
-      setLocalWound((prev) => ({ ...prev, conversation: conversation.id }));
-    } catch (error) {
-      console.log("Hydrate wound conversation error:", error);
-    } finally {
-      setLoadingChat(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!wound?.id) return;
-    let mounted = true;
-    let chatReloadTimer = null;
-
-    hydrateConversation(wound);
-
-    const woundIdForCleanup = wound.id;
-
-    const subscribe = async () => {
-      try {
-        await pb.collection("messages").subscribe("*", async ({ record }) => {
-          if (!mounted) return;
-          const conversationId = conversationIdRef.current;
-          if (!conversationId || record?.conversation !== conversationId)
-            return;
-          if (chatReloadTimer) clearTimeout(chatReloadTimer);
-          chatReloadTimer = setTimeout(async () => {
-            if (!mounted) return;
-            try {
-              const messages = await loadConversationMessages(conversationId);
-              if (mounted) setChat(messages);
-            } catch (e) {
-              console.log("Wound detail chat reload error:", e);
-            }
-          }, 350);
-        });
-        await pb
-          .collection("wounds")
-          .subscribe(woundIdForCleanup, async ({ record }) => {
-            if (!mounted) return;
-            const refreshedWound = mapWoundRecord({
-              ...record,
-              expand: {
-                patient: record.expand?.patient,
-              },
-            });
-            setLocalWound((prev) => ({
-              ...prev,
-              ...refreshedWound,
-              patientName: prev?.patientName || refreshedWound.patientName,
-            }));
-          });
-      } catch (error) {
-        console.log("Wound detail subscribe error:", error);
-      }
-    };
-
-    subscribe();
-
-    return () => {
-      mounted = false;
-      if (chatReloadTimer) clearTimeout(chatReloadTimer);
-      pb.collection("messages").unsubscribe("*");
-      pb.collection("wounds").unsubscribe(woundIdForCleanup);
-    };
-  }, [wound?.id]);
-
-  const sendMessage = async () => {
-    if (!message.trim()) return;
-    const conversation = await ensureConversationForWound(localWound, {
-      includeCurrentUser: userRole !== "patient",
-    });
-    const text = message.trim();
-    const created = await sendConversationMessage(conversation.id, text);
-    if (created) {
-      setMessage("");
-      setChat((prev) => {
-        if (prev.some((item) => item.id === created.id)) return prev;
-        return [...prev, created];
-      });
-    } else {
-      setMessage(text);
-    }
-  };
-
-  const woundOrder = (medOrders || []).find(
-    (order) => order.wound === localWound.id,
-  );
-
-  if (showPrescriptionViewer) {
-    return (
-      <SafeAreaView
-        style={{ flex: 1, backgroundColor: theme.bg }}
-        edges={["top", "left", "right"]}
-      >
-        <PrescriptionScreen
-          onBack={() => setShowPrescriptionViewer(false)}
-          highlightPrescriptionId={linkedPrescription?.id || null}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["left", "right"]}
-    >
-      <View
-        style={{
-          padding: RFValue(20),
-          flexDirection: "row",
-          alignItems: "center",
-          backgroundColor: theme.card,
-          borderBottomWidth: 1,
-          borderBottomColor: theme.cardBorder,
-        }}
-      >
-        <TouchableOpacity onPress={onBack} style={{ marginRight: RFValue(16) }}>
-          <Ionicons
-            name="arrow-back"
-            size={RFValue(26)}
-            color={theme.textPrimary}
-          />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text
-            style={{
-              fontSize: RFValue(16),
-              fontWeight: "800",
-              color: theme.textPrimary,
-            }}
-          >
-            Wound Detail
-          </Text>
-          <Text style={{ fontSize: RFValue(12), color: theme.textSecondary }}>
-            Status: {localWound.status}
-          </Text>
-        </View>
-        {userRole === "doctor" &&
-          localWound.status !== "Medication Prescribed" && (
-            <TouchableOpacity
-              onPress={() => setShowPrescriptionModal(true)}
-              style={{
-                backgroundColor: theme.success,
-                paddingHorizontal: RFValue(12),
-                paddingVertical: RFValue(8),
-                borderRadius: RFValue(10),
-              }}
-            >
-              <Text
-                style={{
-                  color: "#FFF",
-                  fontWeight: "700",
-                  fontSize: RFValue(12),
-                }}
-              >
-                Prescribe
-              </Text>
-            </TouchableOpacity>
-          )}
-        {userRole === "patient" && linkedPrescription ? (
-          <TouchableOpacity
-            onPress={() => setShowPrescriptionViewer(true)}
-            style={{
-              backgroundColor: theme.accent,
-              paddingHorizontal: RFValue(12),
-              paddingVertical: RFValue(8),
-              borderRadius: RFValue(10),
-              flexDirection: "row",
-              alignItems: "center",
-            }}
-          >
-            <Ionicons
-              name="document-text-outline"
-              size={RFValue(18)}
-              color="#FFF"
-              style={{ marginRight: RFValue(6) }}
-            />
-            <Text
-              style={{
-                color: "#FFF",
-                fontWeight: "700",
-                fontSize: RFValue(12),
-              }}
-            >
-              View prescription
-            </Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
-
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1, minHeight: 0 }}
-        keyboardVerticalOffset={
-          Platform.OS === "ios" ? insets.top + RFValue(56) : 0
-        }
-      >
-        <ScrollView
-          style={{ flex: 1, minHeight: 0, backgroundColor: theme.bg }}
-          contentContainerStyle={{
-            flexGrow: 1,
-            paddingBottom:
-              RFValue(8) + androidKeyboardPad(keyboardInset),
-            backgroundColor: theme.bg,
-          }}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={{ padding: RFValue(16) }}>
-            <View
-              style={{
-                width: "100%",
-                height: RFValue(200),
-                backgroundColor: theme.card,
-                borderRadius: RFValue(16),
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              <Ionicons
-                name="bandage"
-                size={RFValue(66)}
-                color={theme.textTertiary}
-              />
-              <Text
-                style={{ color: theme.textSecondary, marginTop: RFValue(8) }}
-              >
-                Wound Image
-              </Text>
-            </View>
-            <View
-              style={{
-                marginTop: RFValue(12),
-                backgroundColor: theme.card,
-                padding: RFValue(14),
-                borderRadius: RFValue(12),
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: RFValue(14),
-                  fontWeight: "700",
-                  color: theme.textPrimary,
-                }}
-              >
-                Patient Note:
-              </Text>
-              <Text
-                style={{
-                  fontSize: RFValue(13),
-                  color: theme.textSecondary,
-                  marginTop: RFValue(4),
-                }}
-              >
-                {localWound.description}
-              </Text>
-            </View>
-
-            {woundOrder ? (
-              <View
-                style={{
-                  marginTop: RFValue(12),
-                  backgroundColor: theme.accentLight,
-                  padding: RFValue(14),
-                  borderRadius: RFValue(12),
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: RFValue(13),
-                    fontWeight: "700",
-                    color: theme.accent,
-                  }}
-                >
-                  Pharmacy Order
-                </Text>
-                <Text
-                  style={{
-                    color: theme.textPrimary,
-                    marginTop: RFValue(4),
-                    fontSize: RFValue(12),
-                  }}
-                >
-                  {woundOrder.items}
-                </Text>
-                <Text
-                  style={{
-                    color: theme.accent,
-                    marginTop: RFValue(4),
-                    fontSize: RFValue(12),
-                    fontWeight: "700",
-                  }}
-                >
-                  {woundOrder.status}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-
-          <View style={{ padding: RFValue(16) }}>
-            <Text
-              style={{
-                fontSize: RFValue(14),
-                fontWeight: "800",
-                color: theme.textPrimary,
-                marginBottom: RFValue(12),
-              }}
-            >
-              Doctor Discussion
-            </Text>
-            {loadingChat ? (
-              <Text style={{ color: theme.textSecondary }}>
-                Loading chat...
-              </Text>
-            ) : chat.length > 0 ? (
-              chat.map((c) => {
-                const isMine = c.senderId && c.senderId === currentUserId;
-                const isSystem = c.kind === "system";
-                const hasImage = !!c.imageUrl;
-                return (
-                  <View
-                    key={c.id}
-                    style={{
-                      alignSelf: isSystem
-                        ? "center"
-                        : isMine
-                          ? "flex-end"
-                          : "flex-start",
-                      backgroundColor: isSystem
-                        ? theme.bg
-                        : hasImage
-                          ? isMine
-                            ? theme.accentLight
-                            : theme.card
-                          : isMine
-                            ? theme.accent
-                            : theme.card,
-                      padding: hasImage ? RFValue(6) : RFValue(12),
-                      borderRadius: RFValue(12),
-                      marginBottom: RFValue(8),
-                      maxWidth: isSystem ? "92%" : "80%",
-                      shadowColor: theme.shadowColor,
-                      shadowOpacity: 0.03,
-                      elevation: 1,
-                    }}
-                  >
-                    {!isSystem && !isMine ? (
-                      <Text
-                        style={{
-                          color: theme.textSecondary,
-                          fontSize: RFValue(10),
-                          fontWeight: "700",
-                          marginBottom: RFValue(4),
-                        }}
-                      >
-                        {c.senderName}
-                      </Text>
-                    ) : null}
-                    {hasImage ? (
-                      <Image
-                        source={{ uri: c.imageUrl }}
-                        style={{
-                          width: RFValue(240),
-                          maxWidth: "100%",
-                          height: RFValue(170),
-                          borderRadius: RFValue(10),
-                          backgroundColor: theme.cardBorder,
-                        }}
-                        resizeMode="cover"
-                      />
-                    ) : null}
-
-                    {c.text ? (
-                      <Text
-                        style={{
-                          color: isSystem
-                            ? theme.textSecondary
-                            : hasImage
-                              ? theme.textPrimary
-                              : isMine
-                                ? "#FFF"
-                                : theme.textPrimary,
-                          fontSize: RFValue(13),
-                          textAlign: isSystem ? "center" : "left",
-                          marginTop: hasImage ? RFValue(10) : 0,
-                        }}
-                      >
-                        {c.text}
-                      </Text>
-                    ) : null}
-                    <Text
-                      style={{
-                        color: isSystem
-                          ? theme.textTertiary
-                          : hasImage
-                            ? theme.textTertiary
-                            : isMine
-                              ? "rgba(255,255,255,0.7)"
-                              : theme.textTertiary,
-                        fontSize: RFValue(9),
-                        marginTop: RFValue(4),
-                        textAlign: isSystem ? "center" : "right",
-                      }}
-                    >
-                      {c.time}
-                    </Text>
-                  </View>
-                );
-              })
-            ) : (
-              <Text style={{ color: theme.textSecondary }}>
-                No messages yet.
-              </Text>
-            )}
-          </View>
-        </ScrollView>
-
-        <View
-          style={{
-            padding: RFValue(12),
-            marginBottom: androidComposerLift,
-            backgroundColor: theme.card,
-            borderTopWidth: 1,
-            borderTopColor: theme.cardBorder,
-            flexDirection: "row",
-            alignItems: "center",
-          }}
-        >
-          <TextInput
-            style={{
-              flex: 1,
-              backgroundColor: theme.bg,
-              borderRadius: RFValue(24),
-              paddingHorizontal: RFValue(16),
-              paddingVertical: RFValue(12),
-              fontSize: RFValue(14),
-              borderWidth: 1,
-              borderColor: theme.cardBorder,
-              color: theme.textPrimary,
-            }}
-            placeholder="Type a message..."
-            placeholderTextColor={theme.textTertiary}
-            value={message}
-            onChangeText={setMessage}
-          />
-          <TouchableOpacity
-            onPress={sendMessage}
-            style={{
-              marginLeft: RFValue(10),
-              backgroundColor: theme.accent,
-              width: RFValue(46),
-              height: RFValue(46),
-              borderRadius: RFValue(23),
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
-            <Ionicons name="send" size={RFValue(20)} color="#FFF" />
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-
-      {showPrescriptionModal && (
-        <PrescriptionModal
-          onBack={() => setShowPrescriptionModal(false)}
-          onConfirm={async (prescription) => {
-            try {
-              await prescribeForWound(localWound, prescription);
-            } catch (error) {
-              Alert.alert(
-                "Prescription not sent",
-                error?.message ||
-                  "Unable to save the prescription. Try again or check PocketBase rules.",
-              );
-              throw error;
-            }
-            try {
-              const conversation = await ensureConversationForWound(
-                localWound,
-                {
-                  includeCurrentUser: true,
-                },
-              );
-              const messages = await loadConversationMessages(conversation.id);
-              setChat(messages);
-              setLocalWound((prev) => ({
-                ...prev,
-                status: "Medication Prescribed",
-                conversation: conversation.id,
-              }));
-            } catch (postError) {
-              console.log("Post-prescription UI refresh error:", postError);
-              setLocalWound((prev) => ({
-                ...prev,
-                status: "Medication Prescribed",
-              }));
-              await refreshAllData();
-            } finally {
-              setShowPrescriptionModal(false);
-            }
-          }}
-        />
-      )}
-    </SafeAreaView>
-  );
-};
-
-const newPrescriptionLine = () => ({
-  key: `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-  name: "",
-  dosage: "",
-  whenToTake: "",
-  duration: "",
-  frequency: "once_daily",
-  mealTiming: "no_preference",
-  timesOfDay: ["08:00"],
-  durationDays: 7,
-  notes: "",
-});
-
-// Small reusable chip-style selector for frequency / meal timing dropdowns.
-const SegmentedChipRow = ({ options, value, onChange, disabled }) => (
-  <View
-    style={{
-      flexDirection: "row",
-      flexWrap: "wrap",
-      marginBottom: RFValue(10),
-    }}
-  >
-    {options.map((opt) => {
-      const selected = opt.id === value;
-      return (
-        <TouchableOpacity
-          key={opt.id}
-          disabled={disabled}
-          onPress={() => onChange(opt.id)}
-          style={{
-            paddingHorizontal: RFValue(12),
-            paddingVertical: RFValue(8),
-            borderRadius: RFValue(20),
-            borderWidth: 1,
-            borderColor: selected ? "#4338CA" : "#E5E7EB",
-            backgroundColor: selected ? "#EEF2FF" : "#FFF",
-            marginRight: RFValue(8),
-            marginBottom: RFValue(8),
-            opacity: disabled ? 0.6 : 1,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: RFValue(11),
-              fontWeight: selected ? "800" : "600",
-              color: selected ? "#4338CA" : "#374151",
-            }}
-          >
-            {opt.label}
-          </Text>
-        </TouchableOpacity>
-      );
-    })}
-  </View>
-);
-
-const PrescriptionModal = ({ onBack, onConfirm }) => {
-  const { runSideEffectCheck, patientProfile: currentPatientProfile } =
-    useAppData();
-  const [disease, setDisease] = useState("");
-  const [lines, setLines] = useState(() => [newPrescriptionLine()]);
-  const [sending, setSending] = useState(false);
-  const [warnings, setWarnings] = useState([]);
-  const [checkingSideEffects, setCheckingSideEffects] = useState(false);
-  const lastSideEffectItemsSig = useRef("");
-  const sendingRef = useRef(false);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const updateLine = (key, field, value) => {
-    setLines((prev) =>
-      prev.map((row) => {
-        if (row.key !== key) return row;
-        const next = { ...row, [field]: value };
-        // When frequency changes, seed the times-of-day from the preset.
-        if (field === "frequency") {
-          const preset = defaultTimesForFrequency(value);
-          if (preset.length) next.timesOfDay = [...preset];
-        }
-        // When duration text changes, re-derive `durationDays`.
-        if (field === "duration") {
-          next.durationDays = parseDurationDays(value) || next.durationDays;
-        }
-        return next;
-      }),
-    );
-  };
-
-  const updateLineTime = (key, index, value) => {
-    setLines((prev) =>
-      prev.map((row) => {
-        if (row.key !== key) return row;
-        const times = [...(row.timesOfDay || [])];
-        times[index] = value;
-        return { ...row, timesOfDay: times };
-      }),
-    );
-  };
-
-  const addLineTime = (key) => {
-    setLines((prev) =>
-      prev.map((row) => {
-        if (row.key !== key) return row;
-        return {
-          ...row,
-          timesOfDay: [...(row.timesOfDay || []), "08:00"],
-        };
-      }),
-    );
-  };
-
-  const removeLineTime = (key, index) => {
-    setLines((prev) =>
-      prev.map((row) => {
-        if (row.key !== key) return row;
-        const times = [...(row.timesOfDay || [])];
-        times.splice(index, 1);
-        return { ...row, timesOfDay: times };
-      }),
-    );
-  };
-
-  const addLine = () => setLines((prev) => [...prev, newPrescriptionLine()]);
-
-  const removeLine = (key) => {
-    setLines((prev) =>
-      prev.length <= 1 ? prev : prev.filter((row) => row.key !== key),
-    );
-  };
-
-  // Step 9 - Debounced side-effect check against the AI endpoint (or stub).
-  // Runs whenever the list of medicines changes so the doctor can see
-  // warnings before hitting "Send to patient".
-  useEffect(() => {
-    const items = lines
-      .map((line) => ({ name: line.name.trim() }))
-      .filter((item) => item.name);
-    if (!items.length) {
-      setWarnings([]);
-      lastSideEffectItemsSig.current = "";
-      return undefined;
-    }
-    const itemsSig = items
-      .map((i) => i.name.toLowerCase())
-      .sort()
-      .join("|");
-    let cancelled = false;
-    const handle = setTimeout(async () => {
-      if (cancelled) return;
-      setCheckingSideEffects(true);
-      try {
-        const result = await runSideEffectCheck({
-          items,
-          patient: currentPatientProfile || {},
-        });
-        if (!cancelled) {
-          setWarnings(Array.isArray(result) ? result : []);
-          lastSideEffectItemsSig.current = itemsSig;
-        }
-      } finally {
-        if (!cancelled) setCheckingSideEffects(false);
-      }
-    }, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(handle);
-    };
-  }, [lines, runSideEffectCheck, currentPatientProfile]);
-
-  const handleConfirm = async () => {
-    const diagnosis = disease.trim();
-    if (!diagnosis) {
-      Alert.alert(
-        "Missing condition",
-        "Enter the disease or diagnosis this prescription is for.",
-      );
-      return;
-    }
-    const normalized = lines
-      .map((line) => ({
-        name: String(line.name || "").trim(),
-        dosage: String(line.dosage || "").trim(),
-        whenToTake: String(line.whenToTake || "").trim(),
-        duration: String(line.duration || "").trim(),
-        frequency: String(line.frequency || "once_daily"),
-        mealTiming: String(line.mealTiming || "no_preference"),
-        timesOfDay: Array.isArray(line.timesOfDay)
-          ? line.timesOfDay
-              .map((time) => String(time).trim())
-              .filter((time) => isValidHHMM(time))
-          : [],
-        durationDays:
-          parseDurationDays(line.duration) ||
-          Math.max(1, Number(line.durationDays || 0) || 1),
-        notes: String(line.notes || "").trim(),
-      }))
-      .filter((line) => line.name);
-    if (!normalized.length) {
-      Alert.alert(
-        "Add medicine",
-        "Enter at least one medicine name before sending.",
-      );
-      return;
-    }
-    if (sendingRef.current) return;
-    sendingRef.current = true;
-    setSending(true);
-    try {
-      const result = onConfirm({ disease: diagnosis, lines: normalized });
-      if (result && typeof result.then === "function") {
-        await result;
-      }
-    } catch {
-      // Parent already surfaces the failure.
-    } finally {
-      sendingRef.current = false;
-      if (mountedRef.current) setSending(false);
-    }
-  };
-
-  const inputStyle = {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: RFValue(10),
-    paddingHorizontal: RFValue(12),
-    paddingVertical: Platform.OS === "ios" ? RFValue(10) : RFValue(8),
-    fontSize: RFValue(14),
-    color: "#1E1B4B",
-    backgroundColor: "#F9FAFB",
-  };
-
-  const labelStyle = {
-    fontSize: RFValue(11),
-    fontWeight: "700",
-    color: "#6B7280",
-    marginBottom: RFValue(6),
-  };
-
-  return (
-    <View
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: "rgba(0,0,0,0.5)",
-        justifyContent: "flex-end",
-      }}
-    >
-      <View
-        style={{
-          backgroundColor: "#FFF",
-          borderTopLeftRadius: RFValue(24),
-          borderTopRightRadius: RFValue(24),
-          padding: RFValue(24),
-          maxHeight: "92%",
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: RFValue(16),
-          }}
-        >
-          <Text
-            style={{
-              fontSize: RFValue(18),
-              fontWeight: "800",
-              color: "#1E1B4B",
-            }}
-          >
-            Send prescription
-          </Text>
-          <TouchableOpacity onPress={onBack} disabled={sending}>
-            <Ionicons
-              name="close"
-              size={RFValue(28)}
-              color={sending ? "#D1D5DB" : "#1E1B4B"}
-            />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          style={{ maxHeight: RFValue(460) }}
-          scrollEnabled={!sending}
-        >
-          <Text style={labelStyle}>Condition / diagnosis (required)</Text>
-          <TextInput
-            style={[inputStyle, { marginBottom: RFValue(16) }]}
-            placeholder="e.g. Post-operative wound infection"
-            placeholderTextColor="#9CA3AF"
-            value={disease}
-            onChangeText={setDisease}
-            editable={!sending}
-          />
-
-          {lines.map((line, index) => (
-            <View
-              key={line.key}
-              style={{
-                marginBottom: RFValue(14),
-                padding: RFValue(14),
-                borderRadius: RFValue(14),
-                backgroundColor: "#F9FAFB",
-                borderWidth: 1,
-                borderColor: "#E5E7EB",
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: RFValue(10),
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: RFValue(13),
-                    fontWeight: "800",
-                    color: "#374151",
-                  }}
-                >
-                  Medicine {index + 1}
-                </Text>
-                {lines.length > 1 ? (
-                  <TouchableOpacity
-                    onPress={() => removeLine(line.key)}
-                    disabled={sending}
-                  >
-                    <Text
-                      style={{
-                        fontSize: RFValue(12),
-                        color: sending ? "#D1D5DB" : "#DC2626",
-                      }}
-                    >
-                      Remove
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
-              <Text style={labelStyle}>Medicine name</Text>
-              <TextInput
-                style={[inputStyle, { marginBottom: RFValue(10) }]}
-                placeholder="e.g. Amoxicillin"
-                placeholderTextColor="#9CA3AF"
-                value={line.name}
-                onChangeText={(value) => updateLine(line.key, "name", value)}
-                editable={!sending}
-              />
-
-              <Text style={labelStyle}>Dosage</Text>
-              <TextInput
-                style={[inputStyle, { marginBottom: RFValue(10) }]}
-                placeholder="e.g. 500 mg, 1 tablet"
-                placeholderTextColor="#9CA3AF"
-                value={line.dosage}
-                onChangeText={(value) => updateLine(line.key, "dosage", value)}
-                editable={!sending}
-              />
-
-              <Text style={labelStyle}>Frequency</Text>
-              <SegmentedChipRow
-                options={FREQUENCY_OPTIONS}
-                value={line.frequency}
-                onChange={(value) => updateLine(line.key, "frequency", value)}
-                disabled={sending}
-              />
-
-              <Text style={labelStyle}>Meal timing</Text>
-              <SegmentedChipRow
-                options={MEAL_TIMING_OPTIONS}
-                value={line.mealTiming}
-                onChange={(value) => updateLine(line.key, "mealTiming", value)}
-                disabled={sending}
-              />
-
-              {line.frequency !== "as_needed" ? (
-                <>
-                  <Text style={labelStyle}>
-                    Times of day (HH:mm - edit or add)
-                  </Text>
-                  {(line.timesOfDay || []).map((time, timeIdx) => (
-                    <View
-                      key={`${line.key}-t-${timeIdx}`}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        marginBottom: RFValue(8),
-                      }}
-                    >
-                      <TextInput
-                        style={[inputStyle, { flex: 1 }]}
-                        placeholder="08:00"
-                        placeholderTextColor="#9CA3AF"
-                        value={time}
-                        onChangeText={(value) =>
-                          updateLineTime(line.key, timeIdx, value)
-                        }
-                        editable={!sending}
-                        keyboardType={
-                          Platform.OS === "ios"
-                            ? "numbers-and-punctuation"
-                            : "default"
-                        }
-                      />
-                      {(line.timesOfDay || []).length > 1 ? (
-                        <TouchableOpacity
-                          onPress={() => removeLineTime(line.key, timeIdx)}
-                          disabled={sending}
-                          style={{ marginLeft: 8, padding: 6 }}
-                        >
-                          <Ionicons
-                            name="trash-outline"
-                            size={18}
-                            color={sending ? "#D1D5DB" : "#DC2626"}
-                          />
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
-                  ))}
-                  <TouchableOpacity
-                    onPress={() => addLineTime(line.key)}
-                    disabled={sending}
-                    style={{
-                      paddingVertical: RFValue(6),
-                      marginBottom: RFValue(10),
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: sending ? "#D1D5DB" : "#4338CA",
-                        fontWeight: "700",
-                        fontSize: RFValue(12),
-                      }}
-                    >
-                      + Add another time
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              ) : null}
-
-              <Text style={labelStyle}>Duration</Text>
-              <TextInput
-                style={[inputStyle, { marginBottom: RFValue(10) }]}
-                placeholder="e.g. 7 days"
-                placeholderTextColor="#9CA3AF"
-                value={line.duration}
-                onChangeText={(value) =>
-                  updateLine(line.key, "duration", value)
-                }
-                editable={!sending}
-              />
-
-              <Text style={labelStyle}>Notes (optional)</Text>
-              <TextInput
-                style={[
-                  inputStyle,
-                  {
-                    minHeight: RFValue(60),
-                    textAlignVertical: "top",
-                  },
-                ]}
-                placeholder="e.g. Take with a full glass of water"
-                placeholderTextColor="#9CA3AF"
-                value={line.notes}
-                onChangeText={(value) => updateLine(line.key, "notes", value)}
-                editable={!sending}
-                multiline
-              />
-            </View>
-          ))}
-
-          <TouchableOpacity
-            onPress={addLine}
-            disabled={sending}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              paddingVertical: RFValue(12),
-              marginBottom: RFValue(8),
-              opacity: sending ? 0.45 : 1,
-            }}
-          >
-            <Ionicons name="add-circle-outline" size={22} color="#4338CA" />
-            <Text
-              style={{
-                marginLeft: 8,
-                fontSize: RFValue(14),
-                fontWeight: "700",
-                color: "#4338CA",
-              }}
-            >
-              Add another medicine
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-
-        {(() => {
-          const medSig = lines
-            .map((l) =>
-              String(l.name || "")
-                .trim()
-                .toLowerCase(),
-            )
-            .filter(Boolean)
-            .sort()
-            .join("|");
-          const checkDoneForCurrentMeds =
-            medSig.length > 0 &&
-            medSig === lastSideEffectItemsSig.current &&
-            !checkingSideEffects;
-          return (
-            <View style={{ marginTop: RFValue(10), marginBottom: RFValue(4) }}>
-              {warnings.length > 0 ? (
-                <View
-                  style={{
-                    padding: RFValue(12),
-                    borderRadius: RFValue(12),
-                    backgroundColor: "#FEF3C7",
-                    borderWidth: 1,
-                    borderColor: "#F59E0B",
-                  }}
-                >
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      marginBottom: RFValue(6),
-                    }}
-                  >
-                    <Ionicons name="alert-circle" size={18} color="#B45309" />
-                    <Text
-                      style={{
-                        marginLeft: 6,
-                        fontWeight: "800",
-                        color: "#B45309",
-                        fontSize: RFValue(12),
-                      }}
-                    >
-                      AI side-effect check ({warnings.length})
-                    </Text>
-                  </View>
-                  {warnings.map((w, idx) => (
-                    <Text
-                      key={`${w.medicine}-${idx}`}
-                      style={{
-                        fontSize: RFValue(11),
-                        color: "#92400E",
-                        marginBottom: 4,
-                      }}
-                    >
-                      • {w.medicine}: {w.message}
-                    </Text>
-                  ))}
-                </View>
-              ) : checkingSideEffects ? (
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingVertical: RFValue(8),
-                  }}
-                >
-                  <ActivityIndicator size="small" color="#4338CA" />
-                  <Text
-                    style={{
-                      marginLeft: RFValue(10),
-                      fontSize: RFValue(12),
-                      color: "#4B5563",
-                      fontWeight: "600",
-                    }}
-                  >
-                    Checking side effects (AI)…
-                  </Text>
-                </View>
-              ) : checkDoneForCurrentMeds ? (
-                <Text
-                  style={{
-                    fontSize: RFValue(11),
-                    color: "#6B7280",
-                    paddingVertical: RFValue(6),
-                  }}
-                >
-                  AI quick check: no interaction warnings for the medicine names
-                  entered. This is not a full clinical review - confirm with
-                  references as usual.
-                </Text>
-              ) : null}
-            </View>
-          );
-        })()}
-
-        <TouchableOpacity
-          onPress={handleConfirm}
-          disabled={sending}
-          style={{
-            backgroundColor: sending ? "#9CA3AF" : "#4338CA",
-            borderRadius: RFValue(14),
-            paddingVertical: RFValue(16),
-            alignItems: "center",
-            justifyContent: "center",
-            flexDirection: "row",
-            marginTop: RFValue(12),
-            opacity: sending ? 0.92 : 1,
-          }}
-        >
-          {sending ? (
-            <ActivityIndicator color="#FFF" style={{ marginRight: 10 }} />
-          ) : null}
-          <Text
-            style={{ color: "#FFF", fontWeight: "700", fontSize: RFValue(16) }}
-          >
-            {sending ? "Sending..." : "Send to patient"}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
-
-const DoctorWoundsScreen = () => {
-  const { theme } = useTheme();
-  const {
-    wounds,
-    setWounds,
-    setMedOrders,
-    doctorSelectedWoundId,
-    setDoctorSelectedWoundId,
-  } = useAppData();
-  const selectedWound = (wounds || []).find(
-    (item) => item.id === doctorSelectedWoundId,
-  );
-  const onSelectWound = setDoctorSelectedWoundId;
-  const onClearWoundSelection = () => setDoctorSelectedWoundId(null);
-
-  if (selectedWound)
-    return (
-      <WoundDetailScreen
-        key={selectedWound.id}
-        wound={selectedWound}
-        onBack={() => onClearWoundSelection()}
-        userRole="doctor"
-        setWounds={setWounds}
-        setMedOrders={setMedOrders}
-      />
-    );
-
-  return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      edges={["left", "right"]}
-    >
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
-      <View
-        style={{
-          backgroundColor: theme.card,
-          padding: RFValue(20),
-          borderBottomWidth: 1,
-          borderBottomColor: theme.cardBorder,
-        }}
-      >
-        <Text
-          style={{
-            fontSize: RFValue(20),
-            fontWeight: "800",
-            color: theme.textPrimary,
-          }}
-        >
-          Wound Reviews
-        </Text>
-      </View>
-
-      <ScrollView
-        contentContainerStyle={{
-          padding: RFValue(16),
-          paddingBottom: tabScrollBottomPadding(),
-        }}
-      >
-        {wounds && wounds.length > 0 ? (
-          wounds.map((w) => (
-            <TouchableOpacity
-              key={w.id}
-              onPress={() => onSelectWound(w.id)}
-              style={{
-                backgroundColor: theme.card,
-                borderRadius: RFValue(16),
-                padding: RFValue(16),
-                marginBottom: RFValue(12),
-                shadowColor: theme.shadowColor,
-                shadowOpacity: 0.05,
-                elevation: 2,
-                flexDirection: "row",
-                alignItems: "center",
-              }}
-            >
-              <View
-                style={{
-                  width: RFValue(50),
-                  height: RFValue(50),
-                  borderRadius: RFValue(10),
-                  backgroundColor: theme.accentLight,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(12),
-                }}
-              >
-                <Ionicons
-                  name="person"
-                  size={RFValue(26)}
-                  color={theme.accent}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text
-                  style={{
-                    fontSize: RFValue(15),
-                    fontWeight: "700",
-                    color: theme.textPrimary,
-                  }}
-                >
-                  {w.patientName}
-                </Text>
-                <Text
-                  style={{ fontSize: RFValue(12), color: theme.textSecondary }}
-                >
-                  {w.description}
-                </Text>
-              </View>
-              <View
-                style={{
-                  backgroundColor: theme.accentLight,
-                  paddingHorizontal: RFValue(8),
-                  paddingVertical: RFValue(4),
-                  borderRadius: RFValue(8),
-                }}
-              >
-                <Text
-                  style={{
-                    color: theme.accent,
-                    fontSize: RFValue(10),
-                    fontWeight: "700",
-                  }}
-                >
-                  {w.status}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ))
-        ) : (
-          <View style={{ alignItems: "center", marginTop: RFValue(40) }}>
-            <Ionicons
-              name="checkmark-circle-outline"
-              size={RFValue(48)}
-              color={theme.cardBorder}
-            />
-            <Text style={{ color: theme.textTertiary, marginTop: RFValue(12) }}>
-              No wounds pending review
-            </Text>
-          </View>
-        )}
-      </ScrollView>
     </SafeAreaView>
   );
 };
@@ -30342,15 +28426,15 @@ export default function App() {
   // "Help" modal, patient quick-request offer arrow); consumed by
   // `PatientChatScreen` once it has the conversation in state, then cleared.
   const [pendingChatRequest, setPendingChatRequest] = useState(null);
+  /** Bumped so `PatientHomeScreen` can open the pharmacy directory after switching from Chat (inactive tabs unmount). */
+  const [nearbyPharmaciesOpenNonce, setNearbyPharmaciesOpenNonce] =
+    useState(0);
   const [pendingIncomingCallInvite, setPendingIncomingCallInvite] =
     useState(null);
   const [hospitals, setHospitals] = useState([]);
   const [hospitalsLoading, setHospitalsLoading] = useState(false);
   const [pharmacies, setPharmacies] = useState([]);
   const [pharmaciesLoading, setPharmaciesLoading] = useState(false);
-  const [doctorSelectedWoundId, setDoctorSelectedWoundId] = useState(null);
-  const [patientSelectedWoundId, setPatientSelectedWoundId] = useState(null);
-  const [patientShowNewWound, setPatientShowNewWound] = useState(false);
   const [patients, setPatients] = useState([
     {
       id: 1,
@@ -30490,29 +28574,6 @@ export default function App() {
   useEffect(() => {
     void SystemUI.setBackgroundColorAsync(theme.bg);
   }, [theme.bg]);
-
-  useEffect(() => {
-    if (!userRole) {
-      setDoctorSelectedWoundId(null);
-      setPatientSelectedWoundId(null);
-      setPatientShowNewWound(false);
-    }
-  }, [userRole]);
-
-  useEffect(() => {
-    if (userRole !== "doctor" || !doctorSelectedWoundId) return;
-    if (dataLoading) return;
-    if (!(wounds || []).some((wound) => wound.id === doctorSelectedWoundId)) {
-      setDoctorSelectedWoundId(null);
-    }
-  }, [wounds, doctorSelectedWoundId, userRole, dataLoading]);
-
-  useEffect(() => {
-    if (userRole !== "patient" || !patientSelectedWoundId) return;
-    if (!(wounds || []).some((wound) => wound.id === patientSelectedWoundId)) {
-      setPatientSelectedWoundId(null);
-    }
-  }, [wounds, patientSelectedWoundId, userRole]);
 
   useEffect(() => {
     if (userRole !== "patient" || !currentUser?.id) {
@@ -33584,6 +31645,12 @@ export default function App() {
     navigateToChatTabRef.current = typeof fn === "function" ? fn : null;
   }, []);
 
+  const requestOpenNearbyPharmacies = useCallback(() => {
+    setNearbyPharmaciesOpenNonce((n) =>
+      typeof n === "number" ? n + 1 : 1,
+    );
+  }, []);
+
   const requestChatTabAndAnswerCall = useCallback(
     ({ patientUserId, roomId, callType }) => {
       const uid = String(patientUserId || "").trim();
@@ -33707,12 +31774,6 @@ export default function App() {
     conversations,
     patients,
     setPatients,
-    doctorSelectedWoundId,
-    setDoctorSelectedWoundId,
-    patientSelectedWoundId,
-    setPatientSelectedWoundId,
-    patientShowNewWound,
-    setPatientShowNewWound,
     dataLoading,
     dataError,
     refreshAllData,
@@ -33740,6 +31801,8 @@ export default function App() {
       });
     },
     consumePendingChatRequest: () => setPendingChatRequest(null),
+    nearbyPharmaciesOpenNonce,
+    requestOpenNearbyPharmacies,
     pendingIncomingCallInvite,
     clearPendingIncomingCallInvite,
     registerNavigateToChatTab,
@@ -34263,9 +32326,6 @@ const AppContent = ({
   setPatients,
 }) => {
   const {
-    setDoctorSelectedWoundId,
-    setPatientSelectedWoundId,
-    setPatientShowNewWound,
     fetchApprovedDoctors,
     fetchQuickServiceProviders,
     fetchPharmacies,
@@ -34290,16 +32350,10 @@ const AppContent = ({
     setPatientProfile(null);
     setUserRole(null);
     setLocalCareMode("");
-    setDoctorSelectedWoundId(null);
-    setPatientSelectedWoundId(null);
-    setPatientShowNewWound(false);
   }, [
     setCurrentUser,
-    setDoctorSelectedWoundId,
     setLocalCareMode,
     setPatientProfile,
-    setPatientSelectedWoundId,
-    setPatientShowNewWound,
     setUserRole,
   ]);
 
@@ -34362,20 +32416,6 @@ const AppContent = ({
         />
       ),
     };
-    const wound = {
-      name: "Wound",
-      label: "Wound",
-      component: (props) => (
-        <PatientWoundScreen {...props} wounds={wounds} setWounds={setWounds} />
-      ),
-      icon: ({ color, focused }) => (
-        <Ionicons
-          name={focused ? "bandage" : "bandage-outline"}
-          size={RFValue(22)}
-          color={color}
-        />
-      ),
-    };
     const chat = {
       name: "Chat",
       label: "Chat",
@@ -34401,11 +32441,10 @@ const AppContent = ({
       ),
     };
     if (!packageShell) {
-      return [home, wound, chat, profile];
+      return [home, chat, profile];
     }
     return [
       home,
-      wound,
       {
         name: "Appts",
         label: "Appts",
@@ -34447,14 +32486,7 @@ const AppContent = ({
       chat,
       profile,
     ];
-  }, [
-    patientProfile,
-    localCareMode,
-    medOrders,
-    wounds,
-    setWounds,
-    renderPatientProfileTab,
-  ]);
+  }, [patientProfile, localCareMode, medOrders, renderPatientProfileTab]);
 
   const doctorShellIsPackage =
     userRole === "doctor" && doctorProfileIsPackageDoctor(patientProfile);

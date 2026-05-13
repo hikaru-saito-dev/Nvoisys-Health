@@ -3424,6 +3424,22 @@
       },
       {
         "system": false,
+        "id": "nvhsqccrecipient",
+        "name": "recipient",
+        "type": "relation",
+        "required": false,
+        "presentable": true,
+        "unique": false,
+        "options": {
+          "collectionId": "78mar175h5nd34t",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": null
+        }
+      },
+      {
+        "system": false,
         "id": "0wq565bg",
         "name": "topic",
         "type": "text",
@@ -3631,6 +3647,22 @@
         "type": "relation",
         "required": false,
         "presentable": false,
+        "unique": false,
+        "options": {
+          "collectionId": "78mar175h5nd34t",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": null
+        }
+      },
+      {
+        "system": false,
+        "id": "nvhsqsrecipient",
+        "name": "recipient",
+        "type": "relation",
+        "required": false,
+        "presentable": true,
         "unique": false,
         "options": {
           "collectionId": "78mar175h5nd34t",
