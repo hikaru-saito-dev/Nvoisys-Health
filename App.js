@@ -90,6 +90,8 @@ import {
   createEmergencyAssistantRequest,
   createPackageMeetingRequest,
   decodeMeetingWorkflowFromAppointmentRow,
+  displayQuickCounsellingTopic,
+  displayQuickSolutionNotes,
   doctorPackagesSetupComplete,
   doctorProfileIsPackageDoctor,
   doctorProfilePackageFeesReady,
@@ -126,6 +128,7 @@ import {
   readLocalPackageSetupSkip,
   recordQuickHelpOffer,
   recordPatientDoctorInteraction,
+  QUICK_REQUEST_STATUS,
   resolveDoctorProfileIdForUser,
   resolveListingDisplayName,
   settlePackageCoinsForCompletedAppointment,
@@ -1605,6 +1608,34 @@ const buildScheduleRowsForLine = (line, context) => {
     }
   }
   return rows;
+};
+
+/** Parse multiline quick-prescribe input: one medicine per line; optional "name | dosage | when | duration". */
+const parseMedLinesFromQuickPrescribeText = (text) => {
+  const raw = String(text || "")
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return raw
+    .map((line) => {
+      const parts = line.split("|").map((s) => s.trim());
+      if (parts.length >= 4) {
+        return normalizePrescriptionLineFromUnknown({
+          name: parts[0],
+          dosage: parts[1],
+          whenToTake: parts[2],
+          duration: parts[3],
+        });
+      }
+      if (parts.length === 2) {
+        return normalizePrescriptionLineFromUnknown({
+          name: parts[0],
+          dosage: parts[1],
+        });
+      }
+      return normalizePrescriptionLineFromUnknown({ name: line });
+    })
+    .filter(Boolean);
 };
 
 // ---------------------------------------------------------------------------
@@ -17751,73 +17782,315 @@ const DoctorUpcomingAppointmentsSection = () => {
 /** Set from `AppContent` so the doctor home header can reopen package fee setup. */
 const doctorPackageFeeSetupOpener = { request: () => {} };
 
+const buildDefaultQuickPrescribeDiagnosis = (kind, record) => {
+  if (!record) return "";
+  if (kind === "counselling") {
+    const t =
+      String(record.topic || "").trim() ||
+      String(displayQuickCounsellingTopic(record) || "").trim();
+    return (t || "Quick counselling").slice(0, 120);
+  }
+  const t = String(displayQuickSolutionNotes(record) || "").trim();
+  return (t || "Quick solution").slice(0, 120);
+};
+
+const quickRequestModalPatientLabel = (record) => {
+  const u = record?.expand?.patient;
+  const n = String(u?.name || "").trim();
+  if (n) return n;
+  return "Patient";
+};
+
+const QuickRequestPrescribeModal = ({
+  theme,
+  visible,
+  requestKind,
+  patientLabel,
+  previewText,
+  diagnosis,
+  onDiagnosisChange,
+  medLinesText,
+  onMedLinesChange,
+  busy,
+  onClose,
+  onSubmit,
+}) => {
+  const kindTitle =
+    requestKind === "counselling" ? "Quick Counselling" : "Quick Solution";
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      presentationStyle="overFullScreen"
+      statusBarTranslucent
+      onRequestClose={() => {
+        if (!busy) onClose();
+      }}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1 }}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.45)",
+            justifyContent: "center",
+            paddingHorizontal: RFValue(18),
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: RFValue(18),
+              padding: RFValue(18),
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+              maxHeight: "88%",
+            }}
+          >
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <Text
+                style={{
+                  fontSize: RFValue(18),
+                  fontWeight: "800",
+                  color: theme.textPrimary,
+                  marginBottom: RFValue(4),
+                }}
+              >
+                Prescribe
+              </Text>
+              <Text
+                style={{
+                  fontSize: RFValue(13),
+                  color: theme.textSecondary,
+                  marginBottom: RFValue(12),
+                }}
+              >
+                {kindTitle}
+                {patientLabel ? ` · ${patientLabel}` : ""}
+              </Text>
+              {previewText ? (
+                <Text
+                  style={{
+                    fontSize: RFValue(12),
+                    color: theme.textTertiary,
+                    marginBottom: RFValue(12),
+                  }}
+                  numberOfLines={5}
+                >
+                  {previewText}
+                </Text>
+              ) : null}
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  fontWeight: "700",
+                  color: theme.textSecondary,
+                  marginBottom: RFValue(6),
+                }}
+              >
+                Condition / diagnosis
+              </Text>
+              <TextInput
+                value={diagnosis}
+                onChangeText={onDiagnosisChange}
+                editable={!busy}
+                placeholder="e.g. Acute cough"
+                placeholderTextColor={theme.textTertiary}
+                style={{
+                  borderRadius: RFValue(12),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  padding: RFValue(12),
+                  fontSize: RFValue(14),
+                  color: theme.textPrimary,
+                  backgroundColor: theme.bg,
+                  marginBottom: RFValue(14),
+                }}
+              />
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  fontWeight: "700",
+                  color: theme.textSecondary,
+                  marginBottom: RFValue(6),
+                }}
+              >
+                Medicines (one per line)
+              </Text>
+              <Text
+                style={{
+                  fontSize: RFValue(11),
+                  color: theme.textTertiary,
+                  marginBottom: RFValue(6),
+                }}
+              >
+                Optional: Name | dosage | when | duration
+              </Text>
+              <TextInput
+                value={medLinesText}
+                onChangeText={onMedLinesChange}
+                editable={!busy}
+                multiline
+                placeholder="Paracetamol 500mg
+Amoxicillin 250mg"
+                placeholderTextColor={theme.textTertiary}
+                textAlignVertical="top"
+                style={{
+                  minHeight: RFValue(120),
+                  borderRadius: RFValue(12),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  padding: RFValue(12),
+                  fontSize: RFValue(14),
+                  color: theme.textPrimary,
+                  backgroundColor: theme.bg,
+                  marginBottom: RFValue(8),
+                }}
+              />
+            </ScrollView>
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "flex-end",
+                marginTop: RFValue(6),
+              }}
+            >
+              <TouchableOpacity
+                onPress={onClose}
+                disabled={busy}
+                style={{
+                  paddingHorizontal: RFValue(14),
+                  paddingVertical: RFValue(10),
+                  marginRight: RFValue(8),
+                  borderRadius: RFValue(10),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <Text style={{ fontWeight: "700", color: theme.textSecondary }}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={onSubmit}
+                disabled={busy}
+                style={{
+                  paddingHorizontal: RFValue(16),
+                  paddingVertical: RFValue(10),
+                  borderRadius: RFValue(10),
+                  backgroundColor: busy ? theme.accentLight : theme.accent,
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                {busy ? (
+                  <ActivityIndicator
+                    color="#FFF"
+                    size="small"
+                    style={{ marginRight: 6 }}
+                  />
+                ) : null}
+                <Text style={{ fontWeight: "800", color: "#FFF" }}>
+                  {busy ? "Saving…" : "Send prescription"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
+
 const DoctorDashboard = ({ wounds, patients }) => {
   const { theme } = useTheme();
   const {
     currentUser,
     patientProfile: doctorProfile,
-    ensureDirectConversation,
-    sendConversationMessage,
     requestOpenConversation,
     requestOpenDirectChatWithPatient,
-    refreshAllData,
+    prescribeForQuickRequest,
   } = useAppData();
   const tabNav = useMainTabNav();
+
+  const [quickPrescribeTarget, setQuickPrescribeTarget] = useState(null);
+  const [quickPrescribeDiagnosis, setQuickPrescribeDiagnosis] = useState("");
+  const [quickPrescribeMeds, setQuickPrescribeMeds] = useState("");
+  const [quickPrescribeBusy, setQuickPrescribeBusy] = useState(false);
 
   const pendingWounds = (wounds || []).filter(
     (w) => w.status === "Review Pending",
   ).length;
   const isPackageDoctor = doctorProfileIsPackageDoctor(doctorProfile);
 
-  // Doctor "Help" flow per spec:
-  //   ensure conversation → send first message → record offer →
-  //   switch to the **chat main page** (the chat list). Doctor sees the new
-  //   thread sitting at the top and taps in to continue. We deliberately do
-  //   NOT pre-select the conversation here - the patient gets the chat
-  //   *detail* page through the offer arrow, the doctor lands on the chat list.
-  const handleHelpQuickPatient = useCallback(
-    async ({ requestId, requestKind, patientUserId, message }) => {
-      if (!currentUser?.id) {
-        throw new Error("Sign in again before offering help.");
-      }
-      const conversation = await ensureDirectConversation(patientUserId);
-      const conversationId = conversation?.id;
-      if (!conversationId) {
-        throw new Error("Could not open chat with this patient.");
-      }
-      await sendConversationMessage(conversationId, message);
-      try {
-        await recordQuickHelpOffer({
-          requestId,
-          requestKind,
-          doctorUserId: currentUser.id,
-          patientUserId,
-          conversationId,
-          firstMessage: message,
-        });
-      } catch (e) {
-        console.log("recordQuickHelpOffer ignored:", e?.message);
-      }
-      try {
-        await refreshAllData();
-      } catch {
-        // ignore refresh failures - UI will catch up on next interval
-      }
-      tabNav?.navigateTab?.("Chat");
-      return { conversationId };
-    },
-    [
-      currentUser?.id,
-      ensureDirectConversation,
-      sendConversationMessage,
-      refreshAllData,
-      tabNav,
-    ],
-  );
+  const openQuickPrescribeModal = useCallback(({ kind, record }) => {
+    if (!record?.id) return;
+    setQuickPrescribeTarget({ kind, record });
+    setQuickPrescribeDiagnosis(buildDefaultQuickPrescribeDiagnosis(kind, record));
+    setQuickPrescribeMeds("");
+  }, []);
 
-  // Open a conversation we already created via "Help" - used by the doctor
-  // panel when they tap "Open chat" on a card they already offered on. This
-  // *does* pre-select the chat so the doctor isn't forced to scroll the list.
+  const closeQuickPrescribeModal = useCallback(() => {
+    if (quickPrescribeBusy) return;
+    setQuickPrescribeTarget(null);
+    setQuickPrescribeDiagnosis("");
+    setQuickPrescribeMeds("");
+  }, [quickPrescribeBusy]);
+
+  const submitQuickPrescribeModal = useCallback(async () => {
+    if (!quickPrescribeTarget?.record) return;
+    const lines = parseMedLinesFromQuickPrescribeText(quickPrescribeMeds);
+    if (!lines.length) {
+      Alert.alert(
+        "Medicines required",
+        "Enter at least one medicine (one per line).",
+      );
+      return;
+    }
+    const disease = String(quickPrescribeDiagnosis || "").trim();
+    if (!disease) {
+      Alert.alert(
+        "Diagnosis required",
+        "Enter the condition or diagnosis this prescription is for.",
+      );
+      return;
+    }
+    try {
+      setQuickPrescribeBusy(true);
+      await prescribeForQuickRequest({
+        kind: quickPrescribeTarget.kind,
+        record: quickPrescribeTarget.record,
+        prescriptionInput: { disease, lines },
+      });
+      setQuickPrescribeTarget(null);
+      setQuickPrescribeDiagnosis("");
+      setQuickPrescribeMeds("");
+    } catch (e) {
+      Alert.alert(
+        "Could not prescribe",
+        e?.message || "Please try again.",
+      );
+    } finally {
+      setQuickPrescribeBusy(false);
+    }
+  }, [
+    quickPrescribeTarget,
+    quickPrescribeMeds,
+    quickPrescribeDiagnosis,
+    prescribeForQuickRequest,
+  ]);
+
+  const quickPrescribePreview = quickPrescribeTarget
+    ? quickPrescribeTarget.kind === "counselling"
+      ? `Topic: ${String(displayQuickCounsellingTopic(quickPrescribeTarget.record) || "").trim() || "—"}`
+      : String(displayQuickSolutionNotes(quickPrescribeTarget.record) || "")
+          .trim() || "—"
+    : "";
+
+  // Open a conversation we already created via prescribe/help — pre-select chat.
   const handleOpenExistingHelpChat = useCallback(
     (conversationId, patientUserId) => {
       if (conversationId) {
@@ -18057,8 +18330,8 @@ const DoctorDashboard = ({ wounds, patients }) => {
               <DoctorQuickRequestsPanel
                 theme={theme}
                 doctorUserId={currentUser?.id}
-                onHelpPatient={handleHelpQuickPatient}
                 onOpenHelpChat={handleOpenExistingHelpChat}
+                onPrescribeQuickRequest={openQuickPrescribeModal}
               />
 
               <DoctorUpcomingAppointmentsSection />
@@ -18126,22 +18399,38 @@ const DoctorDashboard = ({ wounds, patients }) => {
             <DoctorQuickRequestsPanel
               theme={theme}
               doctorUserId={currentUser?.id}
-              onHelpPatient={handleHelpQuickPatient}
               onOpenHelpChat={handleOpenExistingHelpChat}
+              onPrescribeQuickRequest={openQuickPrescribeModal}
               layout="split_tracks"
               autoRefreshQuickQueues
             />
           )}
         </View>
       </ScrollView>
+      <QuickRequestPrescribeModal
+        theme={theme}
+        visible={!!quickPrescribeTarget}
+        requestKind={quickPrescribeTarget?.kind}
+        patientLabel={
+          quickPrescribeTarget?.record
+            ? quickRequestModalPatientLabel(quickPrescribeTarget.record)
+            : ""
+        }
+        previewText={quickPrescribePreview}
+        diagnosis={quickPrescribeDiagnosis}
+        onDiagnosisChange={setQuickPrescribeDiagnosis}
+        medLinesText={quickPrescribeMeds}
+        onMedLinesChange={setQuickPrescribeMeds}
+        busy={quickPrescribeBusy}
+        onClose={closeQuickPrescribeModal}
+        onSubmit={submitQuickPrescribeModal}
+      />
     </SafeAreaView>
   );
 };
 
 const DoctorPatientsScreen = ({ patients }) => {
   const { theme } = useTheme();
-
-  const riskColor = (level) =>
     level === "High" ? "#DC2626" : level === "Medium" ? "#D97706" : "#059669";
   const riskBg = (level) =>
     level === "High" ? "#FEF2F2" : level === "Medium" ? "#FEF3C7" : "#ECFDF5";
@@ -27762,11 +28051,9 @@ const PharmacyDashboard = ({ orders }) => {
     updateOrderStatus,
     currentUser,
     patientProfile,
-    ensureDirectConversation,
-    sendConversationMessage,
-    refreshAllData,
     requestOpenConversation,
     requestOpenDirectChatWithPatient,
+    prescribeForQuickRequest,
   } = useAppData();
   const tabNav = useMainTabNav();
   const receivesMeds = pharmacyReceivesMedicineOrders(patientProfile);
@@ -27774,45 +28061,74 @@ const PharmacyDashboard = ({ orders }) => {
     normalizePharmacyProviderKind(patientProfile?.provider_kind) ===
     PHARMACY_PROVIDER_KIND.RMP_DOCTOR;
 
-  const handleHelpQuickPatient = useCallback(
-    async ({ requestId, requestKind, patientUserId, message }) => {
-      if (!currentUser?.id) {
-        throw new Error("Sign in again before offering help.");
-      }
-      const conversation = await ensureDirectConversation(patientUserId);
-      const conversationId = conversation?.id;
-      if (!conversationId) {
-        throw new Error("Could not open chat with this patient.");
-      }
-      await sendConversationMessage(conversationId, message);
-      try {
-        await recordQuickHelpOffer({
-          requestId,
-          requestKind,
-          doctorUserId: currentUser.id,
-          patientUserId,
-          conversationId,
-          firstMessage: message,
-        });
-      } catch (e) {
-        console.log("recordQuickHelpOffer ignored:", e?.message);
-      }
-      try {
-        await refreshAllData();
-      } catch {
-        // ignore
-      }
-      tabNav?.navigateTab?.("Chat");
-      return { conversationId };
-    },
-    [
-      currentUser?.id,
-      ensureDirectConversation,
-      sendConversationMessage,
-      refreshAllData,
-      tabNav,
-    ],
-  );
+  const [quickPrescribeTarget, setQuickPrescribeTarget] = useState(null);
+  const [quickPrescribeDiagnosis, setQuickPrescribeDiagnosis] = useState("");
+  const [quickPrescribeMeds, setQuickPrescribeMeds] = useState("");
+  const [quickPrescribeBusy, setQuickPrescribeBusy] = useState(false);
+
+  const openQuickPrescribeModal = useCallback(({ kind, record }) => {
+    if (!record?.id) return;
+    setQuickPrescribeTarget({ kind, record });
+    setQuickPrescribeDiagnosis(buildDefaultQuickPrescribeDiagnosis(kind, record));
+    setQuickPrescribeMeds("");
+  }, []);
+
+  const closeQuickPrescribeModal = useCallback(() => {
+    if (quickPrescribeBusy) return;
+    setQuickPrescribeTarget(null);
+    setQuickPrescribeDiagnosis("");
+    setQuickPrescribeMeds("");
+  }, [quickPrescribeBusy]);
+
+  const submitQuickPrescribeModal = useCallback(async () => {
+    if (!quickPrescribeTarget?.record) return;
+    const lines = parseMedLinesFromQuickPrescribeText(quickPrescribeMeds);
+    if (!lines.length) {
+      Alert.alert(
+        "Medicines required",
+        "Enter at least one medicine (one per line).",
+      );
+      return;
+    }
+    const disease = String(quickPrescribeDiagnosis || "").trim();
+    if (!disease) {
+      Alert.alert(
+        "Diagnosis required",
+        "Enter the condition or diagnosis this prescription is for.",
+      );
+      return;
+    }
+    try {
+      setQuickPrescribeBusy(true);
+      await prescribeForQuickRequest({
+        kind: quickPrescribeTarget.kind,
+        record: quickPrescribeTarget.record,
+        prescriptionInput: { disease, lines },
+      });
+      setQuickPrescribeTarget(null);
+      setQuickPrescribeDiagnosis("");
+      setQuickPrescribeMeds("");
+    } catch (e) {
+      Alert.alert(
+        "Could not prescribe",
+        e?.message || "Please try again.",
+      );
+    } finally {
+      setQuickPrescribeBusy(false);
+    }
+  }, [
+    quickPrescribeTarget,
+    quickPrescribeMeds,
+    quickPrescribeDiagnosis,
+    prescribeForQuickRequest,
+  ]);
+
+  const quickPrescribePreview = quickPrescribeTarget
+    ? quickPrescribeTarget.kind === "counselling"
+      ? `Topic: ${String(displayQuickCounsellingTopic(quickPrescribeTarget.record) || "").trim() || "—"}`
+      : String(displayQuickSolutionNotes(quickPrescribeTarget.record) || "")
+          .trim() || "—"
+    : "";
 
   const handleOpenExistingHelpChat = useCallback(
     (conversationId, patientUserId) => {
@@ -27910,8 +28226,8 @@ const PharmacyDashboard = ({ orders }) => {
           <DoctorQuickRequestsPanel
             theme={theme}
             doctorUserId={currentUser?.id}
-            onHelpPatient={handleHelpQuickPatient}
             onOpenHelpChat={handleOpenExistingHelpChat}
+            onPrescribeQuickRequest={openQuickPrescribeModal}
             autoRefreshQuickQueues
           />
         </View>
@@ -28089,6 +28405,24 @@ const PharmacyDashboard = ({ orders }) => {
           </View>
         )}
       </ScrollView>
+      <QuickRequestPrescribeModal
+        theme={theme}
+        visible={!!quickPrescribeTarget}
+        requestKind={quickPrescribeTarget?.kind}
+        patientLabel={
+          quickPrescribeTarget?.record
+            ? quickRequestModalPatientLabel(quickPrescribeTarget.record)
+            : ""
+        }
+        previewText={quickPrescribePreview}
+        diagnosis={quickPrescribeDiagnosis}
+        onDiagnosisChange={setQuickPrescribeDiagnosis}
+        medLinesText={quickPrescribeMeds}
+        onMedLinesChange={setQuickPrescribeMeds}
+        busy={quickPrescribeBusy}
+        onClose={closeQuickPrescribeModal}
+        onSubmit={submitQuickPrescribeModal}
+      />
     </SafeAreaView>
   );
 };
@@ -30176,6 +30510,275 @@ export default function App() {
     await refreshAllData();
   };
 
+  const prescribeForQuickRequest = async ({
+    kind,
+    record,
+    prescriptionInput,
+  }) => {
+    const requestKind = kind === "counselling" ? "counselling" : "solution";
+    const requestId = record?.id;
+    if (!requestId) throw new Error("Quick request not found.");
+    const patientId =
+      (typeof record?.patient === "string" && record.patient) ||
+      record?.patient?.id ||
+      "";
+    if (!patientId) throw new Error("Patient not found on this request.");
+    if (!currentUser?.id) throw new Error("Sign in required.");
+
+    let prescription = prescriptionInput;
+    if (Array.isArray(prescriptionInput)) {
+      prescription = {
+        disease:
+          requestKind === "counselling"
+            ? String(record?.topic || "").trim().slice(0, 120) ||
+              "Quick counselling"
+            : String(displayQuickSolutionNotes(record) || "")
+                .trim()
+                .slice(0, 120) || "Quick solution",
+        lines: prescriptionInput.map((name) => ({
+          name: String(name || "").trim(),
+          dosage: "As directed",
+          whenToTake: "",
+          duration: "",
+        })),
+      };
+    }
+
+    const lines = safeArray(prescription?.lines)
+      .map((line) => normalizePrescriptionLineFromUnknown(line))
+      .filter(Boolean);
+    if (!lines.length) {
+      throw new Error("Add at least one medicine with a name.");
+    }
+
+    const disease = String(prescription?.disease || "").trim();
+    if (!disease) {
+      throw new Error(
+        "Enter the condition or diagnosis this prescription is for.",
+      );
+    }
+
+    const conversation = await ensureDirectConversation(patientId);
+    const conversationId = conversation?.id;
+    if (!conversationId) {
+      throw new Error("Could not open chat with this patient.");
+    }
+
+    const pharmacyUsers = await fetchUsersByRole("pharmacy");
+    if (pharmacyUsers.length > 0) {
+      await ensureConversationMembers(
+        conversationId,
+        pharmacyUsers.map((user) => user.id),
+      );
+    }
+
+    let existingOrder = null;
+    try {
+      const records = await pb.collection("orders").getFullList({
+        requestKey: null,
+        filter: `conversation="${conversationId}"`,
+      });
+      existingOrder =
+        (records || []).find((row) => !row.wound) || (records || [])[0] || null;
+    } catch (error) {
+      existingOrder = null;
+    }
+
+    const orderPayloadBase = {
+      conversation: conversationId,
+      patient: patientId,
+      totalAmount: sumMedicationAmount(lines),
+      status: "pending",
+    };
+
+    const persistOrder = async (payload) => {
+      if (existingOrder) {
+        await pb.collection("orders").update(existingOrder.id, payload);
+      } else {
+        await pb.collection("orders").create(payload);
+      }
+    };
+
+    try {
+      await persistOrder({
+        ...orderPayloadBase,
+        items: lines,
+        diagnosis: disease,
+      });
+    } catch (structuredError) {
+      console.log("quick prescribe order (structured):", structuredError);
+      const legacyItems = lines.map((line) =>
+        [line.name, line.dosage, line.whenToTake, line.duration]
+          .filter(Boolean)
+          .join(" | "),
+      );
+      try {
+        await persistOrder({
+          ...orderPayloadBase,
+          items: legacyItems,
+        });
+      } catch (legacyError) {
+        console.log("quick prescribe order (legacy):", legacyError);
+        throw legacyError;
+      }
+    }
+
+    const linesForStorage = lines.map((line) => {
+      const whenToTake =
+        line.whenToTake || describeStructuredTiming(line) || "";
+      return {
+        ...line,
+        whenToTake,
+      };
+    });
+
+    const quickCol =
+      requestKind === "counselling"
+        ? "quick_counselling_requests"
+        : "quick_solution_requests";
+    const quickField =
+      requestKind === "counselling"
+        ? "quick_counselling_request"
+        : "quick_solution_request";
+
+    let savedPrescriptionId = null;
+    try {
+      let existingPrescription = null;
+      try {
+        const records = await pb.collection("prescriptions").getFullList({
+          requestKey: null,
+          filter: `${quickField}="${requestId}"`,
+        });
+        existingPrescription = (records || [])[0] || null;
+      } catch (error) {
+        console.log("quick prescribe prescriptions query:", error?.message);
+      }
+      const prescriptionPayload = {
+        patient: patientId,
+        doctor: currentUser.id,
+        conversation: conversationId,
+        items: linesForStorage,
+        notes: disease,
+        [quickField]: requestId,
+      };
+      if (existingPrescription) {
+        await pb
+          .collection("prescriptions")
+          .update(existingPrescription.id, prescriptionPayload);
+        savedPrescriptionId = existingPrescription.id;
+      } else {
+        try {
+          const created = await pb
+            .collection("prescriptions")
+            .create(prescriptionPayload);
+          savedPrescriptionId = created?.id || null;
+        } catch (createErr) {
+          const { [quickField]: _drop, ...fallbackPayload } =
+            prescriptionPayload;
+          const created = await pb
+            .collection("prescriptions")
+            .create(fallbackPayload);
+          savedPrescriptionId = created?.id || null;
+        }
+      }
+    } catch (error) {
+      console.log("quick prescribe prescriptions save:", error?.message);
+    }
+
+    if (savedPrescriptionId && patientId) {
+      try {
+        try {
+          const staleDoses = await pb.collection("medication_schedule").getFullList({
+            requestKey: null,
+            filter: `prescription="${savedPrescriptionId}" && status="pending"`,
+          });
+          for (const dose of staleDoses || []) {
+            await pb
+              .collection("medication_schedule")
+              .delete(dose.id)
+              .catch(() => {});
+          }
+        } catch (cleanupError) {
+          console.log(
+            "quick prescribe schedule cleanup:",
+            cleanupError?.message,
+          );
+        }
+        const context = {
+          patientId,
+          prescriptionId: savedPrescriptionId,
+          woundId: null,
+        };
+        for (const line of linesForStorage) {
+          const rows = buildScheduleRowsForLine(line, context);
+          for (const row of rows) {
+            try {
+              const createdDose = await pb
+                .collection("medication_schedule")
+                .create(row);
+              scheduleDoseReminder(createdDose).catch(() => {});
+            } catch (rowError) {
+              console.log(
+                "quick prescribe schedule row:",
+                rowError?.message,
+              );
+            }
+          }
+        }
+      } catch (scheduleError) {
+        console.log("quick prescribe schedule:", scheduleError?.message);
+      }
+    }
+
+    const medicationSummary = lines
+      .map((line) => {
+        const parts = [line.name];
+        if (line.dosage) parts.push(line.dosage);
+        if (line.whenToTake) parts.push(line.whenToTake);
+        if (line.duration) parts.push(line.duration);
+        return parts.join(", ");
+      })
+      .join("; ");
+    const pharmacyNote =
+      pharmacyUsers.length > 0 ? " Pharmacy order created." : "";
+
+    const systemText = `Prescription sent for "${disease}": ${medicationSummary}.${pharmacyNote}`;
+
+    await createEncryptedMessage(
+      {
+        conversation: conversationId,
+        kind: "system",
+      },
+      systemText,
+    );
+    await pb.collection("conversations").update(conversationId, {
+      lastMessageAt: new Date().toISOString(),
+    });
+
+    try {
+      await pb.collection(quickCol).update(requestId, {
+        status: QUICK_REQUEST_STATUS.ASSIGNED,
+      });
+    } catch (statusErr) {
+      console.log("quick request status assigned skipped:", statusErr?.message);
+    }
+
+    try {
+      await recordQuickHelpOffer({
+        requestId,
+        requestKind,
+        doctorUserId: currentUser.id,
+        patientUserId: patientId,
+        conversationId,
+        firstMessage: systemText.slice(0, 500),
+      });
+    } catch (e) {
+      console.log("recordQuickHelpOffer (quick prescribe):", e?.message);
+    }
+
+    await refreshAllData();
+  };
+
   const updateOrderStatus = async (orderLike, nextStatus) => {
     const orderId = orderLike?.id || orderLike?.raw?.id;
     if (!orderId) return;
@@ -31803,6 +32406,7 @@ export default function App() {
     requestChatTabAndAnswerCall,
     createWoundReport,
     prescribeForWound,
+    prescribeForQuickRequest,
     updateOrderStatus,
     createPharmacyOrder,
     fetchApprovedDoctors,

@@ -5306,25 +5306,20 @@ function truncateOneLine(s, max) {
 }
 
 /**
- * `onHelpPatient` is called when the doctor confirms the help modal. Parent
- * is responsible for: ensuring/creating the direct conversation, posting the
- * first message, recording the offer, switching to the Chat tab, and
- * selecting the right conversation. We just collect the message + identifiers.
+ * Primary action per card: **Prescribe** (opens parent composer) until an offer
+ * exists for that request, then **Chat** to open the thread.
  *
- *   onHelpPatient({ requestId, requestKind, patientUserId, message })
- *     => Promise<{ conversationId } | void>
+ *   onPrescribeQuickRequest({ kind, record })
  *
- * `onOpenHelpChat(conversationId, patientUserId)` is called when the doctor
- * presses "Open chat" on a card they already offered help on (so we don't
- * duplicate the first message or the offer row in PocketBase).
+ * `onOpenHelpChat(conversationId, patientUserId)` opens the conversation after
+ * prescribe (or a prior help flow) created one.
  *
- * `onPrescribeQuickRequest({ kind, record })` — optional; shows a Prescribe
- * button on each queued card so the provider can open the prescription composer.
+ * `combined` — single “Quick Queues” card (default).
+ * `split_tracks` — two dashboard cards: Quick Solution Tracks + Quick Counselling Tracks.
  */
 export function DoctorQuickRequestsPanel({
   theme,
   doctorUserId,
-  onHelpPatient,
   onOpenHelpChat,
   onPrescribeQuickRequest,
   /** When true, hide the manual Refresh control and keep lists fresh via poll + PocketBase realtime. */
@@ -5342,13 +5337,9 @@ export function DoctorQuickRequestsPanel({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // Map of `${kind}:${requestId}` → { conversationId, offerId } for offers
-  // this doctor already made. Lets us flip Help → Open chat per card.
+  // Map of `${kind}:${requestId}` → { conversationId, offerId } for prescribe /
+  // help flows so the primary action can switch to Chat.
   const [offerMap, setOfferMap] = useState({});
-
-  const [helpTarget, setHelpTarget] = useState(null);
-  const [helpMessage, setHelpMessage] = useState("");
-  const [helpBusy, setHelpBusy] = useState(false);
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
@@ -5463,88 +5454,10 @@ export function DoctorQuickRequestsPanel({
     };
   }, [autoRefreshQuickQueues, load]);
 
-  const openHelpModal = (record, kind) => {
-    const patientUserId = quickRequestPatientUserId(record);
-    if (!patientUserId) {
-      Alert.alert(
-        "Cannot start chat",
-        "This request does not include the patient id (private mode or expand failed). Ask the patient to resend it.",
-      );
-      return;
-    }
-    if (!user?.id) {
-      Alert.alert(
-        "Sign in required",
-        "Please sign in again before offering help.",
-      );
-      return;
-    }
-    setHelpTarget({
-      requestId: record.id,
-      requestKind: kind,
-      patientUserId,
-      patientLabel: quickRequestPatientLabel(record),
-      preview:
-        kind === "solution"
-          ? truncateOneLine(displayQuickSolutionNotes(record), 120)
-          : `Topic: ${truncateOneLine(displayQuickCounsellingTopic(record), 100) || "General"}`,
-    });
-    setHelpMessage(
-      kind === "solution"
-        ? "Hi - I saw your Quick Solution request. I can help. Could you share more details?"
-        : "Hi - I saw your Quick Counselling request. Happy to help. What would you like to talk about first?",
-    );
-  };
+  const quickRequestStatusLabel = (record) =>
+    String(record?.status || "queued").toLowerCase();
 
-  const closeHelpModal = () => {
-    if (helpBusy) return;
-    setHelpTarget(null);
-    setHelpMessage("");
-  };
-
-  const submitHelpModal = async () => {
-    const text = String(helpMessage || "").trim();
-    if (!helpTarget) return;
-    if (!text) {
-      Alert.alert(
-        "Add a message",
-        "Type a short opener so the patient knows how you can help.",
-      );
-      return;
-    }
-    if (typeof onHelpPatient !== "function") {
-      Alert.alert(
-        "Chat unavailable",
-        "Chat handler is missing on this screen. Please reload the dashboard.",
-      );
-      return;
-    }
-    try {
-      setHelpBusy(true);
-      const result = await onHelpPatient({
-        requestId: helpTarget.requestId,
-        requestKind: helpTarget.requestKind,
-        patientUserId: helpTarget.patientUserId,
-        message: text,
-      });
-      const conversationId = result?.conversationId || "";
-      setOfferMap((prev) => ({
-        ...prev,
-        [`${helpTarget.requestKind}:${helpTarget.requestId}`]: {
-          conversationId,
-          offerId: "",
-        },
-      }));
-      setHelpTarget(null);
-      setHelpMessage("");
-    } catch (e) {
-      Alert.alert("Could not start chat", e?.message || "Please try again.");
-    } finally {
-      setHelpBusy(false);
-    }
-  };
-
-  const renderHelpButton = (record, kind) => {
+  const renderPrescribeOrChat = (record, kind) => {
     const key = `${kind}:${record.id}`;
     const existing = offerMap[key];
     const patientUserId = quickRequestPatientUserId(record);
@@ -5575,7 +5488,7 @@ export function DoctorQuickRequestsPanel({
           }}
         >
           <Ionicons
-            name="checkmark-circle"
+            name="chatbubbles-outline"
             size={14}
             color={theme.accent}
             style={{ marginRight: 6 }}
@@ -5583,7 +5496,7 @@ export function DoctorQuickRequestsPanel({
           <Text
             style={{ color: theme.accent, fontWeight: "700", fontSize: 12 }}
           >
-            Open chat
+            Chat
           </Text>
         </TouchableOpacity>
       );
@@ -5591,7 +5504,16 @@ export function DoctorQuickRequestsPanel({
 
     return (
       <TouchableOpacity
-        onPress={() => openHelpModal(record, kind)}
+        onPress={() => {
+          if (typeof onPrescribeQuickRequest !== "function") {
+            Alert.alert(
+              "Prescribe unavailable",
+              "This screen is not wired for prescribing yet.",
+            );
+            return;
+          }
+          onPrescribeQuickRequest({ kind, record });
+        }}
         style={{
           alignSelf: "flex-start",
           flexDirection: "row",
@@ -5603,13 +5525,13 @@ export function DoctorQuickRequestsPanel({
         }}
       >
         <Ionicons
-          name="chatbubbles"
+          name="reader-outline"
           size={14}
           color="#FFF"
           style={{ marginRight: 6 }}
         />
         <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 12 }}>
-          Help
+          Prescribe
         </Text>
       </TouchableOpacity>
     );
@@ -5624,33 +5546,7 @@ export function DoctorQuickRequestsPanel({
         marginTop: 10,
       }}
     >
-      {renderHelpButton(record, kind)}
-      {onPrescribeQuickRequest ? (
-        <TouchableOpacity
-          onPress={() => onPrescribeQuickRequest({ kind, record })}
-          style={{
-            marginLeft: 8,
-            marginTop: 0,
-            alignSelf: "flex-start",
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: 14,
-            paddingVertical: 8,
-            borderRadius: 999,
-            backgroundColor: theme.success,
-          }}
-        >
-          <Ionicons
-            name="reader-outline"
-            size={14}
-            color="#FFF"
-            style={{ marginRight: 6 }}
-          />
-          <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 12 }}>
-            Prescribe
-          </Text>
-        </TouchableOpacity>
-      ) : null}
+      {renderPrescribeOrChat(record, kind)}
     </View>
   );
 
@@ -5667,7 +5563,7 @@ export function DoctorQuickRequestsPanel({
       }}
     >
       <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
-        Quick Solution · queued
+        Quick Solution · {quickRequestStatusLabel(r)}
       </Text>
       <Text
         style={{ color: theme.textPrimary, fontWeight: "700", marginTop: 4 }}
@@ -5699,7 +5595,7 @@ export function DoctorQuickRequestsPanel({
       }}
     >
       <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
-        Quick Counselling · queued
+        Quick Counselling · {quickRequestStatusLabel(r)}
       </Text>
       <Text
         style={{ color: theme.textPrimary, fontWeight: "700", marginTop: 4 }}
@@ -5864,133 +5760,6 @@ export function DoctorQuickRequestsPanel({
           </>,
           { icon: "chatbubbles-outline", title: "Quick Counselling tracks" },
         )}
-
-        <Modal
-          animationType="fade"
-          transparent
-          visible={!!helpTarget}
-          onRequestClose={closeHelpModal}
-        >
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: "rgba(0,0,0,0.4)",
-              justifyContent: "center",
-              paddingHorizontal: 18,
-            }}
-          >
-            <View
-              style={{
-                backgroundColor: theme.card,
-                borderRadius: 18,
-                padding: 18,
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: theme.cardBorder,
-              }}
-            >
-              <Text
-                style={{
-                  color: theme.textPrimary,
-                  fontWeight: "800",
-                  fontSize: 16,
-                  marginBottom: 4,
-                }}
-              >
-                Offer help to{" "}
-                {helpTarget?.patientLabel === "Private - identity hidden"
-                  ? "this patient"
-                  : helpTarget?.patientLabel || "this patient"}
-              </Text>
-              <Text
-                style={{
-                  color: theme.textSecondary,
-                  fontSize: 12,
-                  marginBottom: 10,
-                }}
-              >
-                {helpTarget?.requestKind === "counselling"
-                  ? "Quick Counselling"
-                  : "Quick Solution"}
-                {helpTarget?.preview ? ` · ${helpTarget.preview}` : ""}
-              </Text>
-              <Text
-                style={{
-                  color: theme.textSecondary,
-                  fontSize: 11,
-                  marginBottom: 6,
-                }}
-              >
-                Your message - this becomes the first chat message in the new
-                conversation.
-              </Text>
-              <TextInput
-                value={helpMessage}
-                onChangeText={setHelpMessage}
-                multiline
-                editable={!helpBusy}
-                placeholder="Hi, how can I help?"
-                placeholderTextColor={theme.textTertiary}
-                style={{
-                  minHeight: 96,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                  padding: 12,
-                  color: theme.textPrimary,
-                  backgroundColor: theme.bg,
-                  textAlignVertical: "top",
-                }}
-              />
-              <View
-                style={{
-                  flexDirection: "row",
-                  marginTop: 14,
-                  justifyContent: "flex-end",
-                }}
-              >
-                <TouchableOpacity
-                  onPress={closeHelpModal}
-                  disabled={helpBusy}
-                  style={{
-                    paddingHorizontal: 14,
-                    paddingVertical: 10,
-                    marginRight: 8,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: theme.cardBorder,
-                  }}
-                >
-                  <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                    Cancel
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={submitHelpModal}
-                  disabled={helpBusy}
-                  style={{
-                    paddingHorizontal: 16,
-                    paddingVertical: 10,
-                    borderRadius: 10,
-                    backgroundColor: helpBusy ? theme.accentLight : theme.accent,
-                    flexDirection: "row",
-                    alignItems: "center",
-                  }}
-                >
-                  {helpBusy ? (
-                    <ActivityIndicator
-                      size="small"
-                      color="#FFF"
-                      style={{ marginRight: 6 }}
-                    />
-                  ) : null}
-                  <Text style={{ color: "#FFF", fontWeight: "700" }}>
-                    {helpBusy ? "Sending…" : "Confirm"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
       </View>
     );
   }
@@ -6105,133 +5874,6 @@ export function DoctorQuickRequestsPanel({
       ) : (
         counsellingRows.map(renderCounsellingCard)
       )}
-
-      <Modal
-        animationType="fade"
-        transparent
-        visible={!!helpTarget}
-        onRequestClose={closeHelpModal}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.4)",
-            justifyContent: "center",
-            paddingHorizontal: 18,
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: 18,
-              padding: 18,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontWeight: "800",
-                fontSize: 16,
-                marginBottom: 4,
-              }}
-            >
-              Offer help to{" "}
-              {helpTarget?.patientLabel === "Private - identity hidden"
-                ? "this patient"
-                : helpTarget?.patientLabel || "this patient"}
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 12,
-                marginBottom: 10,
-              }}
-            >
-              {helpTarget?.requestKind === "counselling"
-                ? "Quick Counselling"
-                : "Quick Solution"}
-              {helpTarget?.preview ? ` · ${helpTarget.preview}` : ""}
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 11,
-                marginBottom: 6,
-              }}
-            >
-              Your message - this becomes the first chat message in the new
-              conversation.
-            </Text>
-            <TextInput
-              value={helpMessage}
-              onChangeText={setHelpMessage}
-              multiline
-              editable={!helpBusy}
-              placeholder="Hi, how can I help?"
-              placeholderTextColor={theme.textTertiary}
-              style={{
-                minHeight: 96,
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: theme.cardBorder,
-                padding: 12,
-                color: theme.textPrimary,
-                backgroundColor: theme.bg,
-                textAlignVertical: "top",
-              }}
-            />
-            <View
-              style={{
-                flexDirection: "row",
-                marginTop: 14,
-                justifyContent: "flex-end",
-              }}
-            >
-              <TouchableOpacity
-                onPress={closeHelpModal}
-                disabled={helpBusy}
-                style={{
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                  marginRight: 8,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                }}
-              >
-                <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                  Cancel
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={submitHelpModal}
-                disabled={helpBusy}
-                style={{
-                  paddingHorizontal: 16,
-                  paddingVertical: 10,
-                  borderRadius: 10,
-                  backgroundColor: helpBusy ? theme.accentLight : theme.accent,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                {helpBusy ? (
-                  <ActivityIndicator
-                    size="small"
-                    color="#FFF"
-                    style={{ marginRight: 6 }}
-                  />
-                ) : null}
-                <Text style={{ color: "#FFF", fontWeight: "700" }}>
-                  {helpBusy ? "Sending…" : "Confirm"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }

@@ -4371,7 +4371,7 @@ export async function listQueuedQuickSolutionRequestsForProvider() {
   await assertCurrentUserCanAccessQuickQueues();
   const uid = String(getAuthUser()?.id || "").trim();
   if (!uid) throw new Error("Sign in required.");
-  const filter = `status="queued" && recipient="${uid}"`;
+  const filter = `(status="queued" || status="assigned") && recipient="${uid}"`;
   try {
     return await pb.collection("quick_solution_requests").getFullList({
       requestKey: null,
@@ -4407,7 +4407,7 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
   await assertCurrentUserCanAccessQuickQueues();
   const uid = String(getAuthUser()?.id || "").trim();
   if (!uid) throw new Error("Sign in required.");
-  const filter = `status="queued" && recipient="${uid}"`;
+  const filter = `(status="queued" || status="assigned") && recipient="${uid}"`;
   try {
     return await pb.collection("quick_counselling_requests").getFullList({
       requestKey: null,
@@ -4438,9 +4438,10 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
 // --- Quick Solution / Counselling tracking & doctor help offers ---
 //
 // Status lifecycle (`quick_solution_requests` & `quick_counselling_requests`):
-//   "queued"    - initial state set on submit; visible in doctor queues and the patient tracking list.
-//   "closed"    - patient picked a doctor and closed the request from their tracking list (still in DB).
-//   "cancelled" - patient withdrew the request from their tracking list (still in DB).
+//   "queued"    - patient submitted; doctor / recipient queue.
+//   "assigned"  - doctor created a prescription from this request; still open until patient closes.
+//   "closed"    - patient closed from tracking list.
+//   "cancelled" - patient cancelled.
 //
 // `recipient` (relation → same Users collection as `patient`): the randomly chosen RMP/clinic
 // doctor or pharmacy account that should see this row in their queue. Do not append routing text
@@ -4469,6 +4470,7 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
 //   delete: (admin only)
 export const QUICK_REQUEST_STATUS = {
   QUEUED: "queued",
+  ASSIGNED: "assigned",
   CLOSED: "closed",
   CANCELLED: "cancelled",
 };
@@ -4732,7 +4734,7 @@ export async function listInferredQuickHelpOffersForPatient(
 /** Patient tracking list: their queued requests + grouped doctor offers. */
 export async function listActiveQuickRequestsForPatient(patientUserId) {
   if (!patientUserId) return { items: [], offersMissing: false };
-  const filterActive = `patient="${patientUserId}" && status="queued"`;
+  const filterActive = `patient="${patientUserId}" && (status="queued" || status="assigned")`;
   let solutions = [];
   let counselling = [];
   try {
@@ -4832,8 +4834,11 @@ export async function acceptQuickHelpOffer({
     throw new Error(msg || "Could not load this quick request.");
   }
   const status = String(request?.status || "queued").toLowerCase();
-  if (status !== QUICK_REQUEST_STATUS.QUEUED) {
-    return { paid: false, closed: true, reason: "request_not_queued" };
+  if (
+    status !== QUICK_REQUEST_STATUS.QUEUED &&
+    status !== QUICK_REQUEST_STATUS.ASSIGNED
+  ) {
+    return { paid: false, closed: true, reason: "request_not_active" };
   }
   const reason =
     requestKind === "counselling"
