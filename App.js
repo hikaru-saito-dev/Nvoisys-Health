@@ -16827,6 +16827,22 @@ const DoctorDashboard = ({ wounds, patients }) => {
     [requestOpenConversation, requestOpenDirectChatWithPatient, tabNav],
   );
 
+  const practitionerTier = String(
+    doctorProfile?.practitioner_tier ||
+      doctorProfile?.tier ||
+      doctorProfile?.verification_tier ||
+      doctorProfile?.doctor_class ||
+      currentUser?.practitioner_tier ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  const doctorTypeField = String(doctorProfile?.doctor_type || "")
+    .trim()
+    .toLowerCase();
+  const isSpecialistDoctor =
+    practitionerTier === "specialist" || doctorTypeField === "specialist";
+
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.bg }}
@@ -16981,82 +16997,6 @@ const DoctorDashboard = ({ wounds, patients }) => {
                 </Text>
               </View>
             </View>
-        </View>
-
-        {/* Content */}
-        <View
-          style={{ paddingHorizontal: RFValue(16), marginTop: RFValue(16) }}
-        >
-          <PackageMeetingDoctorPanel theme={theme} />
-          {quickServiceDoctor ? (
-            <DoctorQuickRequestsPanel
-              theme={theme}
-              doctorUserId={currentUser?.id}
-              onHelpPatient={handleHelpQuickPatient}
-              onOpenHelpChat={handleOpenExistingHelpChat}
-            />
-          ) : null}
-
-          <DoctorUpcomingAppointmentsSection />
-
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(20),
-              padding: RFValue(18),
-              marginBottom: RFValue(16),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(14),
-              }}
-            >
-              <View
-                style={{
-                  width: RFValue(36),
-                  height: RFValue(36),
-                  borderRadius: RFValue(10),
-                  backgroundColor: theme.bg,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: RFValue(10),
-                }}
-              >
-                <Ionicons
-                  name="time-outline"
-                  size={RFValue(18)}
-                  color={theme.accent}
-                />
-              </View>
-              <Text
-                style={{
-                  fontSize: RFValue(16),
-                  fontWeight: "800",
-                  color: theme.textPrimary,
-                }}
-              >
-                Recent Activity
-              </Text>
-            </View>
-            <Text
-              style={{
-                fontSize: RFValue(13),
-                color: theme.textSecondary,
-                textAlign: "center",
-                paddingVertical: RFValue(10),
-              }}
-            >
-              No recent activity to show.
-            </Text>
-          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -18172,7 +18112,8 @@ const DoctorAccountScheduleScreen = ({ onBack }) => {
 
 const DoctorProfileScreen = ({ onLogout }) => {
   const { theme, followSystem, setFollowSystem } = useTheme();
-  const { currentUser, refreshAllData } = useAppData();
+  const { currentUser, refreshAllData, patientProfile: doctorContextProfile } =
+    useAppData();
   const [showTheme, setShowTheme] = useState(false);
   const [showPackageSetup, setShowPackageSetup] = useState(false);
   const [doctorAccountPane, setDoctorAccountPane] = useState(null);
@@ -18239,6 +18180,26 @@ const DoctorProfileScreen = ({ onLogout }) => {
     };
   }, [currentUser?.id, profileReloadNonce]);
 
+  const profileTier = String(
+    doctorRow?.practitioner_tier ||
+      doctorRow?.tier ||
+      doctorRow?.verification_tier ||
+      doctorRow?.doctor_class ||
+      doctorContextProfile?.practitioner_tier ||
+      doctorContextProfile?.tier ||
+      currentUser?.practitioner_tier ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  const profileDoctorType = String(
+    doctorRow?.doctor_type || doctorContextProfile?.doctor_type || "",
+  )
+    .trim()
+    .toLowerCase();
+  const isSpecialistDashboard =
+    profileTier === "specialist" || profileDoctorType === "specialist";
+
   const toggleConcernChip = (chipId) => {
     const tag = normalizeConcernTag(chipId);
     if (!tag) return;
@@ -18288,7 +18249,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
     }
   };
 
-  if (showPackageSetup && doctorProfileId) {
+  if (showPackageSetup && doctorProfileId && !isSpecialistDashboard) {
     return (
       <DoctorPackageSetupScreen
         theme={theme}
@@ -18353,6 +18314,22 @@ const DoctorProfileScreen = ({ onLogout }) => {
       <DoctorAccountScheduleScreen
         onBack={() => setDoctorAccountPane(null)}
       />
+    );
+  }
+
+  if (currentUser?.id && loadingConcerns) {
+    return (
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        edges={["left", "right"]}
+      >
+        <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+        <View
+          style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+        >
+          <ActivityIndicator color={theme.success} />
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -18671,61 +18648,63 @@ const DoctorProfileScreen = ({ onLogout }) => {
             )}
           </View>
 
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(18),
-              padding: RFValue(16),
-              marginBottom: RFValue(12),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-            }}
-          >
-            <Text
+          {!isSpecialistDashboard ? (
+            <View
               style={{
-                fontSize: RFValue(16),
-                fontWeight: "800",
-                color: "#1E1B4B",
-                marginBottom: RFValue(6),
-              }}
-            >
-              Care packages (3)
-            </Text>
-            <Text
-              style={{
-                fontSize: RFValue(12),
-                color: "#6B7280",
+                backgroundColor: theme.card,
+                borderRadius: RFValue(18),
+                padding: RFValue(16),
                 marginBottom: RFValue(12),
-              }}
-            >
-              Features and package copy are fixed by the app; you only set your
-              fee for each tier. Patients see this on Find Doctor. After a
-              meeting you send an offer and may adjust the fee again before
-              sending.
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowPackageSetup(true)}
-              style={{
-                backgroundColor: "#4338CA",
-                paddingVertical: RFValue(12),
-                borderRadius: RFValue(14),
-                alignItems: "center",
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
               }}
             >
               <Text
                 style={{
-                  color: "#FFF",
+                  fontSize: RFValue(16),
                   fontWeight: "800",
-                  fontSize: RFValue(14),
+                  color: "#1E1B4B",
+                  marginBottom: RFValue(6),
                 }}
               >
-                Edit my 3 packages
+                Care packages (3)
               </Text>
-            </TouchableOpacity>
-          </View>
+              <Text
+                style={{
+                  fontSize: RFValue(12),
+                  color: "#6B7280",
+                  marginBottom: RFValue(12),
+                }}
+              >
+                Features and package copy are fixed by the app; you only set
+                your fee for each tier. Patients see this on Find Doctor. After
+                a meeting you send an offer and may adjust the fee again before
+                sending.
+              </Text>
+              <TouchableOpacity
+                onPress={() => setShowPackageSetup(true)}
+                style={{
+                  backgroundColor: "#4338CA",
+                  paddingVertical: RFValue(12),
+                  borderRadius: RFValue(14),
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    color: "#FFF",
+                    fontWeight: "800",
+                    fontSize: RFValue(14),
+                  }}
+                >
+                  Edit my 3 packages
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </View>
 
         <View style={{ padding: RFValue(16) }}>

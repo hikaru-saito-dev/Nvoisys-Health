@@ -567,6 +567,15 @@ async function createDoctorProfileRecord(userId, merged) {
   if (language) payload.language = language;
   if (phone) payload.phone = phone;
 
+  const practitionerTier = String(merged.practitioner_tier || "").trim();
+  if (practitionerTier) {
+    payload.practitioner_tier = practitionerTier;
+  }
+  const doctorType = String(merged.doctor_type || "").trim();
+  if (doctorType) {
+    payload.doctor_type = doctorType;
+  }
+
   return await pb.collection("doctor_profile").create(payload);
 }
 
