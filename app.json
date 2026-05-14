@@ -71,7 +71,7 @@
     "extra": {
       "router": {},
       "pbAppointmentsCollection": "appointments",
-      "pbAppointmentDoctorIsProfile": false,
+      "pbAppointmentDoctorIsProfile": true,
       "paymentMode": "cashfree",
       "stripePublishableKey": "",
       "paymentBackendUrl": "https://api.nvoisyshealth.com",
@@ -79,9 +79,9 @@
       "aiBaseUrl": "https://api.groq.com/openai/v1/chat/completions",
       "aiModel": "llama-3.3-70b-versatile",
       "eas": {
-        "projectId": "6b345802-3c6f-47bd-9626-23e7f2957b1f"
+        "projectId": "7e784527-38d6-49f6-869a-0bfc8c42812b"
       }
     },
-    "owner": "kokoshiro_dev_4"
+    "owner": "kokoshiro_dev_6"
   }
 }

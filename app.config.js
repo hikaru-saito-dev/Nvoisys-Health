@@ -54,7 +54,7 @@ module.exports = ({ config }) => {
 
   return {
     ...config,
-    plugins: [...basePlugins, androidAbiPlugin],
+    plugins: [...basePlugins, "expo-sharing", androidAbiPlugin],
     extra: {
       ...baseExtra,
       aiApiKey:

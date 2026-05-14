@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
+import { LinearGradient } from "expo-linear-gradient";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -8,6 +9,7 @@ import {
   AppState,
   Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
   Platform,
   RefreshControl,
@@ -16,8 +18,16 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  UIManager,
   View,
 } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   androidKeyboardPad,
@@ -27,16 +37,19 @@ import {
 } from "./keyboardScrollUtils";
 import { getAuthUser, pb } from "./pocketbase";
 import {
+  acceptQuickHelpOffer,
   cancelQuickRequest,
   CARE_MODE,
   buildConsultationTimeWindowFromStartDate,
   closeQuickRequest,
-  consumerPlanDisplayName,
   createPatientSelectedPackageOffer,
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
   createQuickSolutionRequest,
+  pickRandomQuickCareRecipient,
   entitlementsForConsumerPlan,
+  displayQuickCounsellingTopic,
+  displayQuickSolutionNotes,
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
   doctorPackageFeeErrors,
@@ -44,24 +57,27 @@ import {
   doctorProposePackageMeetingReschedule,
   doctorSendPackageOfferFromSlot,
   doctorTierEligibleForPackageMode,
+  doctorTierEligibleForQuickService,
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
   getFixedPackageDefinitionForSlot,
   getAiAssistantUsageToday,
   getCoinBalanceForUser,
+  fetchUsersAuthByIds,
+  hydrateRowsPatientAuthUsers,
+  resolveListingDisplayName,
   incrementAiAssistantUsageToday,
   getDoctorCoinBalance,
+  getDoctorCoinBucketBalances,
   listActivePackagePairsForDoctor,
   listActivePackagePairsForPatient,
   listActiveQuickRequestsForPatient,
   listCoinLedgerForUser,
-  listInferredOffersByDoctor,
   listPackageMeetingsForDoctor,
   listPackageMeetingsForPatient,
   listPackageOffersForPatient,
   listQueuedQuickCounsellingRequestsForProvider,
   listQueuedQuickSolutionRequestsForProvider,
-  listQuickHelpOffersByDoctor,
   listPackageReferralsForDoctor,
   mergeLocalFeesOntoSlots,
   normalizeDoctorPackageSlots,
@@ -87,6 +103,8 @@ import {
   saveDoctorPackageTemplates,
   settleDueReferralMonthlyCommissions,
   uploadMedicalRecord,
+  WALLET_TOPUP_MAX_INR,
+  WALLET_TOPUP_MIN_INR,
 } from "./productSpecApi";
 
 const S = {
@@ -155,65 +173,84 @@ export function CareModeOnboardingScreen({
   theme,
   patientProfile,
   currentUser,
+  onBack,
   onDone,
+  onCommitPackageDoctor,
   onLoadPackageDoctors,
   onPaySelectedPackage,
+  onWalletTopUp,
+  paymentMode,
+  startInPackageStep = false,
+  packageOnly = false,
 }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
-  const [packageStep, setPackageStep] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [packageStep, setPackageStep] = useState(Boolean(startInPackageStep));
   const [packageDoctors, setPackageDoctors] = useState([]);
   const [doctorSearch, setDoctorSearch] = useState("");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [loadingDoctors, setLoadingDoctors] = useState(false);
+  const [packageDoctorsLoaded, setPackageDoctorsLoaded] = useState(false);
+  const [casualStep, setCasualStep] = useState(false);
+  const [casualAmount, setCasualAmount] = useState(
+    String(WALLET_TOPUP_MIN_INR),
+  );
 
   const loadPackageDoctors = useCallback(async () => {
-    if (typeof onLoadPackageDoctors !== "function") return [];
+    if (typeof onLoadPackageDoctors !== "function") {
+      setPackageDoctorsLoaded(true);
+      return [];
+    }
     setLoadingDoctors(true);
     try {
       const list = await onLoadPackageDoctors();
-      setPackageDoctors(Array.isArray(list) ? list : []);
-      return Array.isArray(list) ? list : [];
+      const next = Array.isArray(list) ? list : [];
+      setPackageDoctors(next);
+      setPackageDoctorsLoaded(true);
+      return next;
     } catch (e) {
-      Alert.alert("Doctors", e?.message || "Could not load doctors.");
+      Alert.alert("Doctors", e?.message || "Could not load package doctors.");
       setPackageDoctors([]);
+      setPackageDoctorsLoaded(true);
       return [];
     } finally {
       setLoadingDoctors(false);
     }
   }, [onLoadPackageDoctors]);
 
-  const pick = async (mode) => {
-    if (mode === CARE_MODE.PACKAGE) {
+  useEffect(() => {
+    if (!packageStep || loadingDoctors || packageDoctorsLoaded) return;
+    void loadPackageDoctors();
+  }, [packageStep, loadingDoctors, packageDoctorsLoaded, loadPackageDoctors]);
+
+  const confirm = async () => {
+    if (!selected) {
+      Alert.alert(
+        "Choose a mode",
+        "Select Casual or Package doctor, then tap Confirm.",
+      );
+      return;
+    }
+    if (selected === "package") {
       setPackageStep(true);
       void loadPackageDoctors();
       return;
     }
+    if (selected === "casual") {
+      setCasualStep(true);
+      return;
+    }
     try {
       setBusy(true);
+      const mode = selected === "skip" ? CARE_MODE.SKIP : CARE_MODE.CASUAL;
       await persistPatientCareMode({
         profileId: patientProfile?.id,
         userId: currentUser?.id,
         mode,
       });
       onDone?.(mode);
-    } catch (e) {
-      Alert.alert("Could not save", e?.message || "Try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const finishPackageMode = async () => {
-    try {
-      setBusy(true);
-      await persistPatientCareMode({
-        profileId: patientProfile?.id,
-        userId: currentUser?.id,
-        mode: CARE_MODE.PACKAGE,
-      });
-      onDone?.(CARE_MODE.PACKAGE);
     } catch (e) {
       Alert.alert("Could not save", e?.message || "Try again.");
     } finally {
@@ -243,13 +280,22 @@ export function CareModeOnboardingScreen({
       } else {
         await patientPayPackageOfferStub(offer.id, selectedDoctor.userId);
       }
-      await finishPackageMode();
+      await persistPatientCareMode({
+        profileId: patientProfile?.id,
+        userId: currentUser?.id,
+        mode: CARE_MODE.PACKAGE,
+      });
+      onDone?.(CARE_MODE.PACKAGE, {
+        offer,
+        doctor: selectedDoctor,
+        slot: selectedSlot,
+      });
       Alert.alert(
         "Package active",
-        "Your doctor is fixed for this package and your package coins are now visible on the dashboard.",
+        "Payment confirmed. This doctor is fixed for structured care.",
       );
     } catch (e) {
-      Alert.alert("Payment", e?.message || "Could not start package.");
+      Alert.alert("Package payment", e?.message || "Could not start package.");
     } finally {
       setBusy(false);
     }
@@ -264,6 +310,40 @@ export function CareModeOnboardingScreen({
     );
   }, [packageDoctors, doctorSearch]);
 
+  const payCasualTopup = async () => {
+    const amount = Math.floor(Number(String(casualAmount || "").trim()));
+    if (
+      !Number.isFinite(amount) ||
+      amount < WALLET_TOPUP_MIN_INR ||
+      amount > WALLET_TOPUP_MAX_INR
+    ) {
+      Alert.alert(
+        "Top up coins",
+        `Enter a whole number from ₹${WALLET_TOPUP_MIN_INR} to ₹${WALLET_TOPUP_MAX_INR}.`,
+      );
+      return;
+    }
+    if (typeof onWalletTopUp !== "function") {
+      Alert.alert("Top up coins", "Wallet top-up is not available right now.");
+      return;
+    }
+    try {
+      setBusy(true);
+      await onWalletTopUp(amount);
+      await persistPatientCareMode({
+        profileId: patientProfile?.id,
+        userId: currentUser?.id,
+        mode: CARE_MODE.CASUAL,
+      });
+      onDone?.(CARE_MODE.CASUAL);
+      Alert.alert("Coins added", `${amount} coins were added to your wallet.`);
+    } catch (e) {
+      Alert.alert("Top up coins", e?.message || "Could not complete top-up.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const card = {
     backgroundColor: theme.card,
     borderRadius: 20,
@@ -272,6 +352,91 @@ export function CareModeOnboardingScreen({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.cardBorder,
   };
+
+  const cardStyle = (key) => ({
+    ...card,
+    borderColor: selected === key ? theme.accent : theme.cardBorder,
+    borderWidth: selected === key ? 2 : StyleSheet.hairlineWidth,
+    backgroundColor: selected === key ? theme.accentLight : theme.card,
+  });
+
+  if (casualStep) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: theme.bg,
+          paddingTop: insets.top + 12,
+        }}
+      >
+        <ScrollView
+          contentContainerStyle={{
+            padding: S.pad,
+            paddingBottom: insets.bottom + 24,
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <TouchableOpacity
+            onPress={() => setCasualStep(false)}
+            disabled={busy}
+            style={{ marginBottom: 14, alignSelf: "flex-start" }}
+          >
+            <Text style={{ color: theme.accent, fontWeight: "800" }}>Back</Text>
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 24,
+              fontWeight: "800",
+            }}
+          >
+            Top up for Casual mode
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.body,
+              marginTop: 8,
+              marginBottom: 14,
+              lineHeight: 20,
+            }}
+          >
+            Enter ₹{WALLET_TOPUP_MIN_INR}-₹{WALLET_TOPUP_MAX_INR}. You get the
+            same number of coins after Cashfree confirms payment. Quick Solution
+            costs 10 coins and Quick Counselling costs 25 coins.
+          </Text>
+          <TextInput
+            placeholder="e.g. 500"
+            placeholderTextColor={theme.textTertiary}
+            value={casualAmount}
+            onChangeText={setCasualAmount}
+            keyboardType="numeric"
+            editable={!busy}
+            style={slotInput(theme)}
+          />
+          <TouchableOpacity
+            onPress={payCasualTopup}
+            disabled={busy}
+            style={{
+              backgroundColor: theme.success,
+              borderRadius: 16,
+              padding: 16,
+              alignItems: "center",
+              opacity: busy ? 0.65 : 1,
+            }}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "900" }}>
+                {paymentMode === "cashfree" ? "Pay with Cashfree" : "Add coins"}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
 
   if (packageStep) {
     const slots = Array.isArray(selectedDoctor?.packageSlots)
@@ -292,13 +457,14 @@ export function CareModeOnboardingScreen({
           }}
         >
           <TouchableOpacity
-            onPress={() => setPackageStep(false)}
+            onPress={() => {
+              if (packageOnly) onBack?.();
+              else setPackageStep(false);
+            }}
             disabled={busy}
             style={{ marginBottom: 14, alignSelf: "flex-start" }}
           >
-            <Text style={{ color: theme.accent, fontWeight: "800" }}>
-              Back
-            </Text>
+            <Text style={{ color: theme.accent, fontWeight: "800" }}>Back</Text>
           </TouchableOpacity>
           <Text
             style={{
@@ -318,10 +484,8 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Pick a doctor and package now. If a doctor has not set a package
-            fee yet, the app uses the default amount. After Cashfree confirms
-            payment, this doctor-patient package pair becomes fixed and coins
-            are loaded to your wallet.
+            Package mode is for professional or specialist doctors only. Pick a
+            doctor, choose Basic / Gold / Premium, then pay with Cashfree.
           </Text>
           <TextInput
             placeholder="Search package doctors"
@@ -335,12 +499,11 @@ export function CareModeOnboardingScreen({
           ) : null}
           {!loadingDoctors && filteredPackageDoctors.length === 0 ? (
             <Text style={{ color: theme.warning, fontSize: S.small }}>
-              No package doctors are available right now. You can continue and
-              choose one later from the dashboard.
+              No package doctors are available right now.
             </Text>
           ) : null}
           {filteredPackageDoctors.map((d) => {
-            const selected = selectedDoctor?.userId === d.userId;
+            const active = selectedDoctor?.userId === d.userId;
             return (
               <TouchableOpacity
                 key={d.profileId || d.userId}
@@ -353,8 +516,8 @@ export function CareModeOnboardingScreen({
                 }}
                 style={{
                   ...card,
-                  borderColor: selected ? theme.accent : theme.cardBorder,
-                  backgroundColor: selected ? theme.accentLight : theme.card,
+                  borderColor: active ? theme.accent : theme.cardBorder,
+                  backgroundColor: active ? theme.accentLight : theme.card,
                 }}
               >
                 <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
@@ -367,7 +530,7 @@ export function CareModeOnboardingScreen({
                     marginTop: 4,
                   }}
                 >
-                  {d.specialty || "General Physician"}
+                  {d.specialty || "Package doctor"}
                 </Text>
               </TouchableOpacity>
             );
@@ -384,7 +547,7 @@ export function CareModeOnboardingScreen({
                 Select package
               </Text>
               {slots.map((slot) => {
-                const selected = selectedSlot?.slot === slot.slot;
+                const active = selectedSlot?.slot === slot.slot;
                 const amount = resolvePackageSlotAmountInr(slot);
                 const usesDefault = packageSlotUsesDefaultAmount(slot);
                 return (
@@ -395,8 +558,8 @@ export function CareModeOnboardingScreen({
                       padding: 12,
                       borderRadius: 14,
                       borderWidth: 1,
-                      borderColor: selected ? theme.accent : theme.cardBorder,
-                      backgroundColor: selected ? theme.accentLight : theme.card,
+                      borderColor: active ? theme.accent : theme.cardBorder,
+                      backgroundColor: active ? theme.accentLight : theme.card,
                       marginBottom: 10,
                     }}
                   >
@@ -433,21 +596,12 @@ export function CareModeOnboardingScreen({
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text style={{ color: "#fff", fontWeight: "900" }}>
-                    Pay with Cashfree
+                    Pay package with Cashfree
                   </Text>
                 )}
               </TouchableOpacity>
             </View>
           ) : null}
-          <TouchableOpacity
-            onPress={finishPackageMode}
-            disabled={busy}
-            style={{ marginTop: 16, padding: 12, alignItems: "center" }}
-          >
-            <Text style={{ color: theme.textSecondary, fontWeight: "800" }}>
-              Choose package later from dashboard
-            </Text>
-          </TouchableOpacity>
         </ScrollView>
       </View>
     );
@@ -470,7 +624,7 @@ export function CareModeOnboardingScreen({
         <Text
           style={{ color: theme.textPrimary, fontSize: 24, fontWeight: "800" }}
         >
-          How would you like to use Nvoisys?
+          Choose your care mode
         </Text>
         <Text
           style={{
@@ -478,17 +632,17 @@ export function CareModeOnboardingScreen({
             fontSize: S.body,
             marginTop: 8,
             marginBottom: 20,
+            lineHeight: 20,
           }}
         >
-          Pick one path now (Package Doctor, Casual / Normal, or skip). You can
-          switch later from Home, Profile, or the upgrade entry points - Casual
-          users always see a way to move into Package Doctor Mode.
+          Pick Casual or Package doctor, then tap Confirm. Package setup
+          continues with pharmacy, doctor, and payment.
         </Text>
 
         <TouchableOpacity
-          style={card}
+          style={cardStyle("package")}
           disabled={busy}
-          onPress={() => pick(CARE_MODE.PACKAGE)}
+          onPress={() => setSelected("package")}
           activeOpacity={0.85}
         >
           <View
@@ -512,8 +666,11 @@ export function CareModeOnboardingScreen({
                 flex: 1,
               }}
             >
-              Package Doctor Mode
+              Package doctor mode
             </Text>
+            {selected === "package" ? (
+              <Ionicons name="checkmark-circle" size={22} color={theme.accent} />
+            ) : null}
           </View>
           <Text
             style={{
@@ -522,17 +679,15 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Book a short demo with a verified professional doctor, join the
-            voice/video call, then your doctor sends package options from the
-            app - you pay to start structured care. Best for ongoing treatment
-            plans.
+            Choose a pharmacy, then a package doctor and tier, pay with Cashfree,
+            and unlock structured care, telemedicine, and package coins.
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={card}
+          style={cardStyle("casual")}
           disabled={busy}
-          onPress={() => pick(CARE_MODE.CASUAL)}
+          onPress={() => setSelected("casual")}
           activeOpacity={0.85}
         >
           <View
@@ -556,8 +711,15 @@ export function CareModeOnboardingScreen({
                 flex: 1,
               }}
             >
-              Casual / Normal Mode
+              Casual mode
             </Text>
+            {selected === "casual" ? (
+              <Ionicons
+                name="checkmark-circle"
+                size={22}
+                color={theme.success}
+              />
+            ) : null}
           </View>
           <Text
             style={{
@@ -566,16 +728,15 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Quick Solution (₹10) and Quick Counselling (₹25) with verified
-            clinics and RMP doctors. You can upgrade to Package Doctor Mode
-            whenever you like.
+            Quick Solution and Quick Counselling with verified clinics and RMP
+            doctors. You can upgrade to Package doctor mode anytime from Home.
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={card}
+          style={cardStyle("skip")}
           disabled={busy}
-          onPress={() => pick(CARE_MODE.SKIP)}
+          onPress={() => setSelected("skip")}
           activeOpacity={0.85}
         >
           <View
@@ -599,8 +760,15 @@ export function CareModeOnboardingScreen({
                 flex: 1,
               }}
             >
-              Not planning for now
+              Skip for now
             </Text>
+            {selected === "skip" ? (
+              <Ionicons
+                name="checkmark-circle"
+                size={22}
+                color={theme.textTertiary}
+              />
+            ) : null}
           </View>
           <Text
             style={{
@@ -609,12 +777,32 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Skip for now and go straight to Home. Switch modes later from
-            Profile or the upgrade button on Home.
+            Browse the app first. You can pick a mode later from Profile.
           </Text>
         </TouchableOpacity>
 
-        {busy ? (
+        <TouchableOpacity
+          onPress={() => void confirm()}
+          disabled={busy || !selected}
+          style={{
+            marginTop: 8,
+            backgroundColor: theme.accent,
+            borderRadius: 16,
+            padding: 16,
+            alignItems: "center",
+            opacity: busy || !selected ? 0.55 : 1,
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>
+              Confirm
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        {busy && !selected ? (
           <View style={{ alignItems: "center", marginTop: 12 }}>
             <ActivityIndicator color={theme.accent} />
           </View>
@@ -1773,17 +1961,388 @@ export function DietMonitoringScreen({
   );
 }
 
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+export function QuickRecipientPickerPanel({
+  theme,
+  doctors,
+  pharmacies = [],
+  listsLoading,
+  selectedDoctorUserId,
+  selectedPharmacyUserId,
+  onSelectDoctor,
+  onSelectPharmacy,
+  onClearSelection,
+  /** Wound report etc.: show pharmacy block. Quick Solution / Counselling: false. */
+  showPharmacySection = true,
+  panelTitle = "Recipient",
+  doctorSectionTitle,
+  helpText,
+  doctorEmptyHint,
+}) {
+  const [doctorOpen, setDoctorOpen] = useState(true);
+  const [pharmacyOpen, setPharmacyOpen] = useState(false);
+
+  const toggleDoctors = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setDoctorOpen((o) => !o);
+  };
+  const togglePharmacies = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setPharmacyOpen((o) => !o);
+  };
+
+  const doctorLocked = showPharmacySection && Boolean(selectedPharmacyUserId);
+  const pharmacyLocked = Boolean(selectedDoctorUserId);
+
+  const flatDoctorOnly = !showPharmacySection;
+
+  const defaultDoctorSectionTitle = showPharmacySection
+    ? "Doctors"
+    : "RMP & clinic doctors";
+  const doctorTitle = doctorSectionTitle ?? defaultDoctorSectionTitle;
+
+  const defaultHelp = showPharmacySection
+    ? "Pick one doctor or one pharmacy. Use Clear recipient before switching category."
+    : "Quick Solution and Quick Counselling go only to RMP and clinic doctors. Package doctors and pharmacies are not available here—pick one doctor below.";
+
+  const help = helpText ?? defaultHelp;
+
+  const defaultDoctorEmpty = showPharmacySection
+    ? "No approved doctor profiles returned yet. Check PocketBase rules or try again later."
+    : "No doctors matched this filter yet. When an approved RMP or clinic doctor is available, they will appear here.";
+
+  const emptyDoctors = doctorEmptyHint ?? defaultDoctorEmpty;
+
+  const sectionShell = {
+    backgroundColor: theme.card,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.cardBorder,
+    marginBottom: 12,
+    overflow: "hidden",
+  };
+
+  const renderDoctorRows = () => {
+    if (listsLoading) {
+      return (
+        <ActivityIndicator
+          style={{ paddingVertical: 20 }}
+          color={theme.accent}
+        />
+      );
+    }
+    if (doctors.length === 0) {
+      return (
+        <Text
+          style={{
+            padding: 14,
+            color: theme.textSecondary,
+            fontSize: S.small,
+          }}
+        >
+          {emptyDoctors}
+        </Text>
+      );
+    }
+    return doctors.map((d) => {
+      const id = String(d.userId || "").trim();
+      const active = selectedDoctorUserId === id;
+      return (
+        <TouchableOpacity
+          key={id || d.profileId}
+          disabled={doctorLocked}
+          onPress={() => onSelectDoctor(id)}
+          style={{
+            marginHorizontal: 10,
+            marginTop: 8,
+            padding: 12,
+            borderRadius: 12,
+            borderWidth: 2,
+            borderColor: active ? theme.accent : theme.cardBorder,
+            backgroundColor: active ? theme.accentLight : theme.bg,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontWeight: "800",
+              fontSize: S.small,
+            }}
+          >
+            {d.name || "Doctor"}
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: 11,
+              marginTop: 4,
+            }}
+          >
+            {d.specialty || "General"} · {d.practitionerTier || ""}
+          </Text>
+        </TouchableOpacity>
+      );
+    });
+  };
+
+  return (
+    <View style={{ marginBottom: 4 }}>
+      {flatDoctorOnly ? (
+        <View style={sectionShell}>
+          <View
+            style={{
+              paddingHorizontal: 14,
+              paddingTop: 14,
+              paddingBottom: 10,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: theme.cardBorder,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "800",
+                fontSize: S.body,
+              }}
+            >
+              {panelTitle}
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginTop: 6,
+                lineHeight: 18,
+              }}
+            >
+              {help}
+            </Text>
+            {!listsLoading ? (
+              <Text
+                style={{ color: theme.textTertiary, fontSize: 11, marginTop: 8 }}
+              >
+                {`${doctors.length} available`}
+              </Text>
+            ) : null}
+          </View>
+          <View style={{ paddingBottom: 8 }}>{renderDoctorRows()}</View>
+        </View>
+      ) : (
+        <>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontWeight: "800",
+              marginBottom: 6,
+              fontSize: S.body,
+            }}
+          >
+            {panelTitle}
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: S.small,
+              marginBottom: 12,
+              lineHeight: 18,
+            }}
+          >
+            {help}
+          </Text>
+
+          <View style={sectionShell}>
+            <TouchableOpacity
+              onPress={toggleDoctors}
+              activeOpacity={0.85}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: 14,
+                backgroundColor: doctorLocked
+                  ? theme.bgSolid || theme.bg
+                  : theme.card,
+                opacity: doctorLocked ? 0.55 : 1,
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text
+                  style={{
+                    color: theme.textPrimary,
+                    fontWeight: "800",
+                    fontSize: S.body,
+                  }}
+                >
+                  {doctorTitle}
+                </Text>
+                <Text
+                  style={{ color: theme.textTertiary, fontSize: 11, marginTop: 4 }}
+                >
+                  {listsLoading
+                    ? "Loading…"
+                    : `${doctors.length} doctor${doctors.length === 1 ? "" : "s"}`}
+                </Text>
+              </View>
+              <Ionicons
+                name={doctorOpen ? "chevron-up" : "chevron-down"}
+                size={22}
+                color={theme.textSecondary}
+              />
+            </TouchableOpacity>
+            {doctorOpen ? (
+              <View
+                style={{
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: theme.cardBorder,
+                  paddingBottom: 8,
+                }}
+              >
+                {renderDoctorRows()}
+              </View>
+            ) : null}
+          </View>
+        </>
+      )}
+
+      {showPharmacySection ? (
+        <View style={sectionShell}>
+          <TouchableOpacity
+            onPress={togglePharmacies}
+            activeOpacity={0.85}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: 14,
+              backgroundColor: pharmacyLocked
+                ? theme.bgSolid || theme.bg
+                : theme.card,
+              opacity: pharmacyLocked ? 0.55 : 1,
+            }}
+          >
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontWeight: "800",
+                  fontSize: S.body,
+                }}
+              >
+                Pharmacies
+              </Text>
+              <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 4 }}>
+                {listsLoading
+                  ? "Loading…"
+                  : `${pharmacies.length} pharmacy profile${pharmacies.length === 1 ? "" : "s"}`}
+              </Text>
+            </View>
+            <Ionicons
+              name={pharmacyOpen ? "chevron-up" : "chevron-down"}
+              size={22}
+              color={theme.textSecondary}
+            />
+          </TouchableOpacity>
+          {pharmacyOpen ? (
+            <View
+              style={{
+                borderTopWidth: StyleSheet.hairlineWidth,
+                borderTopColor: theme.cardBorder,
+                paddingBottom: 8,
+              }}
+            >
+              {listsLoading ? (
+                <ActivityIndicator
+                  style={{ paddingVertical: 20 }}
+                  color={theme.accent}
+                />
+              ) : pharmacies.length === 0 ? (
+                <Text
+                  style={{
+                    padding: 14,
+                    color: theme.textSecondary,
+                    fontSize: S.small,
+                  }}
+                >
+                  No pharmacy profiles found yet.
+                </Text>
+              ) : (
+                pharmacies.map((p) => {
+                  const id = String(p.userId || "").trim();
+                  const active = selectedPharmacyUserId === id;
+                  return (
+                    <TouchableOpacity
+                      key={id || p.profileId}
+                      disabled={pharmacyLocked}
+                      onPress={() => onSelectPharmacy(id)}
+                      style={{
+                        marginHorizontal: 10,
+                        marginTop: 8,
+                        padding: 12,
+                        borderRadius: 12,
+                        borderWidth: 2,
+                        borderColor: active ? theme.accent : theme.cardBorder,
+                        backgroundColor: active ? theme.accentLight : theme.bg,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: theme.textPrimary,
+                          fontWeight: "800",
+                          fontSize: S.small,
+                        }}
+                      >
+                        {p.name || "Pharmacy"}
+                      </Text>
+                      <Text
+                        style={{
+                          color: theme.textSecondary,
+                          fontSize: 11,
+                          marginTop: 4,
+                        }}
+                      >
+                        {[p.district, p.state].filter(Boolean).join(", ") ||
+                          p.address ||
+                          ""}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {selectedDoctorUserId || selectedPharmacyUserId ? (
+        <TouchableOpacity
+          onPress={onClearSelection}
+          style={{ alignSelf: "flex-start", marginTop: 4, paddingVertical: 8 }}
+        >
+          <Text style={{ color: theme.accent, fontWeight: "800" }}>
+            Clear recipient
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
 export function QuickSolutionScreen({
   theme,
   onBack,
   patientUserId,
-  /** Active paid package binding; Quick Solve is disabled without it. */
+  /** Optional package binding (consult minutes hint only). */
   quickCareBinding = null,
-  onOpenPackageJourney,
-  /** async (question: string) => reply text */
-  onAskAi,
   consultMinutesUsed = 0,
   consultMinutesLimit = 0,
+  /** async (question: string) => reply text */
+  onAskAi,
   scrollContentBottomInset = 100,
 }) {
   const insets = useSafeAreaInsets();
@@ -1795,6 +2354,7 @@ export function QuickSolutionScreen({
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiReply, setAiReply] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [imagePart, setImagePart] = useState(null);
 
   const ent = useMemo(
     () =>
@@ -1848,20 +2408,57 @@ export function QuickSolutionScreen({
     }
   };
 
+  const pickOptionalImage = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission", "Photo access is needed to attach an image.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      const asset = res.assets[0];
+      const uri = asset.uri;
+      const nameGuess = uri.split("/").pop() || "upload.jpg";
+      const lower = nameGuess.toLowerCase();
+      const mime = lower.endsWith(".png")
+        ? "image/png"
+        : lower.endsWith(".webp")
+          ? "image/webp"
+          : "image/jpeg";
+      setImagePart({ uri, name: nameGuess, type: mime });
+    } catch (e) {
+      Alert.alert("Image", e?.message || "Could not pick a photo.");
+    }
+  };
+
   const submit = async () => {
+    const body = String(notes || "").trim();
+    if (!body && !imagePart?.uri) {
+      Alert.alert("Details", "Add a short description or attach a photo.");
+      return;
+    }
     try {
       setBusy(true);
+      const route = await pickRandomQuickCareRecipient(patientUserId);
       await createQuickSolutionRequest({
         patientUserId,
         notes,
         privateMode,
-        imagePart: null,
+        imagePart,
+        targetDoctorUserId:
+          route.kind === "doctor" ? route.userId : undefined,
+        targetPharmacyUserId:
+          route.kind === "pharmacy" ? route.userId : undefined,
       });
       Alert.alert(
         "Submitted",
         privateMode
-          ? "Private mode is on: your name, photo, and contact details are hidden from the clinic side."
-          : "Your query is queued for a verified clinic (10 coins / ₹10).",
+          ? "Private mode is on: your name, photo, and contact details are hidden from the provider side."
+          : "Your request was sent (10 coins). A randomly chosen RMP doctor or pharmacy will see it in their queue.",
       );
       onBack?.();
     } catch (e) {
@@ -1875,76 +2472,13 @@ export function QuickSolutionScreen({
   const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
   const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
 
-  if (!quickCareBinding?.doctorUserId) {
-    return (
-      <View style={{ flex: 1, backgroundColor: theme.bg }}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: S.pad,
-            paddingBottom: S.pad,
-            paddingTop: (insets.top || 0) + 12,
-          }}
-        >
-          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
-            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
-          </TouchableOpacity>
-          <Text
-            style={{
-              color: theme.textPrimary,
-              fontSize: S.title,
-              fontWeight: "800",
-            }}
-          >
-            Quick Solve
-          </Text>
-        </View>
-        <ScrollView
-          style={{ flex: 1 }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-          contentContainerStyle={{
-            padding: S.pad,
-            paddingBottom: scrollBottomPad,
-          }}
-        >
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.body,
-              lineHeight: 22,
-              marginBottom: 16,
-            }}
-          >
-            Choose a doctor and complete a paid package (Basic, Gold, or Premium)
-            first. Quick Solve and Quick Counselling then work automatically with
-            that doctor — you will not pick a doctor again here.
-          </Text>
-          <TouchableOpacity
-            onPress={() => onOpenPackageJourney?.()}
-            style={{
-              backgroundColor: theme.accent,
-              padding: 16,
-              borderRadius: 16,
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Open package journey
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
   const consultHint =
-    ent && consultMinutesLimit > 0
-      ? `Consultation time this week with ${quickCareBinding.doctorName || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
+    ent && consultMinutesLimit > 0 && quickCareBinding?.doctorUserId
+      ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
       : "";
+
+  const hasBody = Boolean(String(notes || "").trim() || imagePart?.uri);
+  const canSubmit = hasBody && !busy;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -1984,19 +2518,21 @@ export function QuickSolutionScreen({
         <Text
           style={{
             color: theme.textSecondary,
-            marginBottom: 10,
             fontSize: S.small,
+            marginBottom: 12,
+            lineHeight: 18,
           }}
         >
-          Package: {planLabel} · Routed to{" "}
-          {quickCareBinding.doctorName || "your doctor"} (no doctor picker
-          here).
+          Add details and an optional photo, then send (10 coins). The app picks
+          a random RMP doctor (non–package setup) or pharmacy to receive your
+          request — you do not choose the recipient.
         </Text>
+
         {consultHint ? (
           <Text
             style={{
               color: theme.textTertiary,
-              marginBottom: 14,
+              marginBottom: 12,
               fontSize: 11,
               lineHeight: 16,
             }}
@@ -2010,6 +2546,131 @@ export function QuickSolutionScreen({
             color: theme.textPrimary,
             fontWeight: "800",
             marginBottom: 8,
+            fontSize: S.body,
+          }}
+        >
+          Doctor / clinic review (10 coins)
+        </Text>
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 12,
+            fontSize: S.small,
+          }}
+        >
+          ₹10 (10 coins) per snap or query — platform 5 coins, provider 5 coins.
+        </Text>
+        <TouchableOpacity
+          onPress={() => setPrivateMode((v) => !v)}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: privateMode ? theme.accentLight : theme.card,
+            padding: 14,
+            borderRadius: 14,
+            marginBottom: 8,
+            borderWidth: 2,
+            borderColor: privateMode ? theme.accent : theme.cardBorder,
+          }}
+        >
+          <Ionicons
+            name={privateMode ? "eye-off" : "eye"}
+            size={22}
+            color={theme.accent}
+            style={{ marginRight: 10 }}
+          />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+              Private mode
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginTop: 4,
+              }}
+            >
+              Hide your name, photo, and contact info from the clinic for
+              sensitive issues. You still see the provider details.
+            </Text>
+          </View>
+        </TouchableOpacity>
+        <TextInput
+          placeholder="Describe your question or symptom…"
+          placeholderTextColor={theme.textTertiary}
+          multiline
+          value={notes}
+          onChangeText={setNotes}
+          onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
+          style={{
+            minHeight: 72,
+            backgroundColor: theme.card,
+            borderRadius: 14,
+            padding: 14,
+            color: theme.textPrimary,
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            textAlignVertical: "top",
+          }}
+        />
+        <TouchableOpacity
+          onPress={pickOptionalImage}
+          style={{
+            marginTop: 10,
+            padding: 14,
+            borderRadius: 14,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+            backgroundColor: theme.card,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
+            {imagePart?.uri ? "Change attached photo" : "Attach photo (optional)"}
+          </Text>
+          <Ionicons name="image-outline" size={22} color={theme.accent} />
+        </TouchableOpacity>
+        {imagePart?.uri ? (
+          <Text
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              color: theme.textTertiary,
+            }}
+            numberOfLines={2}
+          >
+            {imagePart.name || "Image selected"}
+          </Text>
+        ) : null}
+        <TouchableOpacity
+          onPress={submit}
+          disabled={!canSubmit}
+          style={{
+            marginTop: 12,
+            backgroundColor: theme.success || "#059669",
+            padding: 16,
+            borderRadius: 16,
+            alignItems: "center",
+            opacity: canSubmit ? 1 : 0.45,
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800" }}>
+              Submit (10 coins)
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <Text
+          style={{
+            color: theme.textPrimary,
+            fontWeight: "800",
+            marginBottom: 8,
+            marginTop: 28,
             fontSize: S.body,
           }}
         >
@@ -2095,99 +2756,6 @@ export function QuickSolutionScreen({
             </Text>
           </View>
         ) : null}
-
-        <Text
-          style={{
-            color: theme.textPrimary,
-            fontWeight: "800",
-            marginBottom: 8,
-            fontSize: S.body,
-          }}
-        >
-          Doctor review (10 coins)
-        </Text>
-        <Text
-          style={{
-            color: theme.textSecondary,
-            marginBottom: 12,
-            fontSize: S.small,
-          }}
-        >
-          ₹10 (10 coins) per snap or query - platform 5 coins, clinic 5 coins.
-          Verified clinics and RMP doctors only.
-        </Text>
-        <TouchableOpacity
-          onPress={() => setPrivateMode((v) => !v)}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: privateMode ? theme.accentLight : theme.card,
-            padding: 14,
-            borderRadius: 14,
-            marginBottom: 8,
-            borderWidth: 2,
-            borderColor: privateMode ? theme.accent : theme.cardBorder,
-          }}
-        >
-          <Ionicons
-            name={privateMode ? "eye-off" : "eye"}
-            size={22}
-            color={theme.accent}
-            style={{ marginRight: 10 }}
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
-              Private mode
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: S.small,
-                marginTop: 4,
-              }}
-            >
-              Hide your name, photo, and contact info from the clinic for
-              sensitive issues. You still see the provider details.
-            </Text>
-          </View>
-        </TouchableOpacity>
-        <TextInput
-          placeholder="Describe your question or symptom…"
-          placeholderTextColor={theme.textTertiary}
-          multiline
-          value={notes}
-          onChangeText={setNotes}
-          onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
-          style={{
-            minHeight: 72,
-            backgroundColor: theme.card,
-            borderRadius: 14,
-            padding: 14,
-            color: theme.textPrimary,
-            borderWidth: 1,
-            borderColor: theme.cardBorder,
-            textAlignVertical: "top",
-          }}
-        />
-        <TouchableOpacity
-          onPress={submit}
-          disabled={busy}
-          style={{
-            marginTop: 12,
-            backgroundColor: theme.success || "#059669",
-            padding: 16,
-            borderRadius: 16,
-            alignItems: "center",
-          }}
-        >
-          {busy ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Submit (10 coins)
-            </Text>
-          )}
-        </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -2197,10 +2765,7 @@ export function QuickCounsellingScreen({
   theme,
   onBack,
   patientUserId,
-  /** When true, show copy tuned for Wound tab entry (same API, no image). */
-  fromWoundTracker = false,
   quickCareBinding = null,
-  onOpenPackageJourney,
   consultMinutesUsed = 0,
   consultMinutesLimit = 0,
   scrollContentBottomInset = 100,
@@ -2213,15 +2778,29 @@ export function QuickCounsellingScreen({
   const scrollBottomPad = S.pad + tabAndSafe + keyboardScrollPad;
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
+
   const submit = async () => {
+    if (!String(topic || "").trim()) {
+      Alert.alert(
+        "Description",
+        "Please describe what you would like to discuss.",
+      );
+      return;
+    }
     try {
       setBusy(true);
-      await createQuickCounsellingRequest({ patientUserId, topic });
+      const route = await pickRandomQuickCareRecipient(patientUserId);
+      await createQuickCounsellingRequest({
+        patientUserId,
+        topic,
+        targetDoctorUserId:
+          route.kind === "doctor" ? route.userId : undefined,
+        targetPharmacyUserId:
+          route.kind === "pharmacy" ? route.userId : undefined,
+      });
       Alert.alert(
         "Queued",
-        fromWoundTracker
-          ? "Quick Counselling (25 coins). An RMP/clinic doctor will reach out for a video call. Platform 10, doctor/clinic 15 coins."
-          : "Quick Counselling (25 coins). Platform 10, doctor/clinic 15.",
+        "Quick Counselling (25 coins). A randomly chosen RMP doctor or pharmacy will see your request. Platform 10, provider 15.",
       );
       onBack?.();
     } catch (e) {
@@ -2231,72 +2810,20 @@ export function QuickCounsellingScreen({
     }
   };
 
-  if (!quickCareBinding?.doctorUserId) {
-    return (
-      <View style={{ flex: 1, backgroundColor: theme.bg }}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: S.pad,
-            paddingBottom: S.pad,
-            paddingTop: (insets.top || 0) + 12,
-          }}
-        >
-          <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
-            <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
-          </TouchableOpacity>
-          <Text
-            style={{
-              color: theme.textPrimary,
-              fontSize: S.title,
-              fontWeight: "800",
-            }}
-          >
-            Quick Counselling
-          </Text>
-        </View>
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-          contentContainerStyle={{
-            padding: S.pad,
-            paddingBottom: scrollBottomPad,
-          }}
-        >
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.body,
-              lineHeight: 22,
-              marginBottom: 16,
-            }}
-          >
-            Activate a paid doctor package first. Quick Counselling then queues
-            directly with that doctor — no separate doctor selection here.
-          </Text>
-          <TouchableOpacity
-            onPress={() => onOpenPackageJourney?.()}
-            style={{
-              backgroundColor: theme.success,
-              padding: 16,
-              borderRadius: 16,
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Open package journey
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-    );
-  }
+  const hasTopic = Boolean(String(topic || "").trim());
+  const canSubmit = hasTopic && !busy;
 
-  const planLabel = consumerPlanDisplayName(quickCareBinding.consumerPlan);
+  const ent = useMemo(
+    () =>
+      quickCareBinding?.consumerPlan != null
+        ? entitlementsForConsumerPlan(quickCareBinding.consumerPlan)
+        : null,
+    [quickCareBinding?.consumerPlan],
+  );
+  const consultHint =
+    ent && consultMinutesLimit > 0 && quickCareBinding?.doctorUserId
+      ? `Consultation time this week with ${quickCareBinding.doctor || "your doctor"}: about ${consultMinutesUsed} / ${consultMinutesLimit} minutes used (scheduled sessions).`
+      : "";
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -2333,30 +2860,41 @@ export function QuickCounsellingScreen({
           paddingBottom: scrollBottomPad,
         }}
       >
+        <Text
+          style={{
+            color: theme.textSecondary,
+            marginBottom: 12,
+            fontSize: S.small,
+            lineHeight: 18,
+          }}
+        >
+          Text-only request (25 coins). The app assigns a random RMP doctor
+          (non–package setup) or pharmacy — you do not pick the recipient.
+        </Text>
+
+        {consultHint ? (
           <Text
             style={{
-              color: theme.textSecondary,
+              color: theme.textTertiary,
               marginBottom: 12,
-              fontSize: S.small,
+              fontSize: 11,
+              lineHeight: 16,
             }}
           >
-            {planLabel} plan · ₹25 (25 coins) — queued for{" "}
-            {quickCareBinding.doctorName || "your package doctor"}.
+            {consultHint}
           </Text>
-        
+        ) : null}
+
         <TextInput
-          placeholder={
-            fromWoundTracker
-              ? "Describe symptoms, pain, or questions for your video consultation…"
-              : "What would you like to talk about?"
-          }
+          placeholder="What would you like to talk about?"
           placeholderTextColor={theme.textTertiary}
           value={topic}
           onChangeText={setTopic}
           multiline
           textAlignVertical="top"
+          onFocus={() => scrollToEndAfterKeyboard(scrollRef)}
           style={{
-            minHeight: fromWoundTracker ? 140 : 88,
+            minHeight: 120,
             backgroundColor: theme.card,
             borderRadius: 14,
             padding: 14,
@@ -2367,13 +2905,14 @@ export function QuickCounsellingScreen({
         />
         <TouchableOpacity
           onPress={submit}
-          disabled={busy}
+          disabled={!canSubmit}
           style={{
             marginTop: 20,
             backgroundColor: theme.success,
             padding: 16,
             borderRadius: 16,
             alignItems: "center",
+            opacity: canSubmit ? 1 : 0.45,
           }}
         >
           {busy ? (
@@ -2524,7 +3063,7 @@ export function PatientPackageMeetingsPanel({
       const paid = await onPayAppointment?.({
         id: meeting.id,
         statusKey: "approved",
-        doctorName: doctorName(meeting.doctor_user_id),
+        doctor: doctorName(meeting.doctor_user_id),
         doctorUserId: meeting.doctor_user_id,
         consultationType: meeting.call_kind || "video",
         consultationFee: meeting.consultation_fee || meeting.fee || 500,
@@ -4915,7 +5454,7 @@ function quickRequestPatientLabel(record) {
   if (record?.private_mode) return "Private - identity hidden";
   const u = record?.expand?.patient;
   if (!u) return "Patient";
-  return u.name || u.email || u.username || "Patient";
+  return resolveListingDisplayName(u, u.expand?.user) || "Patient";
 }
 
 function quickRequestPatientUserId(record) {
@@ -4937,28 +5476,29 @@ function truncateOneLine(s, max) {
 }
 
 /**
- * `onHelpPatient` is called when the doctor confirms the help modal. Parent
- * is responsible for: ensuring/creating the direct conversation, posting the
- * first message, recording the offer, switching to the Chat tab, and
- * selecting the right conversation. We just collect the message + identifiers.
+ * Primary action per card: **Prescribe** until PocketBase `status` is no longer
+ * `queued`, then **Open chat** (opens the direct thread by patient id).
  *
- *   onHelpPatient({ requestId, requestKind, patientUserId, message })
- *     => Promise<{ conversationId } | void>
+ *   onPrescribeQuickRequest({ kind, record })
  *
- * `onOpenHelpChat(conversationId, patientUserId)` is called when the doctor
- * presses "Open chat" on a card they already offered help on (so we don't
- * duplicate the first message or the offer row in PocketBase).
+ * `onOpenHelpChat(conversationId, patientUserId)` — pass empty conversationId to
+ * resolve by patient user id when only the peer is known.
  *
- * `doctorUserId` is the current doctor's UsersAuth id, used to fetch existing
- * offers so we can flip the button to "Open chat" on previously-offered cards.
+ * `combined` — single “Quick Queues” card (default).
+ * `split_tracks` — two dashboard cards: Quick Solution Tracks + Quick Counselling Tracks.
  */
 export function DoctorQuickRequestsPanel({
   theme,
   doctorUserId,
-  onHelpPatient,
   onOpenHelpChat,
+  onPrescribeQuickRequest,
   /** When true, hide the manual Refresh control and keep lists fresh via poll + PocketBase realtime. */
   autoRefreshQuickQueues = false,
+  /**
+   * `combined` — single “Quick Queues” card (default).
+   * `split_tracks` — two dashboard cards: Quick Solution Tracks + Quick Counselling Tracks.
+   */
+  layout = "combined",
 }) {
   const user = getAuthUser();
   const effectiveDoctorId = doctorUserId || user?.id || "";
@@ -4966,14 +5506,6 @@ export function DoctorQuickRequestsPanel({
   const [counsellingRows, setCounsellingRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-
-  // Map of `${kind}:${requestId}` → { conversationId, offerId } for offers
-  // this doctor already made. Lets us flip Help → Open chat per card.
-  const [offerMap, setOfferMap] = useState({});
-
-  const [helpTarget, setHelpTarget] = useState(null);
-  const [helpMessage, setHelpMessage] = useState("");
-  const [helpBusy, setHelpBusy] = useState(false);
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
@@ -4995,48 +5527,18 @@ export function DoctorQuickRequestsPanel({
     } catch (e) {
       parts.push(`Quick Counselling: ${e?.message || "list failed"}`);
     }
+    try {
+      sol = await hydrateRowsPatientAuthUsers(sol || []);
+    } catch (e) {
+      console.log("hydrateRowsPatientAuthUsers (solution) skipped:", e?.message);
+    }
+    try {
+      cou = await hydrateRowsPatientAuthUsers(cou || []);
+    } catch (e) {
+      console.log("hydrateRowsPatientAuthUsers (counselling) skipped:", e?.message);
+    }
     setSolutionRows(sol || []);
     setCounsellingRows(cou || []);
-
-    // Build a flat tagged list for the inferred-offers helper.
-    const tagged = [
-      ...(sol || []).map((row) => ({ ...row, kind: "solution" })),
-      ...(cou || []).map((row) => ({ ...row, kind: "counselling" })),
-    ];
-
-    // Existing offers - silently ignore if collection/rules are missing.
-    let realOffers = [];
-    try {
-      realOffers = (await listQuickHelpOffersByDoctor(effectiveDoctorId)) || [];
-    } catch (e) {
-      console.log("listQuickHelpOffersByDoctor ignored:", e?.message);
-    }
-    // Inferred offers - works even when the optional `quick_help_offers`
-    // collection is missing, by reading conversations + messages directly.
-    let inferredOffers = [];
-    try {
-      inferredOffers =
-        (await listInferredOffersByDoctor(effectiveDoctorId, tagged)) || [];
-    } catch (e) {
-      console.log("listInferredOffersByDoctor ignored:", e?.message);
-    }
-
-    const next = {};
-    const consume = (o) => {
-      const kind = o.request_kind || o.requestKind;
-      const reqId = o.request_id || o.requestId;
-      const convId =
-        (typeof o.conversation === "string" ? o.conversation : null) ||
-        o?.expand?.conversation?.id ||
-        o.conversation?.id ||
-        "";
-      if (kind && reqId && !next[`${kind}:${reqId}`]) {
-        next[`${kind}:${reqId}`] = { conversationId: convId, offerId: o.id };
-      }
-    };
-    for (const o of realOffers) consume(o);
-    for (const o of inferredOffers) consume(o);
-    setOfferMap(next);
 
     if (parts.length) setErr(parts.join("\n"));
     if (!silent) setLoading(false);
@@ -5078,98 +5580,20 @@ export function DoctorQuickRequestsPanel({
     };
   }, [autoRefreshQuickQueues, load]);
 
-  const openHelpModal = (record, kind) => {
+  const quickRequestStatusLabel = (record) =>
+    String(record?.status || "queued").toLowerCase();
+
+  const renderPrescribeOrChat = (record, kind) => {
     const patientUserId = quickRequestPatientUserId(record);
-    if (!patientUserId) {
-      Alert.alert(
-        "Cannot start chat",
-        "This request does not include the patient id (private mode or expand failed). Ask the patient to resend it.",
-      );
-      return;
-    }
-    if (!user?.id) {
-      Alert.alert(
-        "Sign in required",
-        "Please sign in again before offering help.",
-      );
-      return;
-    }
-    setHelpTarget({
-      requestId: record.id,
-      requestKind: kind,
-      patientUserId,
-      patientLabel: quickRequestPatientLabel(record),
-      preview:
-        kind === "solution"
-          ? truncateOneLine(record.notes, 120)
-          : `Topic: ${truncateOneLine(record.topic, 100) || "General"}`,
-    });
-    setHelpMessage(
-      kind === "solution"
-        ? "Hi - I saw your Quick Solution request. I can help. Could you share more details?"
-        : "Hi - I saw your Quick Counselling request. Happy to help. What would you like to talk about first?",
-    );
-  };
+    const status = quickRequestStatusLabel(record);
+    const showChat = status !== "queued";
 
-  const closeHelpModal = () => {
-    if (helpBusy) return;
-    setHelpTarget(null);
-    setHelpMessage("");
-  };
-
-  const submitHelpModal = async () => {
-    const text = String(helpMessage || "").trim();
-    if (!helpTarget) return;
-    if (!text) {
-      Alert.alert(
-        "Add a message",
-        "Type a short opener so the patient knows how you can help.",
-      );
-      return;
-    }
-    if (typeof onHelpPatient !== "function") {
-      Alert.alert(
-        "Chat unavailable",
-        "Chat handler is missing on this screen. Please reload the dashboard.",
-      );
-      return;
-    }
-    try {
-      setHelpBusy(true);
-      const result = await onHelpPatient({
-        requestId: helpTarget.requestId,
-        requestKind: helpTarget.requestKind,
-        patientUserId: helpTarget.patientUserId,
-        message: text,
-      });
-      const conversationId = result?.conversationId || "";
-      setOfferMap((prev) => ({
-        ...prev,
-        [`${helpTarget.requestKind}:${helpTarget.requestId}`]: {
-          conversationId,
-          offerId: "",
-        },
-      }));
-      setHelpTarget(null);
-      setHelpMessage("");
-    } catch (e) {
-      Alert.alert("Could not start chat", e?.message || "Please try again.");
-    } finally {
-      setHelpBusy(false);
-    }
-  };
-
-  const renderHelpButton = (record, kind) => {
-    const key = `${kind}:${record.id}`;
-    const existing = offerMap[key];
-    const patientUserId = quickRequestPatientUserId(record);
-
-    if (existing) {
+    if (showChat) {
       return (
         <TouchableOpacity
           onPress={() => {
             if (typeof onOpenHelpChat === "function") {
-              onOpenHelpChat(existing.conversationId || "", patientUserId);
+              onOpenHelpChat("", patientUserId);
             } else {
               Alert.alert(
                 "Chat unavailable",
@@ -5178,7 +5602,6 @@ export function DoctorQuickRequestsPanel({
             }
           }}
           style={{
-            marginTop: 10,
             alignSelf: "flex-start",
             flexDirection: "row",
             alignItems: "center",
@@ -5191,7 +5614,7 @@ export function DoctorQuickRequestsPanel({
           }}
         >
           <Ionicons
-            name="checkmark-circle"
+            name="checkmark-circle-outline"
             size={14}
             color={theme.accent}
             style={{ marginRight: 6 }}
@@ -5207,9 +5630,17 @@ export function DoctorQuickRequestsPanel({
 
     return (
       <TouchableOpacity
-        onPress={() => openHelpModal(record, kind)}
+        onPress={() => {
+          if (typeof onPrescribeQuickRequest !== "function") {
+            Alert.alert(
+              "Prescribe unavailable",
+              "This screen is not wired for prescribing yet.",
+            );
+            return;
+          }
+          onPrescribeQuickRequest({ kind, record });
+        }}
         style={{
-          marginTop: 10,
           alignSelf: "flex-start",
           flexDirection: "row",
           alignItems: "center",
@@ -5220,17 +5651,30 @@ export function DoctorQuickRequestsPanel({
         }}
       >
         <Ionicons
-          name="chatbubbles"
+          name="reader-outline"
           size={14}
           color="#FFF"
           style={{ marginRight: 6 }}
         />
         <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 12 }}>
-          Help
+          Prescribe
         </Text>
       </TouchableOpacity>
     );
   };
+
+  const renderQuickActionsRow = (record, kind) => (
+    <View
+      style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        alignItems: "center",
+        marginTop: 10,
+      }}
+    >
+      {renderPrescribeOrChat(record, kind)}
+    </View>
+  );
 
   const renderSolutionCard = (r) => (
     <View
@@ -5245,7 +5689,7 @@ export function DoctorQuickRequestsPanel({
       }}
     >
       <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
-        Quick Solution · queued
+        Quick Solution · {quickRequestStatusLabel(r)}
       </Text>
       <Text
         style={{ color: theme.textPrimary, fontWeight: "700", marginTop: 4 }}
@@ -5255,12 +5699,12 @@ export function DoctorQuickRequestsPanel({
       <Text
         style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}
       >
-        {truncateOneLine(r.notes, 160) || "-"}
+        {truncateOneLine(displayQuickSolutionNotes(r), 160) || "-"}
       </Text>
       <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
         {r.created ? new Date(r.created).toLocaleString() : ""}
       </Text>
-      {renderHelpButton(r, "solution")}
+      {renderQuickActionsRow(r, "solution")}
     </View>
   );
 
@@ -5277,7 +5721,7 @@ export function DoctorQuickRequestsPanel({
       }}
     >
       <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
-        Quick Counselling · queued
+        Quick Counselling · {quickRequestStatusLabel(r)}
       </Text>
       <Text
         style={{ color: theme.textPrimary, fontWeight: "700", marginTop: 4 }}
@@ -5287,14 +5731,164 @@ export function DoctorQuickRequestsPanel({
       <Text
         style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}
       >
-        Topic: {truncateOneLine(r.topic, 120) || "-"}
+        Topic: {truncateOneLine(displayQuickCounsellingTopic(r), 120) || "-"}
       </Text>
       <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
         {r.created ? new Date(r.created).toLocaleString() : ""}
       </Text>
-      {renderHelpButton(r, "counselling")}
+      {renderQuickActionsRow(r, "counselling")}
     </View>
   );
+
+  const trackCardShell = (children, { icon, title, testId } = {}) => (
+    <View
+      key={title}
+      style={{
+        marginBottom: 16,
+        backgroundColor: theme.card,
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.cardBorder,
+        shadowColor: theme.shadowColor,
+        shadowOpacity: 0.05,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 8,
+        elevation: 2,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 10,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              backgroundColor: theme.warningLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: 10,
+            }}
+          >
+            <Ionicons name={icon || "flash"} size={22} color={theme.warning} />
+          </View>
+          <Text
+            style={{ color: theme.textPrimary, fontWeight: "800", fontSize: 16 }}
+          >
+            {title}
+          </Text>
+        </View>
+        {!autoRefreshQuickQueues ? (
+          <TouchableOpacity
+            onPress={() => void load()}
+            disabled={loading}
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 12,
+              backgroundColor: theme.accentLight,
+            }}
+          >
+            <Text
+              style={{ color: theme.accent, fontWeight: "800", fontSize: 12 }}
+            >
+              {loading ? "…" : "Refresh"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {children}
+    </View>
+  );
+
+  if (layout === "split_tracks") {
+    return (
+      <View style={{ marginTop: 0 }}>
+        {err ? (
+          <Text
+            style={{
+              color: theme.danger,
+              fontSize: S.small,
+              marginBottom: 8,
+              paddingHorizontal: 4,
+            }}
+          >
+            {err}
+          </Text>
+        ) : null}
+        {trackCardShell(
+          <>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginBottom: 10,
+              }}
+            >
+              Queued Quick Solution requests (including wound-related notes when
+              patients route them here).
+            </Text>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "700",
+                marginBottom: 6,
+              }}
+            >
+              In queue ({solutionRows.length})
+            </Text>
+            {solutionRows.length === 0 ? (
+              <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
+                {err
+                  ? "Nothing to show, or the list could not load (see message above)."
+                  : "No Quick Solution requests right now."}
+              </Text>
+            ) : (
+              solutionRows.map(renderSolutionCard)
+            )}
+          </>,
+          { icon: "medkit-outline", title: "Quick Solution tracks" },
+        )}
+        {trackCardShell(
+          <>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginBottom: 10,
+              }}
+            >
+              Queued counselling conversations waiting for a doctor to respond.
+            </Text>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "700",
+                marginBottom: 6,
+              }}
+            >
+              In queue ({counsellingRows.length})
+            </Text>
+            {counsellingRows.length === 0 ? (
+              <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
+                No Quick Counselling requests right now.
+              </Text>
+            ) : (
+              counsellingRows.map(renderCounsellingCard)
+            )}
+          </>,
+          { icon: "chatbubbles-outline", title: "Quick Counselling tracks" },
+        )}
+      </View>
+    );
+  }
 
   return (
     <View
@@ -5406,152 +6000,13 @@ export function DoctorQuickRequestsPanel({
       ) : (
         counsellingRows.map(renderCounsellingCard)
       )}
-
-      <Modal
-        animationType="fade"
-        transparent
-        visible={!!helpTarget}
-        onRequestClose={closeHelpModal}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.4)",
-            justifyContent: "center",
-            paddingHorizontal: 18,
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: 18,
-              padding: 18,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontWeight: "800",
-                fontSize: 16,
-                marginBottom: 4,
-              }}
-            >
-              Offer help to{" "}
-              {helpTarget?.patientLabel === "Private - identity hidden"
-                ? "this patient"
-                : helpTarget?.patientLabel || "this patient"}
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 12,
-                marginBottom: 10,
-              }}
-            >
-              {helpTarget?.requestKind === "counselling"
-                ? "Quick Counselling"
-                : "Quick Solution"}
-              {helpTarget?.preview ? ` · ${helpTarget.preview}` : ""}
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: 11,
-                marginBottom: 6,
-              }}
-            >
-              Your message - this becomes the first chat message in the new
-              conversation.
-            </Text>
-            <TextInput
-              value={helpMessage}
-              onChangeText={setHelpMessage}
-              multiline
-              editable={!helpBusy}
-              placeholder="Hi, how can I help?"
-              placeholderTextColor={theme.textTertiary}
-              style={{
-                minHeight: 96,
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: theme.cardBorder,
-                padding: 12,
-                color: theme.textPrimary,
-                backgroundColor: theme.bg,
-                textAlignVertical: "top",
-              }}
-            />
-            <View
-              style={{
-                flexDirection: "row",
-                marginTop: 14,
-                justifyContent: "flex-end",
-              }}
-            >
-              <TouchableOpacity
-                onPress={closeHelpModal}
-                disabled={helpBusy}
-                style={{
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                  marginRight: 8,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: theme.cardBorder,
-                }}
-              >
-                <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                  Cancel
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={submitHelpModal}
-                disabled={helpBusy}
-                style={{
-                  paddingHorizontal: 16,
-                  paddingVertical: 10,
-                  borderRadius: 10,
-                  backgroundColor: helpBusy ? theme.accentLight : theme.accent,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                {helpBusy ? (
-                  <ActivityIndicator
-                    size="small"
-                    color="#FFF"
-                    style={{ marginRight: 6 }}
-                  />
-                ) : null}
-                <Text style={{ color: "#FFF", fontWeight: "700" }}>
-                  {helpBusy ? "Sending…" : "Confirm"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
 
 /**
- * Patient-side tracking list for Quick Solution / Quick Counselling.
- *
- * Shows the patient's active (status="queued") requests with:
- *   - request info + a Cancel button (patient no longer needs help) and a
- *     Close button (patient picked a doctor and is moving the chat into the
- *     normal Chat tab).
- *   - one alert per doctor offer ("Dr. X wants to help you") with an arrow
- *     button that pre-selects that conversation in the Chat tab.
- *
- * The parent passes:
- *   - patientUserId (string): current patient user id
- *   - onOpenConversation(conversationId, patientUserId): switch to Chat tab
- *     and open the matching conversation (no-op when missing).
- *   - refreshTrigger (any): bump to force a reload from outside (optional).
+ * Patient-side tracking for Quick Solution / Quick Counselling requests already
+ * submitted (distinct from the “send new request” tiles in General).
  */
 export function PatientQuickRequestsTrackerPanel({
   theme,
@@ -5559,10 +6014,13 @@ export function PatientQuickRequestsTrackerPanel({
   onOpenConversation,
   refreshTrigger,
 }) {
+  const insets = useSafeAreaInsets();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busyRowId, setBusyRowId] = useState(null);
   const [err, setErr] = useState("");
+  /** `null` = closed; which kind's tracking list to show in the modal. */
+  const [trackingModalKind, setTrackingModalKind] = useState(null);
 
   const load = useCallback(async () => {
     if (!patientUserId) {
@@ -5642,23 +6100,46 @@ export function PatientQuickRequestsTrackerPanel({
     );
   };
 
-  const handleOpenOffer = (offer) => {
-    if (typeof onOpenConversation === "function" && offer?.conversation) {
-      onOpenConversation(
-        offer.conversation,
-        offer?.expand?.doctor?.id || offer.doctor,
-      );
-    } else {
+  const handleOpenOffer = async (row, offer) => {
+    const conversationId =
+      (typeof offer?.conversation === "string" ? offer.conversation : "") ||
+      offer?.conversation?.id ||
+      offer?.expand?.conversation?.id ||
+      "";
+    const doctorId =
+      offer?.expand?.doctor?.id ||
+      (typeof offer?.doctor === "string" ? offer.doctor : offer?.doctor?.id) ||
+      "";
+    if (!conversationId) {
       Alert.alert(
         "Chat unavailable",
         "Open the Chat tab to find this conversation manually.",
       );
+      return;
+    }
+    try {
+      setBusyRowId(`${row.kind}::${row.id}`);
+      await acceptQuickHelpOffer({
+        offer,
+        requestId: row.id,
+        kind: row.kind,
+        patientUserId,
+      });
+      removeRowLocally(row.kind, row.id);
+      setTrackingModalKind(null);
+      if (typeof onOpenConversation === "function") {
+        onOpenConversation(conversationId, doctorId);
+      }
+    } catch (e) {
+      Alert.alert("Could not open offer", e?.message || "Please try again.");
+    } finally {
+      setBusyRowId(null);
     }
   };
 
-  const renderOffer = (offer) => {
+  const renderOffer = (offer, row) => {
     const doctor = offer?.expand?.doctor;
-    const doctorName = doctor?.name || doctor?.email || "Doctor";
+    const doctorName = resolveListingDisplayName({}, doctor) || "Doctor";
     return (
       <View
         key={offer.id}
@@ -5701,7 +6182,8 @@ export function PatientQuickRequestsTrackerPanel({
           ) : null}
         </View>
         <TouchableOpacity
-          onPress={() => handleOpenOffer(offer)}
+          onPress={() => handleOpenOffer(row, offer)}
+          disabled={busyRowId === `${row.kind}::${row.id}`}
           accessibilityLabel="Open chat with this doctor"
           style={{
             width: 36,
@@ -5710,6 +6192,7 @@ export function PatientQuickRequestsTrackerPanel({
             justifyContent: "center",
             alignItems: "center",
             backgroundColor: theme.success,
+            opacity: busyRowId === `${row.kind}::${row.id}` ? 0.6 : 1,
           }}
         >
           <Ionicons name="arrow-forward" size={18} color="#FFF" />
@@ -5723,8 +6206,8 @@ export function PatientQuickRequestsTrackerPanel({
       row.kind === "counselling" ? "Quick Counselling" : "Quick Solution";
     const summary =
       row.kind === "counselling"
-        ? `Topic: ${truncateOneLine(row.topic, 140) || "General"}`
-        : truncateOneLine(row.notes, 200) || "-";
+        ? `Topic: ${truncateOneLine(displayQuickCounsellingTopic(row), 140) || "General"}`
+        : truncateOneLine(displayQuickSolutionNotes(row), 200) || "-";
     const isBusy = busyRowId === `${row.kind}::${row.id}`;
     const offers = Array.isArray(row.offers) ? row.offers : [];
     const hasOffers = offers.length > 0;
@@ -5773,38 +6256,40 @@ export function PatientQuickRequestsTrackerPanel({
           </Text>
         ) : null}
 
-        {offers.map(renderOffer)}
+        {offers.map((offer) => renderOffer(offer, row))}
 
         <View style={{ flexDirection: "row", marginTop: 12 }}>
-          <TouchableOpacity
-            onPress={() => handleClose(row)}
-            disabled={isBusy}
-            style={{
-              flex: 1,
-              marginRight: 6,
-              paddingVertical: 10,
-              borderRadius: 10,
-              alignItems: "center",
-              backgroundColor: hasOffers ? theme.accent : theme.accentLight,
-              opacity: isBusy ? 0.6 : 1,
-            }}
-          >
-            <Text
+          {!hasOffers ? (
+            <TouchableOpacity
+              onPress={() => handleClose(row)}
+              disabled={isBusy}
               style={{
-                color: hasOffers ? "#FFF" : theme.accent,
-                fontWeight: "700",
-                fontSize: 13,
+                flex: 1,
+                marginRight: 6,
+                paddingVertical: 10,
+                borderRadius: 10,
+                alignItems: "center",
+                backgroundColor: theme.accentLight,
+                opacity: isBusy ? 0.6 : 1,
               }}
             >
-              Close
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={{
+                  color: theme.accent,
+                  fontWeight: "700",
+                  fontSize: 13,
+                }}
+              >
+                Close
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             onPress={() => handleCancel(row)}
             disabled={isBusy}
             style={{
               flex: 1,
-              marginLeft: 6,
+              marginLeft: hasOffers ? 0 : 6,
               paddingVertical: 10,
               borderRadius: 10,
               alignItems: "center",
@@ -5834,43 +6319,182 @@ export function PatientQuickRequestsTrackerPanel({
 
   if (!patientUserId) return null;
 
-  return (
-    <View style={{ marginTop: 4 }}>
+  const solutionItems = items.filter((row) => row.kind === "solution");
+  const counsellingItems = items.filter((row) => row.kind === "counselling");
+  const modalItems =
+    trackingModalKind === "counselling"
+      ? counsellingItems
+      : trackingModalKind === "solution"
+        ? solutionItems
+        : [];
+
+  const trackingEntryRow = ({
+    onPress,
+    iconName,
+    accentColor,
+    title,
+    subtitle,
+  }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.88}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+        marginBottom: 10,
+        borderRadius: 14,
+        backgroundColor: theme.card,
+        borderWidth: 1,
+        borderColor: theme.cardBorder,
+      }}
+    >
       <View
-        style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}
+        style={{
+          width: 36,
+          height: 36,
+        borderRadius: 10,
+        borderWidth: 2,
+        borderStyle: "solid",
+        borderColor: accentColor,
+          justifyContent: "center",
+          alignItems: "center",
+          marginRight: 12,
+          backgroundColor: theme.bg,
+        }}
       >
-        <Text style={{ color: theme.textPrimary, fontWeight: "800", flex: 1 }}>
-          My Quick requests
+        <Ionicons name={iconName} size={20} color={accentColor} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: "800",
+              color: theme.textPrimary,
+            }}
+          >
+            {title}
+          </Text>
+          <View
+            style={{
+              marginLeft: 8,
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+              borderRadius: 8,
+              backgroundColor: theme.accentLight,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 10,
+                fontWeight: "800",
+                color: theme.accent,
+                letterSpacing: 0.4,
+              }}
+            >
+              TRACKING
+            </Text>
+          </View>
+        </View>
+        <Text
+          style={{
+            fontSize: 12,
+            color: theme.textSecondary,
+            marginTop: 4,
+          }}
+        >
+          {subtitle}
         </Text>
+      </View>
+      <Ionicons name="albums-outline" size={20} color={theme.textTertiary} />
+    </TouchableOpacity>
+  );
+
+  return (
+    <View
+      style={{
+        marginTop: 4,
+        borderRadius: 18,
+        padding: 14,
+        borderLeftWidth: 5,
+        borderLeftColor: theme.accent,
+        backgroundColor: theme.inputBg,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderRightWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.cardBorder,
+        borderRightColor: theme.cardBorder,
+        borderBottomColor: theme.cardBorder,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          marginBottom: 10,
+        }}
+      >
+        <View
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            backgroundColor: theme.accent,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: 10,
+          }}
+        >
+          <Ionicons name="pulse-outline" size={20} color="#FFF" />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ color: theme.textPrimary, fontWeight: "800", fontSize: 15 }}>
+            My Quick requests
+          </Text>
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: 11,
+              marginTop: 2,
+              fontWeight: "600",
+            }}
+          >
+            Track requests you already sent — not where you start new ones.
+          </Text>
+        </View>
         <TouchableOpacity
           onPress={() => void load()}
           disabled={loading}
+          accessibilityLabel="Refresh quick requests"
           style={{
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 10,
-            backgroundColor: theme.accentLight,
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            backgroundColor: theme.card,
+            justifyContent: "center",
+            alignItems: "center",
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
           }}
         >
-          <Text
-            style={{ color: theme.accent, fontWeight: "700", fontSize: 12 }}
-          >
-            {loading ? "…" : "Refresh"}
-          </Text>
+          {loading ? (
+            <ActivityIndicator size="small" color={theme.accent} />
+          ) : (
+            <Ionicons name="refresh-outline" size={22} color={theme.accent} />
+          )}
         </TouchableOpacity>
       </View>
       <Text
         style={{
           color: theme.textSecondary,
           fontSize: S.small,
-          marginBottom: 10,
+          marginBottom: 12,
+          lineHeight: 17,
         }}
       >
-        Track Quick Solution / Counselling requests you submitted. When a doctor
-        offers help, an alert appears with an arrow button - tap it to open the
-        chat. Use <Text style={{ fontWeight: "700" }}>Close</Text> after you’ve
-        chosen a doctor or <Text style={{ fontWeight: "700" }}>Cancel</Text> if
-        you no longer need help.
+        See status, doctor offers, and close or cancel from here.
       </Text>
       {err ? (
         <Text
@@ -5879,26 +6503,155 @@ export function PatientQuickRequestsTrackerPanel({
           {err}
         </Text>
       ) : null}
-      {items.length === 0 ? (
-        <Text
+
+      {trackingEntryRow({
+        onPress: () => setTrackingModalKind("solution"),
+        iconName: "medkit-outline",
+        accentColor: theme.accent,
+        title: "Quick Solution",
+        subtitle:
+          solutionItems.length > 0
+            ? `${solutionItems.length} active — open to manage`
+            : "No active solution requests",
+      })}
+      {trackingEntryRow({
+        onPress: () => setTrackingModalKind("counselling"),
+        iconName: "chatbubbles-outline",
+        accentColor: theme.success,
+        title: "Quick Counselling",
+        subtitle:
+          counsellingItems.length > 0
+            ? `${counsellingItems.length} active — open to manage`
+            : "No active counselling requests",
+      })}
+
+      <Modal
+        visible={trackingModalKind !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setTrackingModalKind(null)}
+      >
+        <View
           style={{
-            color: theme.textTertiary,
-            fontSize: S.small,
-            marginBottom: 8,
+            flex: 1,
+            backgroundColor: theme.bg,
+            paddingTop: insets.top,
           }}
         >
-          {loading
-            ? "Loading your tracking list…"
-            : "No active Quick requests."}
-        </Text>
-      ) : (
-        items.map(renderCard)
-      )}
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: theme.cardBorder,
+              backgroundColor: theme.card,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => setTrackingModalKind(null)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel="Close"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Ionicons name="close" size={26} color={theme.textPrimary} />
+            </TouchableOpacity>
+            <Text
+              style={{
+                flex: 1,
+                marginLeft: 4,
+                fontSize: S.title,
+                fontWeight: "800",
+                color: theme.textPrimary,
+              }}
+              numberOfLines={1}
+            >
+              {trackingModalKind === "counselling"
+                ? "Quick Counselling"
+                : "Quick Solution"}
+            </Text>
+            <TouchableOpacity
+              onPress={() => void load()}
+              disabled={loading}
+              accessibilityLabel="Refresh list"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                backgroundColor: theme.accentLight,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color={theme.accent} />
+              ) : (
+                <Ionicons
+                  name="refresh-outline"
+                  size={22}
+                  color={theme.accent}
+                />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{
+              padding: S.pad,
+              paddingBottom: insets.bottom + 28,
+            }}
+          >
+            {loading && modalItems.length === 0 ? (
+              <Text
+                style={{
+                  color: theme.textTertiary,
+                  fontSize: S.small,
+                  marginTop: 8,
+                }}
+              >
+                Loading…
+              </Text>
+            ) : null}
+            {!loading && modalItems.length === 0 ? (
+              <Text
+                style={{
+                  color: theme.textTertiary,
+                  fontSize: S.small,
+                  marginTop: 8,
+                }}
+              >
+                {trackingModalKind === "counselling"
+                  ? "No active Quick Counselling requests."
+                  : "No active Quick Solution requests."}
+              </Text>
+            ) : (
+              modalItems.map(renderCard)
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
+export function CoinWalletDoctorPanel({
+  theme,
+  hideWithdrawSection = false,
+  /**
+   * `combined` — legacy single balance (default, pharmacy portal).
+   * `quick` — Quick Solution / Counselling share of your ledger.
+   * `package` — package sessions, referrals, and other non-quick ledger totals.
+   */
+  walletChannel = "combined",
+}) {
   const user = getAuthUser();
   const [withdraw, setWithdraw] = useState("");
   const [busy, setBusy] = useState(false);
@@ -5909,21 +6662,38 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
   const [referralTargets, setReferralTargets] = useState({});
 
   const refreshBalance = useCallback(async () => {
-    const [coins, activePairs, referralRows] = await Promise.all([
-      getDoctorCoinBalance(user?.id),
+    if (walletChannel === "combined") {
+      const [coins, activePairs, referralRows] = await Promise.all([
+        getDoctorCoinBalance(user?.id),
+        listActivePackagePairsForDoctor(user?.id),
+        listPackageReferralsForDoctor(user?.id),
+      ]);
+      setBalance(coins);
+      setPairs(activePairs || []);
+      setReferrals(referralRows || []);
+      return;
+    }
+    const [buckets, activePairs, referralRows] = await Promise.all([
+      getDoctorCoinBucketBalances(user?.id),
       listActivePackagePairsForDoctor(user?.id),
       listPackageReferralsForDoctor(user?.id),
     ]);
+    const coins =
+      walletChannel === "quick" ? buckets.quickCoins : buckets.packageCoins;
     setBalance(coins);
     setPairs(activePairs || []);
     setReferrals(referralRows || []);
-  }, [user?.id]);
+  }, [user?.id, walletChannel]);
 
   useEffect(() => {
     void refreshBalance();
   }, [refreshBalance]);
 
   useEffect(() => {
+    if (walletChannel === "quick") {
+      setPackageDoctors([]);
+      return undefined;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -5933,21 +6703,75 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
           expand: "user",
         });
         if (cancelled) return;
+        const allUids = [
+          ...new Set(
+            (rows || [])
+              .map((row) =>
+                typeof row.user === "string" ? row.user : row.user?.id,
+              )
+              .filter(Boolean),
+          ),
+        ];
+        const byId =
+          allUids.length > 0 ? await fetchUsersAuthByIds(allUids) : new Map();
         const mapped = (rows || [])
-          .map((row) => ({
-            profileId: row.id,
-            userId: row.user || row.expand?.user?.id || "",
-            name: row.expand?.user?.name || row.full_name || "Doctor",
-            specialty: row.specialty || "General Physician",
-            practitionerTier: String(
-              row.practitioner_tier || row.tier || row.doctor_class || "",
-            ).toLowerCase(),
-          }))
+          .map((row) => {
+            const uid = typeof row.user === "string" ? row.user : row.user?.id;
+            const expU0 = row.expand?.user;
+            const expNorm0 = Array.isArray(expU0) ? expU0[0] : expU0;
+            const expandObj =
+              expNorm0 &&
+              typeof expNorm0 === "object" &&
+              !Array.isArray(expNorm0)
+                ? expNorm0
+                : null;
+            const fetched = uid ? byId.get(uid) : null;
+            const fetchObj =
+              fetched &&
+              typeof fetched === "object" &&
+              !Array.isArray(fetched)
+                ? fetched
+                : null;
+            const uNorm = fetchObj || expandObj;
+            const merged = {
+              ...row,
+              expand: { ...(row.expand || {}), ...(uNorm ? { user: uNorm } : {}) },
+            };
+            const specRaw = String(merged.specialty || "").trim();
+            const specLow = specRaw.toLowerCase();
+            const spec =
+              !specRaw ||
+              specLow === "n/a" ||
+              specLow === "na" ||
+              specLow === "-" ||
+              specLow === "none" ||
+              specLow === "unknown" ||
+              specLow === "nil"
+                ? "General Physician"
+                : specRaw;
+            return {
+              profileId: merged.id,
+              userId: merged.user || merged.expand?.user?.id || "",
+              name:
+                resolveListingDisplayName(merged, merged.expand?.user) ||
+                "Doctor",
+              specialty: spec,
+              practitionerTier: String(
+                merged.practitioner_tier ||
+                  merged.tier ||
+                  merged.doctor_class ||
+                  "",
+              ).toLowerCase(),
+              clinicOrHospital: merged.clinic_or_hospital || "",
+              raw: merged,
+            };
+          })
           .filter(
             (doctor) =>
               doctor.userId &&
               doctor.userId !== user?.id &&
-              doctorTierEligibleForPackageMode(doctor.practitionerTier),
+              doctorTierEligibleForPackageMode(doctor.practitionerTier) &&
+              !doctorTierEligibleForQuickService(doctor),
           );
         setPackageDoctors(mapped);
       } catch {
@@ -5957,7 +6781,7 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [user?.id, walletChannel]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -6012,24 +6836,44 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
       .map((r) => String(r.package_offer || "")),
   );
 
+  const walletTitle =
+    walletChannel === "quick"
+      ? "Quick care coins (1 coin = ₹1)"
+      : walletChannel === "package"
+        ? "Package care coins (1 coin = ₹1)"
+        : "Coin wallet (1 coin = ₹1)";
+  const showPackagePairUi = walletChannel !== "quick";
+  const showWithdrawBlock = !hideWithdrawSection && walletChannel !== "quick";
+
   return (
     <View style={{ marginTop: 0 }}>
       <Text
         style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 8 }}
       >
-        Coin wallet (1 coin = ₹1)
+        {walletTitle}
       </Text>
       <Text
         style={{ color: theme.textPrimary, fontSize: S.title, fontWeight: "900" }}
       >
         {balance} coins available
       </Text>
-      <Text
-        style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
-      >
-        Active package pairs: {pairs.length}
-      </Text>
-      {pairs.slice(0, 5).map((pair) => {
+      {walletChannel === "quick" ? (
+        <Text
+          style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
+        >
+          Credited when a patient accepts your help on a Quick Solution or Quick
+          Counselling request. Withdrawals use your combined balance (see
+          package wallet if you also run care packages).
+        </Text>
+      ) : (
+        <Text
+          style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
+        >
+          Active package pairs: {pairs.length}
+        </Text>
+      )}
+      {showPackagePairUi
+        ? pairs.slice(0, 5).map((pair) => {
         const alreadyReferred = outgoingReferralOfferIds.has(String(pair.offerId));
         return (
           <View
@@ -6111,8 +6955,9 @@ export function CoinWalletDoctorPanel({ theme, hideWithdrawSection = false }) {
             ) : null}
           </View>
         );
-      })}
-      {!hideWithdrawSection ? (
+      })
+        : null}
+      {showWithdrawBlock ? (
         <>
           <Text
             style={{
@@ -6237,10 +7082,200 @@ export function DoctorCoinPaymentHistoryPanel({ theme }) {
   );
 }
 
+const COIN_VARIANT_STYLES = {
+  profile: {
+    front: ["#E8E4DC", "#B8A882", "#6B6348"],
+    frontEnd: { x: 0.82, y: 0.92 },
+    rim: "rgba(255,255,255,0.35)",
+    symbol: "#2C2820",
+    back: ["#3A3528", "#5C5542", "#7A7260"],
+    backSymbol: "rgba(248,250,252,0.85)",
+    spec: "rgba(255,255,255,0.28)",
+  },
+  casual: {
+    front: ["#EDE8DE", "#C4B08A", "#7D6E4F"],
+    frontEnd: { x: 0.78, y: 0.88 },
+    rim: "rgba(255,255,255,0.38)",
+    symbol: "#2A261E",
+    back: ["#353028", "#524A3A", "#6E6654"],
+    backSymbol: "rgba(255,250,240,0.88)",
+    spec: "rgba(255,255,255,0.3)",
+  },
+  package: {
+    front: ["#E4E7F5", "#6B73B5", "#2C3158"],
+    frontEnd: { x: 0.75, y: 0.9 },
+    rim: "rgba(255,255,255,0.42)",
+    symbol: "#F4F6FC",
+    back: ["#1E2238", "#3D4568", "#5A6290"],
+    backSymbol: "rgba(226,232,255,0.9)",
+    spec: "rgba(255,255,255,0.28)",
+  },
+};
+
+/**
+ * Slow 3D Y-rotation coin (obverse / reverse) for wallet + profile.
+ * `variant`: metallic gold tone (profile/casual) vs indigo (package).
+ */
+export function PatientBalanceRotatingCoin3D({
+  compact = false,
+  variant = "profile",
+  size: sizeProp,
+  noSideMargin = false,
+}) {
+  const palette = COIN_VARIANT_STYLES[variant] || COIN_VARIANT_STYLES.profile;
+  const size =
+    sizeProp ?? (compact ? 38 : 44);
+  const rotation = useSharedValue(0);
+  useEffect(() => {
+    rotation.value = withRepeat(
+      withTiming(360, { duration: 5600, easing: Easing.linear }),
+      -1,
+      false,
+    );
+  }, [rotation]);
+  const spinStyle = useAnimatedStyle(() => ({
+    transform: [
+      { perspective: 480 },
+      { rotateY: `${rotation.value}deg` },
+    ],
+  }));
+  const inner = size - 4;
+  const r = inner / 2;
+  const specH = Math.max(6, inner * 0.26);
+
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        marginRight: noSideMargin ? 0 : compact ? 8 : 10,
+      }}
+    >
+      <Animated.View
+        style={[
+          {
+            width: size,
+            height: size,
+            alignItems: "center",
+            justifyContent: "center",
+          },
+          spinStyle,
+        ]}
+      >
+        <View
+          style={{
+            position: "absolute",
+            width: size,
+            height: size,
+            alignItems: "center",
+            justifyContent: "center",
+            backfaceVisibility: "hidden",
+          }}
+        >
+          <LinearGradient
+            colors={palette.front}
+            start={{ x: 0.12, y: 0.08 }}
+            end={palette.frontEnd || { x: 0.85, y: 0.92 }}
+            style={{
+              width: inner,
+              height: inner,
+              borderRadius: r,
+              borderWidth: StyleSheet.hairlineWidth * 2,
+              borderColor: palette.rim,
+              alignItems: "center",
+              justifyContent: "center",
+              shadowColor: "#0F172A",
+              shadowOpacity: 0.35,
+              shadowRadius: 6,
+              shadowOffset: { width: 0, height: 3 },
+              elevation: 6,
+              overflow: "hidden",
+            }}
+          >
+            <LinearGradient
+              colors={[palette.spec, "transparent"]}
+              start={{ x: 0.4, y: 0 }}
+              end={{ x: 0.6, y: 0.55 }}
+              style={{
+                position: "absolute",
+                left: inner * 0.12,
+                right: inner * 0.12,
+                top: inner * 0.08,
+                height: specH,
+                borderRadius: specH / 2,
+              }}
+            />
+            <Text
+              style={{
+                fontSize: size * 0.3,
+                fontWeight: "700",
+                color: palette.symbol,
+                letterSpacing: -1,
+              }}
+            >
+              ₹
+            </Text>
+          </LinearGradient>
+        </View>
+        <View
+          style={{
+            position: "absolute",
+            width: size,
+            height: size,
+            alignItems: "center",
+            justifyContent: "center",
+            backfaceVisibility: "hidden",
+            transform: [{ rotateY: "180deg" }],
+          }}
+        >
+          <LinearGradient
+            colors={palette.back}
+            start={{ x: 0.15, y: 0.2 }}
+            end={{ x: 0.85, y: 0.85 }}
+            style={{
+              width: inner,
+              height: inner,
+              borderRadius: r,
+              borderWidth: StyleSheet.hairlineWidth * 2,
+              borderColor: "rgba(255,255,255,0.12)",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+            }}
+          >
+            <View
+              style={{
+                position: "absolute",
+                width: inner * 0.55,
+                height: StyleSheet.hairlineWidth * 2,
+                backgroundColor: "rgba(255,255,255,0.2)",
+                borderRadius: 2,
+                transform: [{ rotate: "-38deg" }],
+              }}
+            />
+            <Text
+              style={{
+                fontSize: size * 0.22,
+                fontWeight: "800",
+                color: palette.backSymbol,
+                letterSpacing: 2,
+              }}
+            >
+              ···
+            </Text>
+          </LinearGradient>
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
 export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
   const [rows, setRows] = useState([]);
   const [balance, setBalance] = useState(0);
   const [pairs, setPairs] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const insets = useSafeAreaInsets();
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -6258,46 +7293,323 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
       cancelled = true;
     };
   }, [userId]);
+
+  const pairsShown = compact ? pairs.slice(0, 2) : pairs;
+
+  const sectionLabelStyle = {
+    color: theme.textTertiary,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.55,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  };
+
+  const surfaceGradientColors = useMemo(() => {
+    if (
+      Array.isArray(theme.surfaceGradient) &&
+      theme.surfaceGradient.length >= 2
+    ) {
+      return theme.surfaceGradient;
+    }
+    return [theme.card, theme.bgSolid || theme.bg || theme.card];
+  }, [theme.surfaceGradient, theme.card, theme.bg, theme.bgSolid]);
+
+  const elevatedWrap = useMemo(
+    () => ({
+      borderRadius: 12,
+      marginBottom: 8,
+      overflow: "hidden",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.cardBorder || "#E2E8F0",
+      shadowColor: theme.shadowColor || "#000",
+      shadowOpacity:
+        typeof theme.elevatedShadowOpacity === "number"
+          ? theme.elevatedShadowOpacity
+          : 0.12,
+      shadowRadius:
+        typeof theme.elevatedShadowRadius === "number"
+          ? theme.elevatedShadowRadius
+          : 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation:
+        typeof theme.elevatedElevation === "number"
+          ? theme.elevatedElevation
+          : 8,
+    }),
+    [theme],
+  );
+
+  const balanceGradientColors = useMemo(
+    () => [
+      theme.accentLight || "#EEF2FF",
+      theme.card,
+      theme.bg || "#F8FAFC",
+    ],
+    [theme.accentLight, theme.card, theme.bg],
+  );
+
   return (
-    <View style={{ marginTop: 8 }}>
+    <View style={{ marginTop: 6 }}>
       <Text
-        style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 6 }}
+        style={{
+          color: theme.textPrimary,
+          fontWeight: "800",
+          fontSize: compact ? 14 : 15,
+          marginBottom: 8,
+        }}
       >
         Coin & payments history
       </Text>
-      <Text style={{ color: theme.textPrimary, fontWeight: "900", marginBottom: 6 }}>
-        Balance: {balance} coins
-      </Text>
-      <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 6 }}>
-        Active package pairs: {pairs.length}
-      </Text>
-      {pairs.slice(0, compact ? 2 : 4).map((pair) => (
-        <Text
-          key={pair.offerId}
-          style={{ color: theme.textTertiary, fontSize: 11, marginBottom: 3 }}
+
+      <View style={elevatedWrap}>
+        <LinearGradient
+          colors={balanceGradientColors}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            paddingVertical: compact ? 6 : 7,
+            paddingHorizontal: compact ? 9 : 10,
+          }}
         >
-          {pair.title} · doctor {String(pair.doctor_user_id || "").slice(-6)} ·
-          pool {pair.doctor_coins} coins
-        </Text>
-      ))}
-      {compact ? null : rows.length === 0 ? (
-        <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
-          No movements yet.
-        </Text>
-      ) : (
-        rows.map((r) => (
-          <Text
-            key={r.id}
+          <View
             style={{
-              color: theme.textSecondary,
-              fontSize: S.small,
-              marginBottom: 4,
+              flexDirection: "row",
+              alignItems: "center",
             }}
           >
-            {formatCoinLedgerReasonForDisplay(r.reason)} · {r.delta}
+            <PatientBalanceRotatingCoin3D
+              compact={compact}
+              variant="profile"
+            />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={sectionLabelStyle}>Remaining balance</Text>
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.72}
+                style={{
+                  color: theme.textPrimary,
+                  fontSize: compact ? 12 : 13,
+                  fontWeight: "700",
+                  letterSpacing: -0.15,
+                  marginTop: 1,
+                }}
+              >
+                {balance} coins
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
+      </View>
+
+      <View style={elevatedWrap}>
+        <LinearGradient
+          colors={surfaceGradientColors}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={{
+            padding: compact ? 9 : 10,
+          }}
+        >
+        <Text style={[sectionLabelStyle, { marginBottom: 6 }]}>
+          Active packages
+        </Text>
+        {pairs.length === 0 ? (
+          <Text style={{ color: theme.textTertiary, fontSize: 11, lineHeight: 16 }}>
+            No active package pairs.
           </Text>
-        ))
-      )}
+        ) : (
+          pairsShown.map((pair) => (
+            <Text
+              key={pair.offerId}
+              style={{
+                color: theme.textSecondary,
+                fontSize: 11,
+                lineHeight: 16,
+                marginBottom: 4,
+              }}
+            >
+              {pair.title} · doctor {String(pair.doctor_user_id || "").slice(-6)}{" "}
+              · pool {pair.doctor_coins} coins
+            </Text>
+          ))
+        )}
+        {compact && pairs.length > pairsShown.length ? (
+          <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 2 }}>
+            +{pairs.length - pairsShown.length} more in full profile
+          </Text>
+        ) : null}
+        </LinearGradient>
+      </View>
+
+      <TouchableOpacity
+        onPress={() => setHistoryOpen(true)}
+        activeOpacity={0.9}
+        style={{
+          borderRadius: 12,
+          overflow: "hidden",
+          marginBottom: 2,
+          shadowColor: theme.shadowColor || "#000",
+          shadowOpacity: 0.28,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: 9,
+        }}
+      >
+        <LinearGradient
+          colors={[
+            theme.accentBg || theme.accent,
+            theme.accent,
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            paddingVertical: compact ? 9 : 10,
+            paddingHorizontal: 14,
+          }}
+        >
+          <Ionicons
+            name="receipt-outline"
+            size={17}
+            color="#fff"
+            style={{ marginRight: 7 }}
+          />
+          <Text
+            style={{
+              color: "#fff",
+              fontWeight: "800",
+              fontSize: compact ? 12 : 13,
+              letterSpacing: 0.2,
+            }}
+          >
+            See details…
+          </Text>
+        </LinearGradient>
+      </TouchableOpacity>
+
+      <Modal
+        visible={historyOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setHistoryOpen(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.45)",
+            justifyContent: "flex-end",
+          }}
+        >
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => setHistoryOpen(false)}
+          />
+          <View
+            style={{
+              maxHeight: "88%",
+              backgroundColor: theme.card,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              paddingBottom: Math.max(insets.bottom, 12) + 8,
+              overflow: "hidden",
+            }}
+          >
+            <LinearGradient
+              colors={[theme.accent, theme.accentBg || theme.accent]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{ height: 4, width: "100%" }}
+            />
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                paddingHorizontal: 16,
+                paddingTop: 16,
+                paddingBottom: 8,
+              }}
+            >
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontSize: 18,
+                  fontWeight: "800",
+                }}
+              >
+                Payment history
+              </Text>
+              <TouchableOpacity
+                onPress={() => setHistoryOpen(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Close payment history"
+              >
+                <Ionicons name="close" size={26} color={theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={{ paddingHorizontal: 16 }}
+              contentContainerStyle={{ paddingBottom: 8 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {rows.length === 0 ? (
+                <Text
+                  style={{
+                    color: theme.textTertiary,
+                    fontSize: S.small,
+                    paddingVertical: 12,
+                  }}
+                >
+                  No movements yet.
+                </Text>
+              ) : (
+                rows.map((r, idx) => (
+                  <View
+                    key={r.id}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      marginBottom: idx === rows.length - 1 ? 0 : 10,
+                      paddingBottom: idx === rows.length - 1 ? 0 : 10,
+                      borderBottomWidth:
+                        idx === rows.length - 1 ? 0 : StyleSheet.hairlineWidth,
+                      borderBottomColor: theme.cardBorder || "#E2E8F0",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: theme.textSecondary,
+                        fontSize: S.small,
+                        lineHeight: 18,
+                        marginRight: 10,
+                      }}
+                    >
+                      {formatCoinLedgerReasonForDisplay(r.reason)}
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.textPrimary,
+                        fontSize: S.small,
+                        fontWeight: "800",
+                      }}
+                    >
+                      {Number(r.delta) > 0 ? `+${r.delta}` : String(r.delta)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

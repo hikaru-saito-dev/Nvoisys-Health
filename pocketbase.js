@@ -557,26 +557,62 @@ async function createDoctorProfileRecord(userId, merged) {
   const clinic_or_hospital = String(merged.clinic_or_hospital || "").trim();
   const language = String(merged.language || "").trim();
   const phone = String(merged.phone || "").trim();
+  const practitionerTier = String(
+    merged.practitioner_tier || merged.tier || merged.doctor_class || "",
+  ).trim();
+  const doctorType = String(merged.doctor_type || "").trim();
 
-  const payload = {
+  const basePayload = {
     user: userId,
     status: "pending",
     specialty,
     clinic_or_hospital,
   };
-  if (language) payload.language = language;
-  if (phone) payload.phone = phone;
+  if (language) basePayload.language = language;
+  if (phone) basePayload.phone = phone;
 
-  const practitionerTier = String(merged.practitioner_tier || "").trim();
+  const attempts = [];
+  const attemptKeys = new Set();
+  const addAttempt = (extra = {}) => {
+    const payload = { ...basePayload, ...extra };
+    const key = JSON.stringify(payload);
+    if (!attemptKeys.has(key)) {
+      attemptKeys.add(key);
+      attempts.push(payload);
+    }
+  };
   if (practitionerTier) {
-    payload.practitioner_tier = practitionerTier;
+    addAttempt({
+      practitioner_tier: practitionerTier,
+      ...(doctorType ? { doctor_type: doctorType } : {}),
+    });
+    addAttempt({ practitioner_tier: practitionerTier });
+    addAttempt({
+      doctor_class: practitionerTier,
+      ...(doctorType ? { doctor_type: doctorType } : {}),
+    });
+    addAttempt({ doctor_class: practitionerTier });
+    addAttempt({
+      tier: practitionerTier,
+      ...(doctorType ? { doctor_type: doctorType } : {}),
+    });
+    addAttempt({ tier: practitionerTier });
+    addAttempt({ verification_tier: practitionerTier });
+  } else if (doctorType) {
+    addAttempt({ doctor_type: doctorType });
   }
-  const doctorType = String(merged.doctor_type || "").trim();
-  if (doctorType) {
-    payload.doctor_type = doctorType;
-  }
+  addAttempt();
 
-  return await pb.collection("doctor_profile").create(payload);
+  let lastError = null;
+  for (const payload of attempts) {
+    try {
+      return await pb.collection("doctor_profile").create(payload);
+    } catch (error) {
+      lastError = error;
+      if (error?.status !== 400) throw error;
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -594,11 +630,20 @@ async function createDoctorProfileRecord(userId, merged) {
  * minimal payload so signup/login can still succeed.
  */
 function coercePharmacyProviderKindForCreate(raw) {
-  const t = String(raw || "").toLowerCase().trim();
-  if (t === "rmp_doctor" || t === "rmp" || t === "gp" || t === "general_physician") {
+  const t = String(raw || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (
+    t === "rmp_doctor" ||
+    t === "rmp" ||
+    t === "gp" ||
+    t === "general_physician"
+  ) {
     return "rmp_doctor";
   }
-  if (t === "clinic" || t === "pharmacy") {
+  if (t === "clinic" || t === "pharmacy" || t === "clinic_doctor") {
     return "clinic";
   }
   return "";
@@ -610,10 +655,11 @@ async function createPharmacyProfileRecord(userId, merged) {
     merged.store_name || authUser?.name || "",
   ).trim();
 
-  const payload = { user: userId };
-  if (fallbackStoreName) payload.store_name = fallbackStoreName;
+  const payloadBase = { user: userId };
+  if (fallbackStoreName) payloadBase.store_name = fallbackStoreName;
 
   const providerKind = coercePharmacyProviderKindForCreate(merged.provider_kind);
+  const payload = { ...payloadBase };
   if (providerKind) payload.provider_kind = providerKind;
 
   const textKeys = ["tagline", "address", "district", "state", "phone"];
@@ -631,25 +677,31 @@ async function createPharmacyProfileRecord(userId, merged) {
     payload.products = merged.products;
   }
 
-  try {
-    return await pb.collection("pharmacy_profile").create(payload);
-  } catch (error) {
-    // If the schema rejects an unknown/required column we don't know about,
-    // try the minimal `{ user }` payload so the user can still complete
-    // signup. They will fill the rest from PharmacyProfileScreen.
-    if (error?.status === 400) {
-      try {
-        return await pb.collection("pharmacy_profile").create({ user: userId });
-      } catch (innerError) {
-        console.log(
-          "Pharmacy profile minimal create also failed:",
-          innerError?.message || innerError,
-        );
-        throw innerError;
-      }
-    }
-    throw error;
+  const attempts = [payload];
+  if (providerKind) {
+    const altProviderPayload = { ...payload };
+    delete altProviderPayload.provider_kind;
+    altProviderPayload.pharmacy_kind = providerKind;
+    attempts.push(altProviderPayload);
+    attempts.push({ ...payloadBase, provider_kind: providerKind });
+    attempts.push({ ...payloadBase, pharmacy_kind: providerKind });
   }
+  attempts.push(payloadBase, { user: userId });
+
+  let lastError = null;
+  for (const body of attempts) {
+    try {
+      return await pb.collection("pharmacy_profile").create(body);
+    } catch (error) {
+      lastError = error;
+      if (error?.status !== 400) throw error;
+    }
+  }
+  console.log(
+    "Pharmacy profile create failed:",
+    lastError?.message || lastError,
+  );
+  throw lastError;
 }
 
 export function formatPocketBaseClientError(error) {
