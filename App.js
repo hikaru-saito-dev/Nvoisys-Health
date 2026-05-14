@@ -144,6 +144,7 @@ import {
   resolveDoctorProfileIdForUser,
   resolveListingDisplayName,
   settlePackageCoinsForCompletedAppointment,
+  settleQuickRequestCasualCoins,
   WALLET_TOPUP_MAX_INR,
   WALLET_TOPUP_MIN_INR,
   writeLocalCareMode,
@@ -1040,6 +1041,49 @@ const postPaymentJson = async (path, payload) => {
   return data;
 };
 
+const PENDING_CASHFREE_PAYMENTS_KEY = "nvhs_pending_cashfree_payments_v1";
+const PENDING_CASHFREE_PAYMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+const readPendingCashfreePayments = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PENDING_CASHFREE_PAYMENTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    const cutoff = Date.now() - PENDING_CASHFREE_PAYMENT_MAX_AGE_MS;
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => Number(item?.createdAt || 0) >= cutoff)
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const writePendingCashfreePayments = async (items) => {
+  try {
+    const next = Array.isArray(items) ? items.filter((item) => item?.id) : [];
+    await AsyncStorage.setItem(
+      PENDING_CASHFREE_PAYMENTS_KEY,
+      JSON.stringify(next),
+    );
+  } catch {
+    // Retry support is best-effort; live payment flow still verifies inline.
+  }
+};
+
+const upsertPendingCashfreePayment = async (entry) => {
+  if (!entry?.id) return;
+  const rows = await readPendingCashfreePayments();
+  const next = rows.filter((item) => item.id !== entry.id);
+  next.push({ ...entry, createdAt: entry.createdAt || Date.now() });
+  await writePendingCashfreePayments(next);
+};
+
+const removePendingCashfreePayment = async (entryId) => {
+  const id = String(entryId || "").trim();
+  if (!id) return;
+  const rows = await readPendingCashfreePayments();
+  await writePendingCashfreePayments(rows.filter((item) => item.id !== id));
+};
+
 // ---------------------------------------------------------------------------
 // Step 9 - AI assistant configuration.
 // - OpenAI-compatible chat (e.g. Groq): set extra.aiBaseUrl to …/v1/chat/completions,
@@ -1749,15 +1793,27 @@ const QUICK_REQUEST_TABLE_SPECS = [
   },
 ];
 
+const quickRequestTableSpecsForHint = (kindHint) => {
+  const normalized = kindHint === "counselling" ? "counselling" : "solution";
+  const preferred = QUICK_REQUEST_TABLE_SPECS.find(
+    (spec) => spec.kind === normalized,
+  );
+  if (!preferred) return QUICK_REQUEST_TABLE_SPECS;
+  return [
+    preferred,
+    ...QUICK_REQUEST_TABLE_SPECS.filter((spec) => spec.kind !== preferred.kind),
+  ];
+};
+
 /**
  * Find which collection holds this quick request id (fixes 404 when UI `kind`
  * does not match the row’s real collection).
  */
-const detectQuickRequestLocation = async (requestId) => {
+const detectQuickRequestLocation = async (requestId, kindHint = null) => {
   const id = String(requestId || "").trim();
   if (!id) return null;
   const pbOpts = { requestKey: null, $autoCancel: false };
-  for (const spec of QUICK_REQUEST_TABLE_SPECS) {
+  for (const spec of quickRequestTableSpecsForHint(kindHint)) {
     try {
       const row = await pb.collection(spec.col).getOne(id, pbOpts);
       return { ...spec, row };
@@ -3338,6 +3394,11 @@ const mapOrderRecord = (record) => {
   };
 };
 
+const relationFieldId = (value) => {
+  if (value && typeof value === "object" && value.id) return String(value.id);
+  return typeof value === "string" ? value.trim() : "";
+};
+
 const mapPrescriptionRecord = (record) => {
   const itemsList = normalizeOrderItemsList(record);
   const diagnosis = String(record?.notes || "").trim();
@@ -3352,10 +3413,21 @@ const mapPrescriptionRecord = (record) => {
   const pat = record.expand?.patient;
   const patientName =
     resolveListingDisplayName(pat, pat?.expand?.user) || "Patient";
+  const quickCounsellingRequestId = relationFieldId(
+    record.quick_counselling_request,
+  );
+  const quickSolutionRequestId = relationFieldId(record.quick_solution_request);
+  const quickKind = quickCounsellingRequestId
+    ? "counselling"
+    : quickSolutionRequestId
+      ? "solution"
+      : null;
   return {
     id: record.id,
     wound: record.wound || null,
     conversation: record.conversation || null,
+    quickKind,
+    quickRequestId: quickCounsellingRequestId || quickSolutionRequestId || null,
     patientId: record.patient || null,
     patientName,
     doctorId: record.doctor || null,
@@ -19257,6 +19329,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
                 doctorUserId={currentUser?.id}
                 onOpenHelpChat={handleOpenExistingHelpChat}
                 onPrescribeQuickRequest={openQuickPrescribeModal}
+                layout="split_tracks"
               />
 
               <DoctorUpcomingAppointmentsSection />
@@ -24387,6 +24460,13 @@ const PrescriptionScreen = ({
         id: record.id,
         doctor: record.doctor || "Doctor",
         date: record.date || formatDateValue(record.raw?.created),
+        quickKind: record.quickKind || null,
+        quickLabel:
+          record.quickKind === "counselling"
+            ? "Quick Counselling"
+            : record.quickKind === "solution"
+              ? "Quick Solution"
+              : "",
         diagnosis: record.diagnosis,
         woundId: record.wound || null,
         woundDescription:
@@ -24763,7 +24843,7 @@ const PrescriptionScreen = ({
                         fontSize: RFValue(11),
                       }}
                     >
-                      {rx.date}
+                      {rx.quickLabel ? `${rx.quickLabel} · ${rx.date}` : rx.date}
                     </Text>
                   </View>
                 </View>
@@ -29297,6 +29377,7 @@ const PharmacyDashboard = ({ orders }) => {
             doctorUserId={currentUser?.id}
             onOpenHelpChat={handleOpenExistingHelpChat}
             onPrescribeQuickRequest={openQuickPrescribeModal}
+            layout="split_tracks"
             autoRefreshQuickQueues
           />
         </View>
@@ -30381,7 +30462,8 @@ export default function App() {
           return await pb.collection("prescriptions").getFullList({
             requestKey: null,
             sort: "-created",
-            expand: "patient,doctor,wound,conversation",
+            expand:
+              "patient,doctor,wound,conversation,quick_solution_request,quick_counselling_request",
           });
         } catch (error) {
           console.log("prescriptions fetch skipped:", error?.message);
@@ -31723,7 +31805,7 @@ export default function App() {
     if (!requestId) throw new Error("Quick request not found.");
     if (!currentUser?.id) throw new Error("Sign in required.");
 
-    const detected = await detectQuickRequestLocation(requestId);
+    const detected = await detectQuickRequestLocation(requestId, _kindHint);
     if (!detected) {
       throw new Error(
         "This quick request was not found, or your account cannot read it. Refresh the queue and try again.",
@@ -31987,6 +32069,26 @@ export default function App() {
       );
     }
 
+    try {
+      await settleQuickRequestCasualCoins({
+        requestId: rid,
+        kind: locatedKind,
+        request: serverRow,
+        patientUserId: patientId,
+        providerUserId: currentUser.id,
+        event: "quick_prescription_sent",
+      });
+    } catch (coinErr) {
+      const detail =
+        formatPocketBaseClientError(coinErr) ||
+        coinErr?.message ||
+        "coin settlement failed";
+      throw new Error(
+        `Prescription was saved, but casual coin settlement failed (${detail}). ` +
+          "The request stayed open so you can retry after the patient has enough casual coins.",
+      );
+    }
+
     const pbNoCancel = { requestKey: null, $autoCancel: false };
     const prevAutoCancel = !!pb.enableAutoCancellation;
     pb.autoCancellation(false);
@@ -32220,6 +32322,15 @@ export default function App() {
     if (!checkoutUrl) {
       throw new Error("Payment checkout URL was not returned by the backend.");
     }
+    const pendingPaymentId = `package_offer:${offerId}`;
+    await upsertPendingCashfreePayment({
+      id: pendingPaymentId,
+      kind: "package_offer",
+      patientUserId: currentUser?.id || "",
+      doctorUserId: doctorUserId || offer?.doctor_user_id || offer?.doctor || "",
+      offerId,
+      cashfreeOrderId: order.cashfreeOrderId || order.orderId || "",
+    });
 
     const browserResult = await WebBrowser.openAuthSessionAsync(
       checkoutUrl,
@@ -32257,7 +32368,12 @@ export default function App() {
     if (!verified?.verified) {
       throw new Error("Payment verification failed.");
     }
-    return { ...verified, customerPhone, currencyQuote: paymentAmount };
+    return {
+      ...verified,
+      customerPhone,
+      currencyQuote: paymentAmount,
+      pendingCashfreePaymentId: pendingPaymentId,
+    };
   };
 
   const payForAppointment = async (appointment) => {
@@ -32360,6 +32476,9 @@ export default function App() {
       verified: paymentResult || null,
       currencyQuote: paymentResult?.currencyQuote || null,
     });
+    if (paymentResult?.pendingCashfreePaymentId) {
+      await removePendingCashfreePayment(paymentResult.pendingCashfreePaymentId);
+    }
     await refreshAllData();
   };
 
@@ -32407,6 +32526,15 @@ export default function App() {
     if (!checkoutUrl) {
       throw new Error("Payment checkout URL was not returned by the backend.");
     }
+    const pendingPaymentId = `wallet_deposit:${sourceId}`;
+    await upsertPendingCashfreePayment({
+      id: pendingPaymentId,
+      kind: "wallet_deposit",
+      patientUserId: currentUser?.id || "",
+      sourceId,
+      amountInr: amount,
+      cashfreeOrderId: order.cashfreeOrderId || order.orderId || "",
+    });
 
     const browserResult = await WebBrowser.openAuthSessionAsync(
       checkoutUrl,
@@ -32450,6 +32578,7 @@ export default function App() {
       sourceId,
       cashfreeOrderId: verifyPayload.cashfreeOrderId,
       currencyQuote: paymentAmount,
+      pendingCashfreePaymentId: pendingPaymentId,
     };
   };
 
@@ -32496,6 +32625,9 @@ export default function App() {
         verified: paymentResult || null,
       },
     });
+    if (paymentResult?.pendingCashfreePaymentId) {
+      await removePendingCashfreePayment(paymentResult.pendingCashfreePaymentId);
+    }
     try {
       await refreshAllData();
     } catch {
@@ -32503,6 +32635,87 @@ export default function App() {
     }
     return next;
   };
+
+  useEffect(() => {
+    if (PAYMENT_MODE !== "cashfree") return undefined;
+    if (!currentUser?.id || userRole !== "patient" || dataLoading) {
+      return undefined;
+    }
+    let cancelled = false;
+
+    const finalizePending = async () => {
+      const rows = await readPendingCashfreePayments();
+      const mine = rows.filter(
+        (item) => String(item?.patientUserId || "") === String(currentUser.id),
+      );
+      let finalizedAny = false;
+      for (const item of mine) {
+        if (cancelled) return;
+        const cashfreeOrderId = String(item?.cashfreeOrderId || "").trim();
+        if (!cashfreeOrderId) continue;
+        try {
+          const verified = await postPaymentJson("/payments/cashfree/verify", {
+            appointmentId: item.sourceId || item.offerId || "",
+            sourceType: item.kind,
+            sourceId: item.sourceId || item.offerId || "",
+            cashfreeOrderId,
+          });
+          if (!verified?.verified) continue;
+          if (item.kind === "wallet_deposit") {
+            await recordPatientWalletDeposit({
+              patientUserId: currentUser.id,
+              amountInr: item.amountInr,
+              provider: "cashfree",
+              providerOrderId: cashfreeOrderId,
+              meta: {
+                payment_mode: PAYMENT_MODE,
+                verified,
+                recovered_pending_payment: true,
+              },
+            });
+          } else if (item.kind === "package_offer" && item.offerId) {
+            await completePackageOfferPayment(item.offerId, item.doctorUserId, {
+              provider: "cashfree",
+              paymentMode: PAYMENT_MODE,
+              patientUserId: currentUser.id,
+              doctorUserId: item.doctorUserId,
+              providerOrderId: cashfreeOrderId,
+              customerName: currentUser?.name || "Patient",
+              customerEmail: currentUser?.email || "",
+              customerPhone: patientProfilePhoneRaw(patientProfile),
+              verified,
+            });
+          } else {
+            continue;
+          }
+          await removePendingCashfreePayment(item.id);
+          finalizedAny = true;
+        } catch (error) {
+          console.log("pending Cashfree finalization:", error?.message);
+        }
+      }
+      if (finalizedAny && !cancelled) {
+        try {
+          await refreshAllData();
+        } catch {
+          // Wallet ledgers were finalized; the next refresh will sync UI.
+        }
+      }
+    };
+
+    void finalizePending();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentUser?.id,
+    currentUser?.email,
+    currentUser?.name,
+    dataLoading,
+    patientProfile,
+    refreshAllData,
+    userRole,
+  ]);
 
   // -------------------------------------------------------------------------
   // Step 7b - medication schedule helpers used by MedicationTrackerScreen.

@@ -3218,7 +3218,7 @@ export function QuickSolutionScreen({
         "Submitted",
         privateMode
           ? "Private mode is on: your name, photo, and contact details are hidden from the provider side."
-          : "Your request was sent (10 coins). A randomly chosen RMP doctor or pharmacy will see it in their queue.",
+          : "Your request was sent. 10 coins are charged only when the provider responds/prescribes.",
       );
       onBack?.();
     } catch (e) {
@@ -3283,9 +3283,9 @@ export function QuickSolutionScreen({
             lineHeight: 18,
           }}
         >
-          Add details and an optional photo, then send (10 coins). The app picks
+          Add details and an optional photo, then send. The app picks
           a random RMP doctor (non–package setup) or pharmacy to receive your
-          request — you do not choose the recipient.
+          request — coins are charged only after a provider responds.
         </Text>
 
         {consultHint ? (
@@ -3318,7 +3318,8 @@ export function QuickSolutionScreen({
             fontSize: S.small,
           }}
         >
-          ₹10 (10 coins) per snap or query — platform 5 coins, provider 5 coins.
+          ₹10 (10 coins) per snap or query — charged on provider response;
+          platform 5 coins, provider 5 coins.
         </Text>
         <TouchableOpacity
           onPress={() => setPrivateMode((v) => !v)}
@@ -3420,7 +3421,7 @@ export function QuickSolutionScreen({
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Submit (10 coins)
+              Submit request
             </Text>
           )}
         </TouchableOpacity>
@@ -3560,7 +3561,7 @@ export function QuickCounsellingScreen({
       });
       Alert.alert(
         "Queued",
-        "Quick Counselling (25 coins). A randomly chosen RMP doctor or pharmacy will see your request. Platform 10, provider 15.",
+        "Quick Counselling queued. 25 coins are charged only when the provider responds/prescribes. Platform 10, provider 15.",
       );
       onBack?.();
     } catch (e) {
@@ -3628,8 +3629,8 @@ export function QuickCounsellingScreen({
             lineHeight: 18,
           }}
         >
-          Text-only request (25 coins). The app assigns a random RMP doctor
-          (non–package setup) or pharmacy — you do not pick the recipient.
+          Text-only request. The app assigns a random RMP doctor (non–package
+          setup) or pharmacy — coins are charged only after a provider responds.
         </Text>
 
         {consultHint ? (
@@ -3679,7 +3680,7 @@ export function QuickCounsellingScreen({
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Start request (25 coins)
+              Start request
             </Text>
           )}
         </TouchableOpacity>
@@ -7622,7 +7623,7 @@ export function CoinWalletDoctorPanel({
         <Text
           style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
         >
-          Credited when a patient accepts your help on a Quick Solution or Quick
+          Credited when you respond/prescribe on a Quick Solution or Quick
           Counselling request. Withdrawals use your combined balance (see
           package wallet if you also run care packages).
         </Text>

@@ -266,9 +266,9 @@ export function packageSlotDisplayName(slot) {
 
 /** Minimum package fee (INR) per catalogue slot — Basic / Gold / Premium. No maximum. */
 export const PACKAGE_SLOT_MIN_FEE_INR = Object.freeze({
-  1: 12000,
-  2: 20000,
-  3: 50000,
+  1: 10,
+  2: 10,
+  3: 10,
 });
 
 export function packageSlotMinimumFeeInr(slotNum) {
@@ -765,8 +765,8 @@ const DEFAULT_PACKAGE_AMOUNT_INR = Math.max(
   Number(
     (typeof process !== "undefined" &&
       process.env?.EXPO_PUBLIC_DEFAULT_PACKAGE_AMOUNT_INR) ||
-      8000,
-  ) || 8000,
+      10,
+  ) || 10,
 );
 const REFERRAL_MONTHLY_COMMISSION_COINS = 1000;
 
@@ -925,6 +925,13 @@ export function doctorProfileIsPackageDoctor(record) {
 const LEDGER_REASON_QUICK_SOLUTION_EARNED = "quick_solution_provider_earned";
 const LEDGER_REASON_QUICK_COUNSELLING_EARNED =
   "quick_counselling_provider_earned";
+const LEDGER_REASON_QUICK_SOLUTION_SPENT = "quick_solution_patient_spent";
+const LEDGER_REASON_QUICK_COUNSELLING_SPENT =
+  "quick_counselling_patient_spent";
+const LEDGER_REASON_QUICK_SOLUTION_REFUNDED =
+  "quick_solution_patient_refunded_uncredited";
+const LEDGER_REASON_QUICK_COUNSELLING_REFUNDED =
+  "quick_counselling_patient_refunded_uncredited";
 const LEDGER_REASON_PACKAGE_SESSION_EARNED = "package_session_doctor_earned";
 const LEDGER_REASON_REFERRAL_COMMISSION_RECEIVED =
   "referral_monthly_commission_received";
@@ -3489,35 +3496,42 @@ export async function completePackageOfferPayment(
   const effectiveDoctorUserId = String(
     doctorUserId || payment.doctorUserId || offer?.doctor || "",
   ).trim();
-  await recordPaymentTransaction({
-    patientUserId,
-    doctorUserId: effectiveDoctorUserId,
-    sourceCollection: "package_offers",
-    sourceId: offerId,
-    kind: "package_offer",
-    provider: payment.provider || "stub",
-    providerOrderId: payment.providerOrderId,
-    providerPaymentId: payment.providerPaymentId,
-    providerReferenceId: payment.providerReferenceId,
-    amountInr: offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr,
-    currency: payment.currency || "INR",
-    status: "success",
-    description: offer?.title || "Package offer payment",
-    customerName: payment.customerName,
-    customerEmail: payment.customerEmail,
-    customerPhone: payment.customerPhone,
-    metadata: {
-      package_offer_id: offerId,
-      payment_mode: payment.paymentMode || payment.provider || "stub",
-      platform_fee_inr:
-        offer?.platform_fee_inr ?? offer?.platformFeeInr ?? null,
-      doctor_coins: offer?.doctor_coins ?? offer?.doctorCoins ?? null,
-      patient_package_coins:
-        offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr ?? null,
-      currency_quote: payment.currencyQuote || null,
-      verified: payment.verified || null,
-    },
-  });
+  try {
+    await recordPaymentTransaction({
+      patientUserId,
+      doctorUserId: effectiveDoctorUserId,
+      sourceCollection: "package_offers",
+      sourceId: offerId,
+      kind: "package_offer",
+      provider: payment.provider || "stub",
+      providerOrderId: payment.providerOrderId,
+      providerPaymentId: payment.providerPaymentId,
+      providerReferenceId: payment.providerReferenceId,
+      amountInr: offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr,
+      currency: payment.currency || "INR",
+      status: "success",
+      description: offer?.title || "Package offer payment",
+      customerName: payment.customerName,
+      customerEmail: payment.customerEmail,
+      customerPhone: payment.customerPhone,
+      metadata: {
+        package_offer_id: offerId,
+        payment_mode: payment.paymentMode || payment.provider || "stub",
+        platform_fee_inr:
+          offer?.platform_fee_inr ?? offer?.platformFeeInr ?? null,
+        doctor_coins: offer?.doctor_coins ?? offer?.doctorCoins ?? null,
+        patient_package_coins:
+          offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr ?? null,
+        currency_quote: payment.currencyQuote || null,
+        verified: payment.verified || null,
+      },
+    });
+  } catch (e) {
+    console.log(
+      "completePackageOfferPayment payment_transactions:",
+      e?.message,
+    );
+  }
   const amountInr = Number(
     offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr ?? 0,
   );
@@ -3916,15 +3930,23 @@ async function upsertDoctorCoinBalance(doctorUserId, delta) {
 }
 
 export async function getDoctorCoinBalance(doctorUserId) {
-  const row = await findDoctorCoinBalanceRow(doctorUserId);
-  if (row?.id) return Number(row.balance) || 0;
-  const balance = await getCoinBalanceForUser(doctorUserId);
-  if (balance > 0) {
-    try {
-      await upsertDoctorCoinBalance(doctorUserId, balance);
-    } catch {
-      // balance collection is optional until PocketBase is updated
+  const uid = String(doctorUserId || "").trim();
+  if (!uid) return 0;
+  const balance = await getCoinBalanceForUser(uid);
+  try {
+    const row = await findDoctorCoinBalanceRow(uid);
+    if (row?.id) {
+      if ((Number(row.balance) || 0) !== balance) {
+        await pb.collection("doctor_coin_balances").update(row.id, {
+          balance,
+          last_ledger_at: new Date().toISOString(),
+        });
+      }
+    } else if (balance > 0) {
+      await upsertDoctorCoinBalance(uid, balance);
     }
+  } catch {
+    // doctor_coin_balances is only a cache; the ledger remains authoritative
   }
   return balance;
 }
@@ -4511,14 +4533,12 @@ export async function doctorWithdrawCoinsStub(doctorUserId, coins) {
     throw new Error("Invalid withdrawal.");
   }
   let balanceRow = await findDoctorCoinBalanceRow(doctorUserId);
-  const balance = balanceRow?.id
-    ? Number(balanceRow.balance) || 0
-    : await getCoinBalanceForUser(doctorUserId);
+  const balance = await getDoctorCoinBalance(doctorUserId);
   if (n > balance) {
     throw new Error(`Withdrawal exceeds available coins (${balance}).`);
   }
   if (!balanceRow?.id && balance > 0) {
-    balanceRow = await upsertDoctorCoinBalance(doctorUserId, balance);
+    balanceRow = await findDoctorCoinBalanceRow(doctorUserId);
   }
   try {
     const request = {
@@ -4640,14 +4660,6 @@ export async function createQuickSolutionRequest({
     provider_coins: 5,
     status: "queued",
   };
-  const coinMeta = {
-    wallet: "casual",
-    wallet_mode: "casual",
-    platform_fee_coins: 5,
-    provider_coins: 5,
-    target_doctor: td || null,
-    target_pharmacy: tp || null,
-  };
   try {
     let row;
     if (imagePart?.uri) {
@@ -4664,25 +4676,6 @@ export async function createQuickSolutionRequest({
       row = await pb.collection("quick_solution_requests").create(form);
     } else {
       row = await pb.collection("quick_solution_requests").create(base);
-    }
-    try {
-      await createCoinLedgerLine({
-        user: patientUserId,
-        delta: -10,
-        reason: "quick_solution_patient_spent",
-        ref_collection: "quick_solution_requests",
-        ref_id: row.id,
-        meta: coinMeta,
-      });
-    } catch (ledgerError) {
-      try {
-        await pb.collection("quick_solution_requests").update(row.id, {
-          status: QUICK_REQUEST_STATUS.CANCELLED,
-        });
-      } catch {
-        // best effort: do not leave a free queued request when ledger fails
-      }
-      throw ledgerError;
     }
     await notifyLocal(
       "Quick Solution submitted",
@@ -4744,14 +4737,6 @@ export async function createQuickCounsellingRequest({
   }
   const recipientUserId = td || tp;
   const cleanTopic = String(topic || "").trim() || "General";
-  const coinMeta = {
-    wallet: "casual",
-    wallet_mode: "casual",
-    platform_fee_coins: 10,
-    provider_coins: 15,
-    target_doctor: td || null,
-    target_pharmacy: tp || null,
-  };
   try {
     const row = await pb.collection("quick_counselling_requests").create({
       patient: patientUserId,
@@ -4762,25 +4747,6 @@ export async function createQuickCounsellingRequest({
       provider_coins: 15,
       status: "queued",
     });
-    try {
-      await createCoinLedgerLine({
-        user: patientUserId,
-        delta: -25,
-        reason: "quick_counselling_patient_spent",
-        ref_collection: "quick_counselling_requests",
-        ref_id: row.id,
-        meta: coinMeta,
-      });
-    } catch (ledgerError) {
-      try {
-        await pb.collection("quick_counselling_requests").update(row.id, {
-          status: QUICK_REQUEST_STATUS.CANCELLED,
-        });
-      } catch {
-        // best effort: do not leave a free queued request when ledger fails
-      }
-      throw ledgerError;
-    }
     await notifyLocal("Quick Counselling", "A provider will connect shortly.");
     return row;
   } catch (error) {
@@ -5302,7 +5268,220 @@ export async function listActiveQuickRequestsForPatient(patientUserId) {
   return { items };
 }
 
-/** Patient selects a doctor's quick-help offer: pay provider share once, then close the request. */
+function quickRequestCoinSettlementConfig(kind, request = {}) {
+  const requestKind = kind === "counselling" ? "counselling" : "solution";
+  const isCounselling = requestKind === "counselling";
+  const patientDefault = isCounselling ? 25 : 10;
+  const providerDefault = isCounselling ? 15 : 5;
+  const platformDefault = isCounselling ? 10 : 5;
+  const patientCostCoins =
+    Number(request?.patient_cost_coins ?? patientDefault) || patientDefault;
+  const providerCoins =
+    Number(request?.provider_coins ?? request?.doctor_coins ?? providerDefault) ||
+    providerDefault;
+  const platformFeeCoins =
+    Number(request?.platform_fee_coins ?? platformDefault) || platformDefault;
+  return {
+    requestKind,
+    collection: quickRequestCollectionName(requestKind),
+    patientReason: isCounselling
+      ? LEDGER_REASON_QUICK_COUNSELLING_SPENT
+      : LEDGER_REASON_QUICK_SOLUTION_SPENT,
+    providerReason: isCounselling
+      ? LEDGER_REASON_QUICK_COUNSELLING_EARNED
+      : LEDGER_REASON_QUICK_SOLUTION_EARNED,
+    refundReason: isCounselling
+      ? LEDGER_REASON_QUICK_COUNSELLING_REFUNDED
+      : LEDGER_REASON_QUICK_SOLUTION_REFUNDED,
+    patientCostCoins,
+    providerCoins,
+    platformFeeCoins,
+  };
+}
+
+async function listCoinLedgerRowsForQuickReason({
+  userId,
+  collection,
+  requestId,
+  reason,
+}) {
+  try {
+    return await pb.collection("coin_ledger").getFullList({
+      requestKey: null,
+      filter: `user="${userId}" && ref_collection="${collection}" && ref_id="${requestId}" && reason="${reason}"`,
+    });
+  } catch {
+    return [];
+  }
+}
+
+function sumLedgerDelta(rows) {
+  return (rows || []).reduce((sum, row) => sum + (Number(row.delta) || 0), 0);
+}
+
+/**
+ * Settles Quick Solution / Counselling coins only when a provider actually acts.
+ * Patient debit and provider credit are kept idempotent per request.
+ */
+export async function settleQuickRequestCasualCoins({
+  requestId,
+  kind,
+  request,
+  patientUserId,
+  providerUserId,
+  offerId,
+  event = "provider_action",
+} = {}) {
+  const reqId = String(requestId || request?.id || "").trim();
+  if (!reqId) throw new Error("Missing quick request id for coin settlement.");
+
+  const cfg = quickRequestCoinSettlementConfig(kind, request);
+  let row = request;
+  if (!row?.id) {
+    row = await pb.collection(cfg.collection).getOne(reqId, { requestKey: null });
+  }
+  const patient = String(patientUserId || relationId(row?.patient) || "").trim();
+  const provider = String(
+    providerUserId || relationId(row?.recipient) || "",
+  ).trim();
+  if (!patient || !provider) {
+    throw new Error("Missing patient or provider for quick coin settlement.");
+  }
+
+  const [patientSpentRows, patientRefundRows, providerRows] =
+    await Promise.all([
+      listCoinLedgerRowsForQuickReason({
+        userId: patient,
+        collection: cfg.collection,
+        requestId: reqId,
+        reason: cfg.patientReason,
+      }),
+      listCoinLedgerRowsForQuickReason({
+        userId: patient,
+        collection: cfg.collection,
+        requestId: reqId,
+        reason: cfg.refundReason,
+      }),
+      listCoinLedgerRowsForQuickReason({
+        userId: provider,
+        collection: cfg.collection,
+        requestId: reqId,
+        reason: cfg.providerReason,
+      }),
+    ]);
+  const patientNet =
+    sumLedgerDelta(patientSpentRows) + sumLedgerDelta(patientRefundRows);
+  const providerNet = sumLedgerDelta(providerRows);
+  const remainingPatientDebit = Math.max(
+    0,
+    cfg.patientCostCoins + patientNet,
+  );
+  const remainingProviderCredit = Math.max(
+    0,
+    cfg.providerCoins - providerNet,
+  );
+
+  if (remainingPatientDebit <= 0 && remainingProviderCredit <= 0) {
+    return {
+      settled: true,
+      alreadySettled: true,
+      chargedPatient: false,
+      creditedProvider: false,
+      patientCoins: cfg.patientCostCoins,
+      providerCoins: cfg.providerCoins,
+    };
+  }
+
+  if (remainingPatientDebit > 0) {
+    await assertPatientHasCasualCoins(patient, remainingPatientDebit);
+  }
+
+  const meta = {
+    wallet: "casual",
+    wallet_mode: "casual",
+    request_id: reqId,
+    request_kind: cfg.requestKind,
+    quick_help_offer_id: String(offerId || "").trim() || null,
+    patient_user_id: patient,
+    provider_user_id: provider,
+    doctor_user_id: provider,
+    patient_cost_coins: cfg.patientCostCoins,
+    provider_coins: cfg.providerCoins,
+    platform_fee_coins: cfg.platformFeeCoins,
+    settlement_event: event,
+    settled_at: new Date().toISOString(),
+  };
+
+  let chargedPatient = false;
+  if (remainingPatientDebit > 0) {
+    await createCoinLedgerLine({
+      user: patient,
+      delta: -remainingPatientDebit,
+      reason: cfg.patientReason,
+      ref_collection: cfg.collection,
+      ref_id: reqId,
+      meta: {
+        ...meta,
+        settled_debit_coins: remainingPatientDebit,
+      },
+    });
+    chargedPatient = true;
+  }
+
+  let creditedProvider = false;
+  try {
+    if (remainingProviderCredit > 0) {
+      await createCoinLedgerLine({
+        user: provider,
+        delta: remainingProviderCredit,
+        reason: cfg.providerReason,
+        ref_collection: cfg.collection,
+        ref_id: reqId,
+        meta: {
+          ...meta,
+          settled_provider_coins: remainingProviderCredit,
+        },
+      });
+      creditedProvider = true;
+      try {
+        await upsertDoctorCoinBalance(provider, remainingProviderCredit);
+      } catch {
+        // ledger remains source of truth if the balance cache is not available
+      }
+    }
+  } catch (creditError) {
+    if (chargedPatient) {
+      try {
+        await createCoinLedgerLine({
+          user: patient,
+          delta: remainingPatientDebit,
+          reason: cfg.refundReason,
+          ref_collection: cfg.collection,
+          ref_id: reqId,
+          meta: {
+            ...meta,
+            refund_coins: remainingPatientDebit,
+            refund_reason: "provider_credit_failed",
+          },
+        });
+      } catch {
+        // surface original provider-credit failure
+      }
+    }
+    throw creditError;
+  }
+
+  return {
+    settled: true,
+    alreadySettled: false,
+    chargedPatient,
+    creditedProvider,
+    patientCoins: cfg.patientCostCoins,
+    providerCoins: cfg.providerCoins,
+  };
+}
+
+/** Patient selects a doctor's quick-help offer: settle casual coins once, then close the request. */
 export async function acceptQuickHelpOffer({
   offer,
   requestId,
@@ -5341,52 +5520,15 @@ export async function acceptQuickHelpOffer({
   ) {
     return { paid: false, closed: true, reason: "request_not_active" };
   }
-  const reason =
-    requestKind === "counselling"
-      ? "quick_counselling_provider_earned"
-      : "quick_solution_provider_earned";
-  const defaultProviderCoins = requestKind === "counselling" ? 15 : 5;
-  const providerCoins =
-    Number(
-      request?.provider_coins ?? request?.doctor_coins ?? defaultProviderCoins,
-    ) || defaultProviderCoins;
-  const platformFeeCoins =
-    Number(
-      request?.platform_fee_coins ?? (requestKind === "counselling" ? 10 : 5),
-    ) || (requestKind === "counselling" ? 10 : 5);
-  let existing = [];
-  try {
-    existing = await pb.collection("coin_ledger").getFullList({
-      requestKey: null,
-      filter: `ref_collection="${collection}" && ref_id="${reqId}" && reason="${reason}"`,
-    });
-  } catch {
-    existing = [];
-  }
-  if (existing.length === 0) {
-    await createCoinLedgerLine({
-      user: doctorUserId,
-      delta: providerCoins,
-      reason,
-      ref_collection: collection,
-      ref_id: reqId,
-      meta: {
-        request_id: reqId,
-        request_kind: requestKind,
-        quick_help_offer_id: String(offer?.id || "").trim(),
-        patient_user_id: patient,
-        doctor_user_id: doctorUserId,
-        provider_coins: providerCoins,
-        platform_fee_coins: platformFeeCoins,
-        accepted_at: new Date().toISOString(),
-      },
-    });
-    try {
-      await upsertDoctorCoinBalance(doctorUserId, providerCoins);
-    } catch {
-      // ledger remains source of truth if the balance cache is not available
-    }
-  }
+  const settlement = await settleQuickRequestCasualCoins({
+    requestId: reqId,
+    kind: requestKind,
+    request,
+    patientUserId: patient,
+    providerUserId: doctorUserId,
+    offerId: String(offer?.id || "").trim(),
+    event: "patient_accept_offer",
+  });
   await pb.collection(collection).update(reqId, {
     status: QUICK_REQUEST_STATUS.CLOSED,
   });
@@ -5400,7 +5542,11 @@ export async function acceptQuickHelpOffer({
       // optional collection/rules
     }
   }
-  return { paid: existing.length === 0, closed: true, coins: providerCoins };
+  return {
+    paid: settlement.chargedPatient || settlement.creditedProvider,
+    closed: true,
+    coins: settlement.providerCoins,
+  };
 }
 
 /** Patient closes a quick request (after picking a doctor). Status becomes "closed". */
