@@ -12482,6 +12482,7 @@ const PatientProfileScreen = ({
   patientProfile,
   onLogout,
   onPatientProfileSaved,
+  onStartPackageUpgrade,
 }) => {
   const [showTheme, setShowTheme] = useState(false);
   const [showAppointments, setShowAppointments] = useState(false);
@@ -12494,7 +12495,6 @@ const PatientProfileScreen = ({
   const profileScrollYRef = useRef(0);
   const profileRestoreYRef = useRef(null);
   const {
-    upgradeToPackageMode,
     resetCareOnboarding,
     patientCareMode,
     CARE_MODE,
@@ -12773,7 +12773,7 @@ const PatientProfileScreen = ({
           {(patientCareMode === CARE_MODE.CASUAL ||
             patientCareMode === CARE_MODE.SKIP) && (
             <TouchableOpacity
-              onPress={() => void upgradeToPackageMode?.()}
+              onPress={() => void onStartPackageUpgrade?.()}
               style={{
                 backgroundColor: theme.accent,
                 borderRadius: RFValue(18),
@@ -34157,6 +34157,8 @@ const AppContent = ({
     patientPrimaryCarePathsLoaded,
     reloadPatientPrimaryCarePaths,
   } = useAppData();
+  const [showProfilePackageUpgrade, setShowProfilePackageUpgrade] =
+    useState(false);
 
   const handleAuthSuccess = ({ user, profile }) => {
     setCurrentUser(user);
@@ -34211,6 +34213,7 @@ const AppContent = ({
         currentUser={currentUser}
         onLogout={handleLogout}
         onPatientProfileSaved={handlePatientProfileSaved}
+        onStartPackageUpgrade={() => setShowProfilePackageUpgrade(true)}
       />
     ),
     [
@@ -34218,6 +34221,53 @@ const AppContent = ({
       handleLogout,
       handlePatientProfileSaved,
       patientProfile,
+    ],
+  );
+
+  const finishPackageUpgrade = useCallback(
+    async (mode, packageSelection = null) => {
+      if (!currentUser?.id || mode !== CARE_MODE.PACKAGE) return;
+      await persistPatientCareMode({
+        profileId: patientProfile?.id,
+        userId: currentUser.id,
+        mode: CARE_MODE.PACKAGE,
+      });
+      setLocalCareMode(CARE_MODE.PACKAGE);
+      if (packageSelection?.doctor?.userId) {
+        try {
+          await writePatientPrimaryCarePaths(currentUser.id, {
+            completed: true,
+            wantsGeneral: false,
+            wantsSpecialist: true,
+            generalDoctorUserId: null,
+            specialistDoctorUserId: packageSelection.doctor.userId,
+            specialistPackageSlot: packageSelection.slot?.slot || null,
+            specialistOfferId: packageSelection.offer?.id || null,
+            pharmacyUserId: null,
+            pharmacyName: null,
+            casualDashboard: false,
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+      setShowProfilePackageUpgrade(false);
+      try {
+        const refreshed = await ensureRoleProfile("patient");
+        setPatientProfile(refreshed);
+      } catch {
+        /* ignore */
+      }
+      await reloadPatientPrimaryCarePaths();
+      await refreshAllData?.();
+    },
+    [
+      currentUser?.id,
+      patientProfile?.id,
+      refreshAllData,
+      reloadPatientPrimaryCarePaths,
+      setLocalCareMode,
+      setPatientProfile,
     ],
   );
 
@@ -34657,6 +34707,26 @@ const AppContent = ({
           }
           await reloadPatientPrimaryCarePaths();
         }}
+      />
+    );
+  }
+
+  if (userRole === "patient" && showProfilePackageUpgrade) {
+    return (
+      <CareModeOnboardingScreen
+        theme={theme}
+        patientProfile={patientProfile}
+        currentUser={currentUser}
+        paymentMode={PAYMENT_MODE}
+        startInPackageStep
+        packageOnly
+        onBack={() => setShowProfilePackageUpgrade(false)}
+        onLoadPackageDoctors={() =>
+          fetchApprovedDoctors?.({ packageModeOnly: true })
+        }
+        onPaySelectedPackage={payForPackageOffer}
+        onWalletTopUp={topUpPatientWallet}
+        onDone={finishPackageUpgrade}
       />
     );
   }

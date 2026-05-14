@@ -23,6 +23,9 @@ export const CARE_MODE = {
   GENERAL: "general_doctor",
 };
 
+export const patientCareModeUsesQuickDoctorsOnly = (mode) =>
+  mode === CARE_MODE.CASUAL || mode === CARE_MODE.SKIP;
+
 /**
  * Consumer plans (Basic / Gold / Premium) map from the doctor's **package slot**
  * the patient paid for: slot 1 → Basic, 2 → Gold, 3 → Premium.
@@ -1436,7 +1439,7 @@ export async function assertPatientMayPlaceCallToDoctor({
   const pid = String(patientUserId || "").trim();
   if (!did || !pid) return { ok: true };
 
-  if (patientCareMode === CARE_MODE.CASUAL) {
+  if (patientCareModeUsesQuickDoctorsOnly(patientCareMode)) {
     try {
       const profile = await pb
         .collection("doctor_profile")
@@ -1445,14 +1448,13 @@ export async function assertPatientMayPlaceCallToDoctor({
         return {
           ok: false,
           message:
-            "Casual mode can only contact RMP or clinic doctors. Switch to Package mode for professional/specialist doctors.",
+            "This mode can only contact RMP or clinic doctors. Switch to Package mode for professional/specialist doctors.",
         };
       }
     } catch {
       return {
         ok: false,
-        message:
-          "Casual mode can only contact verified RMP or clinic doctors.",
+        message: "This mode can only contact verified RMP or clinic doctors.",
       };
     }
   }
