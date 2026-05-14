@@ -1,4 +1,4 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
@@ -127,6 +127,7 @@ import {
   normalizeDoctorPackageSlots,
   normalizePharmacyProviderKind,
   packageSlotDisplayName,
+  packageSlotToConsumerPlan,
   PHARMACY_PROVIDER_KIND,
   packageTemplatesRawFromRecord,
   pharmacyReceivesMedicineOrders,
@@ -11114,6 +11115,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
     ensureDirectConversation,
     loadConversationMessages,
     sendConversationMessage,
+    sendConversationImage,
     requestOpenConversation,
     payForAppointment,
     payForPackageOffer,
@@ -11619,7 +11621,14 @@ const PatientAppointmentsScreen = ({ onBack }) => {
 
   const PatientFoodLogScreen = () => {
     const { theme } = useTheme();
-    const { currentUser } = useAppData();
+    const {
+      currentUser,
+      patientProfile,
+      refreshAllData,
+      ensureDirectConversation,
+      sendConversationMessage,
+      sendConversationImage,
+    } = useAppData();
     const [description, setDescription] = useState("");
     const [photoAsset, setPhotoAsset] = useState(null);
     const [remoteLogs, setRemoteLogs] = useState([]);
@@ -11710,7 +11719,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
         setRemoteLogs(records.map((item) => mapRemoteFoodLog(item)));
       } catch (error) {
         setRemoteError(
-          "Food logs are saved locally. Remote doctor sync will appear after backend setup.",
+          "Could not load your saved food log list from the server. New entries are still sent to your Premium doctors in Chat.",
         );
         console.log("food_logs load fallback:", error?.message || error);
         setRemoteLogs([]);
@@ -11755,6 +11764,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
           mediaTypes: ImagePicker.MediaTypeOptions.Images,
           quality: 0.85,
           allowsEditing: true,
+          base64: true,
         };
         const result =
           source === "camera"
@@ -11782,68 +11792,173 @@ const PatientAppointmentsScreen = ({ onBack }) => {
         return;
       }
 
-      const nowIso = new Date().toISOString();
-      const localEntry = {
-        id: `local_${Date.now()}`,
-        source: "local",
-        description: trimmed,
-        created: nowIso,
-        photoUrl: photoAsset?.uri || "",
-        status: "pending_sync",
-        doctorWarning: "",
-      };
-
       setSaving(true);
-      await persistLocalDrafts([localEntry, ...localDrafts]);
+      setRemoteError("");
 
       try {
-        let created = null;
-        const imagePart = photoAsset?.uri
-          ? pickerAssetToUploadPart(photoAsset)
-          : null;
-
-        if (imagePart) {
-          const formData = new FormData();
-          formData.append("patient", currentUser.id);
-          formData.append("description", trimmed);
-          formData.append("status", "pending_review");
-          formData.append("image", imagePart);
-          try {
-            created = await pb.collection("food_logs").create(formData);
-          } catch {
-            const fallbackData = new FormData();
-            fallbackData.append("patient", currentUser.id);
-            fallbackData.append("description", trimmed);
-            fallbackData.append("status", "pending_review");
-            fallbackData.append("photo", imagePart);
-            created = await pb.collection("food_logs").create(fallbackData);
+        const pairs = await listActivePackagePairsForPatient(
+          currentUser.id,
+          patientProfile?.id,
+        );
+        const premiumByDoctor = new Map();
+        for (const p of pairs || []) {
+          if (
+            packageSlotToConsumerPlan(p?.package_slot) !== CONSUMER_PLAN.PREMIUM
+          ) {
+            continue;
           }
-        } else {
-          created = await pb.collection("food_logs").create({
-            patient: currentUser.id,
-            description: trimmed,
-            status: "pending_review",
-          });
+          const did = String(p?.doctor_user_id || "").trim();
+          if (!did) continue;
+          if (!premiumByDoctor.has(did)) premiumByDoctor.set(did, p);
         }
 
-        if (created) {
-          await persistLocalDrafts(
-            localDrafts.filter((item) => item?.id !== localEntry.id),
+        if (premiumByDoctor.size === 0) {
+          Alert.alert(
+            "Premium care only",
+            "Food journal entries are sent to doctors you have an active Premium package with. Basic and Gold packages do not receive food journal messages here. When you have an active Premium package, your meal photo and notes go to that doctor’s existing chat.",
           );
+          return;
         }
+
+        let assetForSend = photoAsset?.uri ? { ...photoAsset } : null;
+        if (assetForSend?.uri) {
+          const hasB64 =
+            typeof assetForSend.base64 === "string" &&
+            assetForSend.base64.trim().length > 0;
+          if (!hasB64) {
+            try {
+              const b64 = await FileSystem.readAsStringAsync(
+                assetForSend.uri,
+                { encoding: "base64" },
+              );
+              if (b64) assetForSend = { ...assetForSend, base64: b64 };
+            } catch (readErr) {
+              console.log("food journal base64 read:", readErr?.message);
+            }
+          }
+        }
+
+        const failures = [];
+        let successCount = 0;
+
+        for (const [, pair] of premiumByDoctor) {
+          const doctorId = String(pair?.doctor_user_id || "").trim();
+          const pkgTitle = String(pair?.title || "Premium package").trim();
+          const bodyLines = [
+            "Food journal (Premium package)",
+            `Package: ${pkgTitle}`,
+            "",
+            trimmed || (assetForSend ? "See meal photo." : ""),
+          ];
+          const bodyText = bodyLines.filter(Boolean).join("\n");
+
+          try {
+            const conv = await ensureDirectConversation(doctorId);
+            const cid = conv?.id;
+            if (!cid) {
+              failures.push({ doctorId, reason: "No chat thread" });
+              continue;
+            }
+
+            let mapped = null;
+            if (assetForSend?.uri) {
+              mapped = await sendConversationImage(
+                cid,
+                assetForSend,
+                bodyText,
+              );
+            } else {
+              mapped = await sendConversationMessage(cid, bodyText);
+            }
+            if (mapped) successCount += 1;
+            else failures.push({ doctorId, reason: "Message was not saved" });
+          } catch (err) {
+            failures.push({
+              doctorId,
+              reason: err?.message || "Send failed",
+            });
+          }
+        }
+
+        if (successCount === 0) {
+          const detail = failures.length
+            ? failures.map((f) => f.reason).join("\n")
+            : "Unknown error";
+          Alert.alert(
+            "Could not send",
+            `Your food log could not be delivered to your Premium doctor chats.\n\n${detail}`,
+          );
+          return;
+        }
+
+        const nowIso = new Date().toISOString();
+        const logEntry = {
+          id: `chatfood_${Date.now()}`,
+          source: "food_journal_chat",
+          description: trimmed,
+          created: nowIso,
+          photoUrl: photoAsset?.uri || "",
+          status: "sent_premium_chats",
+          doctorWarning: "",
+          premiumDoctorCount: premiumByDoctor.size,
+          premiumSuccessCount: successCount,
+        };
+        await persistLocalDrafts([logEntry, ...localDrafts]);
+
+        try {
+          const imagePart = photoAsset?.uri
+            ? pickerAssetToUploadPart(photoAsset)
+            : null;
+          if (imagePart) {
+            const formData = new FormData();
+            formData.append("patient", currentUser.id);
+            formData.append("description", trimmed);
+            formData.append("status", "sent_premium_chat");
+            formData.append("image", imagePart);
+            try {
+              await pb.collection("food_logs").create(formData);
+            } catch {
+              const fallbackData = new FormData();
+              fallbackData.append("patient", currentUser.id);
+              fallbackData.append("description", trimmed);
+              fallbackData.append("status", "sent_premium_chat");
+              fallbackData.append("photo", imagePart);
+              await pb.collection("food_logs").create(fallbackData);
+            }
+          } else {
+            await pb.collection("food_logs").create({
+              patient: currentUser.id,
+              description: trimmed,
+              status: "sent_premium_chat",
+            });
+          }
+        } catch (archiveErr) {
+          console.log("food_logs archive optional:", archiveErr?.message);
+        }
+
         setDescription("");
         setPhotoAsset(null);
         await loadRemoteLogs();
+        await refreshAllData();
+
+        if (failures.length) {
+          Alert.alert(
+            "Partially sent",
+            `Delivered to ${successCount} of ${premiumByDoctor.size} Premium doctor chat(s). Open Chat to view threads. One or more sends failed — try again or contact support if this continues.\n\nFailed: ${failures.map((f) => f.reason).join("; ")}`,
+          );
+        } else {
+          Alert.alert(
+            "Sent to your doctors",
+            `Your food log was sent to ${successCount} Premium doctor chat(s). Open the Chat tab to see the photo and notes, and to read their replies.`,
+          );
+        }
       } catch (error) {
-        setRemoteError(
-          "Saved locally. Remote doctor sync will be enabled after backend setup.",
-        );
-        console.log("food_logs submit fallback:", error?.message || error);
-        setDescription("");
-        setPhotoAsset(null);
+        setRemoteError(error?.message || "Something went wrong. Please retry.");
+        console.log("submitFoodLog error:", error?.message || error);
         Alert.alert(
-          "Saved locally",
-          "Your food entry is saved on this device and will sync when doctor-side backend is enabled.",
+          "Food journal",
+          error?.message ||
+            "Could not send your food log. Check your connection and try again.",
         );
       } finally {
         setSaving(false);
@@ -11862,6 +11977,12 @@ const PatientAppointmentsScreen = ({ onBack }) => {
     const doctorExplanationForLog = useCallback((entry) => {
       if (!entry) return "";
       if (entry.doctorWarning) return entry.doctorWarning;
+      if (
+        entry.status === "sent_premium_chats" ||
+        entry.status === "sent_premium_chat"
+      ) {
+        return "This meal was sent to your active Premium doctor chat(s). Open Chat, choose that doctor’s thread, and read their replies there. Any separate doctor warning stored on this food log will still show below.";
+      }
       if (entry.status === "pending_sync") {
         return "This entry is currently saved only on your device. Once backend sync is enabled and the doctor reviews it, their advice and warnings will appear here.";
       }
@@ -11912,8 +12033,11 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                   lineHeight: RFValue(18),
                 }}
               >
-                Upload your meal photo with a note. Doctor review and warnings can
-                be attached here.
+                Submit a meal photo and/or notes. We send this only to doctors you
+                have an active Premium package with — in your existing Chat thread
+                with each of those doctors (not Basic or Gold). Replies appear in
+                Chat. Optional warnings may still show on this list when your
+                clinic uses food log records.
               </Text>
               <View
                 style={{
@@ -12126,7 +12250,10 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                       >
                         {entry.status === "pending_sync"
                           ? "Saved locally"
-                          : "Submitted"}
+                          : entry.status === "sent_premium_chats" ||
+                              entry.status === "sent_premium_chat"
+                            ? "Sent — Premium chat"
+                            : "Submitted"}
                       </Text>
                     </View>
                   </View>
