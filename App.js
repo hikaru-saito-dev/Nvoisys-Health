@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import { LinearGradient } from "expo-linear-gradient";
 import { Image as ExpoImage } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
@@ -147,6 +148,7 @@ import {
   MedicalRecordsScreen,
   PackageDoctorJourneyScreen,
   PackageMeetingDoctorPanel,
+  PatientBalanceRotatingCoin3D,
   PatientCoinHistoryPanel,
   PatientPackageMeetingsPanel,
   PatientQuickRequestsTrackerPanel,
@@ -4457,7 +4459,7 @@ const WalletDepositScreen = ({
             style={{
               backgroundColor: theme.card,
               borderRadius: RFValue(18),
-              padding: RFValue(16),
+              padding: RFValue(14),
               borderWidth: 1,
               borderColor: theme.cardBorder,
               shadowColor: theme.shadowColor,
@@ -4465,15 +4467,63 @@ const WalletDepositScreen = ({
               shadowOffset: { width: 0, height: 4 },
               shadowRadius: 12,
               elevation: 2,
+              overflow: "hidden",
             }}
           >
-            <Text style={{ color: theme.textSecondary, fontWeight: "800", fontSize: RFValue(12) }}>
-              Current balance
-            </Text>
-            <Text style={{ color: theme.textPrimary, fontWeight: "900", fontSize: RFValue(24), marginTop: RFValue(6) }}>
-              {coinBalance} coins
-            </Text>
-            <Text style={{ color: theme.textTertiary, fontSize: RFValue(12), marginTop: RFValue(8), lineHeight: RFValue(18) }}>
+            <LinearGradient
+              colors={[theme.accentLight || theme.bg, theme.card]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{ marginHorizontal: -RFValue(14), marginTop: -RFValue(14), padding: RFValue(14), paddingBottom: RFValue(12) }}
+            >
+              <Text
+                style={{
+                  color: theme.textSecondary,
+                  fontWeight: "800",
+                  fontSize: RFValue(11),
+                  letterSpacing: 0.4,
+                  textTransform: "uppercase",
+                }}
+              >
+                Current balance
+              </Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginTop: RFValue(8),
+                }}
+              >
+                <PatientBalanceRotatingCoin3D
+                  variant="casual"
+                  size={38}
+                  noSideMargin
+                />
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={{
+                    flex: 1,
+                    marginLeft: RFValue(12),
+                    color: theme.textPrimary,
+                    fontWeight: "800",
+                    fontSize: RFValue(15),
+                    letterSpacing: -0.3,
+                  }}
+                >
+                  {coinBalance} coins
+                </Text>
+              </View>
+            </LinearGradient>
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: RFValue(11),
+                marginTop: RFValue(8),
+                lineHeight: RFValue(17),
+              }}
+            >
               The same number of coins is credited to your wallet through
               coin_ledger after the top-up is confirmed.
             </Text>
@@ -5862,127 +5912,125 @@ const PatientHomeScreen = () => {
                     onPress={() => setShowWallet(true)}
                     style={{
                       flex: 1,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      backgroundColor: "#FFF",
-                      borderRadius: RFValue(18),
-                      paddingVertical: RFValue(12),
-                      paddingHorizontal: RFValue(12),
-                      shadowColor: "#000",
-                      shadowOpacity: 0.1,
-                      shadowOffset: { width: 0, height: 3 },
-                      shadowRadius: 8,
-                      elevation: 3,
+                      borderRadius: RFValue(16),
+                      overflow: "hidden",
+                      shadowColor: theme.shadowColor,
+                      shadowOpacity: 0.14,
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowRadius: 10,
+                      elevation: 4,
                     }}
                   >
-                    <View
+                    <LinearGradient
+                      colors={[theme.card, theme.bgSolid || theme.bg]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 0.9, y: 1 }}
                       style={{
-                        width: RFValue(40),
-                        height: RFValue(40),
-                        borderRadius: RFValue(20),
-                        backgroundColor: "#FBBF24",
-                        justifyContent: "center",
+                        flex: 1,
+                        flexDirection: "row",
                         alignItems: "center",
-                        borderWidth: 2,
-                        borderColor: "#D97706",
+                        paddingVertical: RFValue(9),
+                        paddingHorizontal: RFValue(10),
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.cardBorder,
+                        borderRadius: RFValue(16),
                       }}
                     >
-                      <Text
-                        style={{
-                          fontSize: RFValue(14),
-                          fontWeight: "900",
-                          color: "#78350F",
-                        }}
-                      >
-                        ₹
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: RFValue(8) }}>
-                      <Text
-                        style={{
-                          color: "#64748B",
-                          fontSize: RFValue(9),
-                          fontWeight: "800",
-                          letterSpacing: 1,
-                        }}
-                      >
-                        CASUAL
-                      </Text>
-                      <Text
-                        style={{
-                          color: "#0F172A",
-                          fontSize: RFValue(17),
-                          fontWeight: "900",
-                          marginTop: RFValue(2),
-                        }}
-                      >
-                        {patientCoinBalance}
-                      </Text>
-                    </View>
+                      <PatientBalanceRotatingCoin3D
+                        variant="casual"
+                        size={34}
+                        noSideMargin
+                      />
+                      <View style={{ flex: 1, marginLeft: RFValue(10) }}>
+                        <Text
+                          style={{
+                            color: theme.textTertiary,
+                            fontSize: RFValue(8.5),
+                            fontWeight: "800",
+                            letterSpacing: 1.1,
+                          }}
+                        >
+                          CASUAL
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.65}
+                          style={{
+                            color: theme.textPrimary,
+                            fontSize: RFValue(12),
+                            fontWeight: "800",
+                            marginTop: RFValue(2),
+                            letterSpacing: -0.3,
+                          }}
+                        >
+                          {patientCoinBalance}
+                        </Text>
+                      </View>
+                    </LinearGradient>
                   </TouchableOpacity>
                   <TouchableOpacity
                     activeOpacity={0.9}
                     onPress={() => setShowWallet(true)}
                     style={{
                       flex: 1,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      backgroundColor: "#FFF",
-                      borderRadius: RFValue(18),
-                      paddingVertical: RFValue(12),
-                      paddingHorizontal: RFValue(12),
-                      shadowColor: "#000",
-                      shadowOpacity: 0.1,
-                      shadowOffset: { width: 0, height: 3 },
-                      shadowRadius: 8,
-                      elevation: 3,
+                      borderRadius: RFValue(16),
+                      overflow: "hidden",
+                      shadowColor: theme.shadowColor,
+                      shadowOpacity: 0.14,
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowRadius: 10,
+                      elevation: 4,
                       opacity: packageStyleHome ? 1 : 0.55,
                     }}
                   >
-                    <View
+                    <LinearGradient
+                      colors={[theme.card, theme.accentLight || theme.bg]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 0.85, y: 1 }}
                       style={{
-                        width: RFValue(40),
-                        height: RFValue(40),
-                        borderRadius: RFValue(20),
-                        backgroundColor: "#DDD6FE",
-                        justifyContent: "center",
+                        flex: 1,
+                        flexDirection: "row",
                         alignItems: "center",
-                        borderWidth: 2,
-                        borderColor: "#6D28D9",
+                        paddingVertical: RFValue(9),
+                        paddingHorizontal: RFValue(10),
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.cardBorder,
+                        borderRadius: RFValue(16),
                       }}
                     >
-                      <Text
-                        style={{
-                          fontSize: RFValue(14),
-                          fontWeight: "900",
-                          color: "#5B21B6",
-                        }}
-                      >
-                        ₹
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: RFValue(8) }}>
-                      <Text
-                        style={{
-                          color: "#64748B",
-                          fontSize: RFValue(9),
-                          fontWeight: "800",
-                          letterSpacing: 1,
-                        }}
-                      >
-                        PACKAGE
-                      </Text>
-                      <Text
-                        style={{
-                          color: "#0F172A",
-                          fontSize: RFValue(17),
-                          fontWeight: "900",
-                          marginTop: RFValue(2),
-                        }}
-                      >
-                        {packageStyleHome ? packagePoolCoins : "—"}
-                      </Text>
-                    </View>
+                      <PatientBalanceRotatingCoin3D
+                        variant="package"
+                        size={34}
+                        noSideMargin
+                      />
+                      <View style={{ flex: 1, marginLeft: RFValue(10) }}>
+                        <Text
+                          style={{
+                            color: theme.textTertiary,
+                            fontSize: RFValue(8.5),
+                            fontWeight: "800",
+                            letterSpacing: 1.1,
+                          }}
+                        >
+                          PACKAGE
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.65}
+                          style={{
+                            color: theme.textPrimary,
+                            fontSize: RFValue(12),
+                            fontWeight: "800",
+                            marginTop: RFValue(2),
+                            letterSpacing: -0.3,
+                          }}
+                        >
+                          {packageStyleHome ? packagePoolCoins : "—"}
+                        </Text>
+                      </View>
+                    </LinearGradient>
                   </TouchableOpacity>
                 </View>
 
@@ -12457,9 +12505,9 @@ const PatientProfileScreen = ({
                 lineHeight: 16,
               }}
             >
-              Refund policy: changing your assigned doctor in Package mode does
-              not refund the package fee. A new doctor continues remaining
-              sessions; coin splits are adjusted by admin in the ledger.
+              Refund: switching your package doctor does not refund the package
+              fee. Your remaining visits continue with the new doctor; coin
+              splits follow admin ledger rules.
             </Text>
             <PatientCoinHistoryPanel theme={theme} userId={currentUser?.id} />
           </View>
@@ -29364,7 +29412,7 @@ const PharmacyOrdersScreen = ({ orders, compactTopInset = false }) => {
 
 export default function App() {
   const [paletteKey, setPaletteKey] = useState("light");
-  const [followSystem, setFollowSystemState] = useState(false);
+  const [followSystem, setFollowSystemState] = useState(true);
   const [systemScheme, setSystemScheme] = useState(
     Appearance.getColorScheme() === "dark" ? "dark" : "light",
   );
@@ -29499,7 +29547,9 @@ export default function App() {
           AsyncStorage.getItem(THEME_FOLLOW_SYSTEM_KEY),
         ]);
         if (!active) return;
-        if (savedFollow === "true" || savedFollow === "1") {
+        if (savedFollow === "false" || savedFollow === "0") {
+          setFollowSystemState(false);
+        } else if (savedFollow === "true" || savedFollow === "1") {
           setFollowSystemState(true);
         }
         if (THEMES[savedPalette]) setPaletteKey(savedPalette);

@@ -6918,31 +6918,73 @@ export function DoctorCoinPaymentHistoryPanel({ theme }) {
   );
 }
 
-/** Continuous Y-rotation with two faces for a simple 3D coin effect. */
-function PatientBalanceRotatingCoin3D({ compact }) {
-  const size = compact ? 40 : 46;
+const COIN_VARIANT_STYLES = {
+  profile: {
+    front: ["#EDE6D6", "#C9A24A", "#7C6328"],
+    frontEnd: { x: 0.82, y: 0.92 },
+    rim: "rgba(255,255,255,0.42)",
+    symbol: "#2A2115",
+    back: ["#4A3B22", "#6B5634", "#9A8354"],
+    backSymbol: "rgba(248,250,252,0.88)",
+    spec: "rgba(255,255,255,0.38)",
+  },
+  casual: {
+    front: ["#F0E8D8", "#D4B968", "#8F7130"],
+    frontEnd: { x: 0.78, y: 0.88 },
+    rim: "rgba(255,255,255,0.45)",
+    symbol: "#2C2212",
+    back: ["#3D311C", "#5C4A2A", "#8E7544"],
+    backSymbol: "rgba(255,250,235,0.9)",
+    spec: "rgba(255,255,255,0.42)",
+  },
+  package: {
+    front: ["#EEF2FF", "#818CF8", "#312E81"],
+    frontEnd: { x: 0.75, y: 0.9 },
+    rim: "rgba(255,255,255,0.5)",
+    symbol: "#F8FAFC",
+    back: ["#1E1B4B", "#4338CA", "#6366F1"],
+    backSymbol: "rgba(224,231,255,0.92)",
+    spec: "rgba(255,255,255,0.35)",
+  },
+};
+
+/**
+ * Slow 3D Y-rotation coin (obverse / reverse) for wallet + profile.
+ * `variant`: metallic gold tone (profile/casual) vs indigo (package).
+ */
+export function PatientBalanceRotatingCoin3D({
+  compact = false,
+  variant = "profile",
+  size: sizeProp,
+  noSideMargin = false,
+}) {
+  const palette = COIN_VARIANT_STYLES[variant] || COIN_VARIANT_STYLES.profile;
+  const size =
+    sizeProp ?? (compact ? 38 : 44);
   const rotation = useSharedValue(0);
   useEffect(() => {
     rotation.value = withRepeat(
-      withTiming(360, { duration: 3200, easing: Easing.linear }),
+      withTiming(360, { duration: 5600, easing: Easing.linear }),
       -1,
       false,
     );
   }, [rotation]);
   const spinStyle = useAnimatedStyle(() => ({
     transform: [
-      { perspective: 420 },
+      { perspective: 480 },
       { rotateY: `${rotation.value}deg` },
     ],
   }));
-  const inner = size - 5;
+  const inner = size - 4;
   const r = inner / 2;
+  const specH = Math.max(6, inner * 0.26);
+
   return (
     <View
       style={{
         width: size,
         height: size,
-        marginRight: compact ? 10 : 12,
+        marginRight: noSideMargin ? 0 : compact ? 8 : 10,
       }}
     >
       <Animated.View
@@ -6967,33 +7009,47 @@ function PatientBalanceRotatingCoin3D({ compact }) {
           }}
         >
           <LinearGradient
-            colors={["#FFFBEB", "#FBBF24", "#B45309"]}
-            start={{ x: 0.15, y: 0.1 }}
-            end={{ x: 0.85, y: 0.95 }}
+            colors={palette.front}
+            start={{ x: 0.12, y: 0.08 }}
+            end={palette.frontEnd || { x: 0.85, y: 0.92 }}
             style={{
               width: inner,
               height: inner,
               borderRadius: r,
-              borderWidth: 2,
-              borderColor: "rgba(255,255,255,0.55)",
+              borderWidth: StyleSheet.hairlineWidth * 2,
+              borderColor: palette.rim,
               alignItems: "center",
               justifyContent: "center",
-              shadowColor: "#000",
-              shadowOpacity: 0.28,
-              shadowRadius: 5,
-              shadowOffset: { width: 0, height: 2 },
-              elevation: 5,
+              shadowColor: "#0F172A",
+              shadowOpacity: 0.35,
+              shadowRadius: 6,
+              shadowOffset: { width: 0, height: 3 },
+              elevation: 6,
+              overflow: "hidden",
             }}
           >
+            <LinearGradient
+              colors={[palette.spec, "transparent"]}
+              start={{ x: 0.4, y: 0 }}
+              end={{ x: 0.6, y: 0.55 }}
+              style={{
+                position: "absolute",
+                left: inner * 0.12,
+                right: inner * 0.12,
+                top: inner * 0.08,
+                height: specH,
+                borderRadius: specH / 2,
+              }}
+            />
             <Text
               style={{
-                fontSize: size * 0.34,
-                fontWeight: "900",
-                color: "#78350F",
-                letterSpacing: -0.5,
+                fontSize: size * 0.3,
+                fontWeight: "700",
+                color: palette.symbol,
+                letterSpacing: -1,
               }}
             >
-              N
+              ₹
             </Text>
           </LinearGradient>
         </View>
@@ -7009,27 +7065,39 @@ function PatientBalanceRotatingCoin3D({ compact }) {
           }}
         >
           <LinearGradient
-            colors={["#F1F5F9", "#94A3B8", "#334155"]}
-            start={{ x: 0.2, y: 0 }}
-            end={{ x: 0.8, y: 1 }}
+            colors={palette.back}
+            start={{ x: 0.15, y: 0.2 }}
+            end={{ x: 0.85, y: 0.85 }}
             style={{
               width: inner,
               height: inner,
               borderRadius: r,
-              borderWidth: 2,
-              borderColor: "rgba(255,255,255,0.35)",
+              borderWidth: StyleSheet.hairlineWidth * 2,
+              borderColor: "rgba(255,255,255,0.12)",
               alignItems: "center",
               justifyContent: "center",
+              overflow: "hidden",
             }}
           >
+            <View
+              style={{
+                position: "absolute",
+                width: inner * 0.55,
+                height: StyleSheet.hairlineWidth * 2,
+                backgroundColor: "rgba(255,255,255,0.2)",
+                borderRadius: 2,
+                transform: [{ rotate: "-38deg" }],
+              }}
+            />
             <Text
               style={{
-                fontSize: size * 0.28,
-                fontWeight: "900",
-                color: "#E2E8F0",
+                fontSize: size * 0.22,
+                fontWeight: "800",
+                color: palette.backSymbol,
+                letterSpacing: 2,
               }}
             >
-              1
+              ···
             </Text>
           </LinearGradient>
         </View>
@@ -7082,8 +7150,12 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
   };
 
   const balanceGradientColors = useMemo(
-    () => [theme.accentLight || "#EEF2FF", theme.bg || "#F8FAFC"],
-    [theme.accentLight, theme.bg],
+    () => [
+      theme.accentLight || "#EEF2FF",
+      theme.card,
+      theme.bg || "#F8FAFC",
+    ],
+    [theme.accentLight, theme.card, theme.bg],
   );
 
   return (
@@ -7113,8 +7185,8 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{
-            paddingVertical: compact ? 8 : 9,
-            paddingHorizontal: compact ? 10 : 11,
+            paddingVertical: compact ? 6 : 7,
+            paddingHorizontal: compact ? 9 : 10,
           }}
         >
           <View
@@ -7123,18 +7195,22 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
               alignItems: "center",
             }}
           >
-            <PatientBalanceRotatingCoin3D compact={compact} />
+            <PatientBalanceRotatingCoin3D
+              compact={compact}
+              variant="profile"
+            />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={sectionLabelStyle}>Remaining balance</Text>
               <Text
                 numberOfLines={1}
                 adjustsFontSizeToFit
-                minimumFontScale={0.75}
+                minimumFontScale={0.72}
                 style={{
                   color: theme.textPrimary,
-                  fontSize: compact ? 15 : 16,
-                  fontWeight: "900",
-                  letterSpacing: -0.2,
+                  fontSize: compact ? 12 : 13,
+                  fontWeight: "700",
+                  letterSpacing: -0.15,
+                  marginTop: 1,
                 }}
               >
                 {balance} coins
@@ -7175,56 +7251,48 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
         ) : null}
       </View>
 
-      <View
+      <TouchableOpacity
+        onPress={() => setHistoryOpen(true)}
+        activeOpacity={0.9}
         style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
+          borderRadius: 12,
+          overflow: "hidden",
           marginBottom: 2,
         }}
       >
-        <Text
-          style={{
-            ...sectionLabelStyle,
-            marginBottom: 0,
-            flex: 1,
-            flexShrink: 1,
-          }}
-        >
-          Payment history
-        </Text>
-        <TouchableOpacity
-          onPress={() => setHistoryOpen(true)}
-          activeOpacity={0.88}
+        <LinearGradient
+          colors={[
+            theme.accentBg || theme.accent,
+            theme.accent,
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
           style={{
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "center",
-            paddingVertical: 7,
-            paddingHorizontal: 12,
-            borderRadius: 999,
-            backgroundColor: theme.accent,
-            flexShrink: 0,
+            paddingVertical: compact ? 9 : 10,
+            paddingHorizontal: 14,
           }}
         >
           <Ionicons
             name="receipt-outline"
-            size={16}
+            size={17}
             color="#fff"
-            style={{ marginRight: 5 }}
+            style={{ marginRight: 7 }}
           />
           <Text
             style={{
               color: "#fff",
               fontWeight: "800",
-              fontSize: 11,
+              fontSize: compact ? 12 : 13,
+              letterSpacing: 0.2,
             }}
           >
             See details…
           </Text>
-        </TouchableOpacity>
-      </View>
+        </LinearGradient>
+      </TouchableOpacity>
 
       <Modal
         visible={historyOpen}
