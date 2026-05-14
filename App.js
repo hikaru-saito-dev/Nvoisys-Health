@@ -20063,6 +20063,7 @@ const DoctorProfileScreen = ({ onLogout }) => {
   const [savingConcerns, setSavingConcerns] = useState(false);
   const [concernsError, setConcernsError] = useState("");
   const [concernsSavedFlash, setConcernsSavedFlash] = useState(false);
+  const [concernsExpanded, setConcernsExpanded] = useState(false);
   const [doctorConsultLanguage, setDoctorConsultLanguage] = useState("");
   const doctorScrollRef = useRef(null);
   const doctorScrollYRef = useRef(0);
@@ -20131,6 +20132,20 @@ const DoctorProfileScreen = ({ onLogout }) => {
     setConcerns((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
     setCustomTag("");
   };
+
+  const concernSelectionSummary = useMemo(() => {
+    if (!concerns?.length) {
+      return "You selected: —";
+    }
+    const labels = concerns.map((id) => {
+      const opt = CONCERN_CHIP_OPTIONS.find((c) => c.id === id);
+      if (opt) return opt.label;
+      return String(id || "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (ch) => ch.toUpperCase());
+    });
+    return `You selected: ${labels.join(", ")}`;
+  }, [concerns]);
 
   const saveDoctorConcerns = async () => {
     if (!doctorProfileId) {
@@ -20380,27 +20395,6 @@ const DoctorProfileScreen = ({ onLogout }) => {
               }}
             />
 
-            <Text
-              style={{
-                fontSize: RFValue(12),
-                fontWeight: "800",
-                color: theme.textTertiary,
-                letterSpacing: 0.6,
-                marginBottom: RFValue(8),
-              }}
-            >
-              HEALTH CONCERNS
-            </Text>
-            <Text
-              style={{
-                fontSize: RFValue(12),
-                color: theme.textSecondary,
-                marginBottom: RFValue(12),
-              }}
-            >
-              Tap a row to select or clear. Selected concerns appear in Find
-              Doctor filters.
-            </Text>
             {loadingConcerns ? (
               <ActivityIndicator color={theme.success} />
             ) : (
@@ -20412,62 +20406,157 @@ const DoctorProfileScreen = ({ onLogout }) => {
                     borderColor: theme.cardBorder,
                     overflow: "hidden",
                     backgroundColor: theme.bg,
+                    marginBottom: RFValue(4),
                   }}
                 >
-                  {CONCERN_CHIP_OPTIONS.map((chip, index) => {
-                    const active = concerns.includes(chip.id);
-                    const isLast = index === CONCERN_CHIP_OPTIONS.length - 1;
-                    return (
-                      <TouchableOpacity
-                        key={chip.id}
-                        onPress={() => toggleConcernChip(chip.id)}
-                        activeOpacity={0.75}
+                  <TouchableOpacity
+                    onPress={() => setConcernsExpanded((v) => !v)}
+                    activeOpacity={0.82}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: concernsExpanded }}
+                    style={{ padding: RFValue(14) }}
+                  >
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: RFValue(8),
+                      }}
+                    >
+                      <Text
                         style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          paddingVertical: RFValue(14),
-                          paddingHorizontal: RFValue(14),
-                          borderBottomWidth: isLast
-                            ? 0
-                            : StyleSheet.hairlineWidth,
-                          borderBottomColor: theme.cardBorder,
-                          backgroundColor: active
-                            ? theme.success + "14"
-                            : "transparent",
+                          fontSize: RFValue(12),
+                          fontWeight: "800",
+                          color: theme.textTertiary,
+                          letterSpacing: 0.6,
                         }}
                       >
-                        <Ionicons
-                          name={
-                            active ? "checkmark-circle" : "ellipse-outline"
-                          }
-                          size={RFValue(22)}
-                          color={
-                            active ? theme.success : theme.textTertiary
-                          }
-                          style={{ marginRight: RFValue(12) }}
-                        />
+                        HEALTH CONCERNS
+                      </Text>
+                      <Ionicons
+                        name={
+                          concernsExpanded ? "chevron-up" : "chevron-down"
+                        }
+                        size={RFValue(22)}
+                        color={theme.textSecondary}
+                      />
+                    </View>
+                    <Text
+                      style={{
+                        fontSize: RFValue(13),
+                        color: theme.textPrimary,
+                        fontWeight: "600",
+                        lineHeight: RFValue(19),
+                      }}
+                      numberOfLines={concernsExpanded ? 12 : 4}
+                    >
+                      {concernSelectionSummary}
+                    </Text>
+                    {!concernsExpanded ? (
+                      <Text
+                        style={{
+                          marginTop: RFValue(8),
+                          fontSize: RFValue(11),
+                          color: theme.textTertiary,
+                        }}
+                      >
+                        Tap to expand and edit. Shown items appear in Find
+                        Doctor filters.
+                      </Text>
+                    ) : null}
+                  </TouchableOpacity>
+                  {concernsExpanded ? (
+                    <>
+                      <View
+                        style={{
+                          height: StyleSheet.hairlineWidth,
+                          backgroundColor: theme.cardBorder,
+                          marginHorizontal: RFValue(14),
+                        }}
+                      />
+                      <ScrollView
+                        nestedScrollEnabled
+                        keyboardShouldPersistTaps="handled"
+                        style={{ maxHeight: RFValue(280) }}
+                        contentContainerStyle={{
+                          paddingBottom: RFValue(10),
+                        }}
+                      >
                         <Text
                           style={{
-                            flex: 1,
-                            fontSize: RFValue(15),
-                            fontWeight: active ? "800" : "600",
-                            color: theme.textPrimary,
+                            fontSize: RFValue(11),
+                            color: theme.textSecondary,
+                            paddingHorizontal: RFValue(14),
+                            paddingTop: RFValue(10),
+                            paddingBottom: RFValue(6),
                           }}
                         >
-                          {chip.label}
+                          Tap a row to toggle. Selected concerns appear in Find
+                          Doctor filters.
                         </Text>
-                        <Text
-                          style={{
-                            fontSize: RFValue(12),
-                            fontWeight: "700",
-                            color: active ? theme.success : theme.textTertiary,
-                          }}
-                        >
-                          {active ? "On" : "Off"}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+                        {CONCERN_CHIP_OPTIONS.map((chip, index) => {
+                          const active = concerns.includes(chip.id);
+                          const isLast =
+                            index === CONCERN_CHIP_OPTIONS.length - 1;
+                          return (
+                            <TouchableOpacity
+                              key={chip.id}
+                              onPress={() => toggleConcernChip(chip.id)}
+                              activeOpacity={0.75}
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                paddingVertical: RFValue(12),
+                                paddingHorizontal: RFValue(14),
+                                borderBottomWidth: isLast
+                                  ? 0
+                                  : StyleSheet.hairlineWidth,
+                                borderBottomColor: theme.cardBorder,
+                                backgroundColor: active
+                                  ? theme.success + "14"
+                                  : "transparent",
+                              }}
+                            >
+                              <Ionicons
+                                name={
+                                  active
+                                    ? "checkmark-circle"
+                                    : "ellipse-outline"
+                                }
+                                size={RFValue(21)}
+                                color={
+                                  active ? theme.success : theme.textTertiary
+                                }
+                                style={{ marginRight: RFValue(12) }}
+                              />
+                              <Text
+                                style={{
+                                  flex: 1,
+                                  fontSize: RFValue(14),
+                                  fontWeight: active ? "800" : "600",
+                                  color: theme.textPrimary,
+                                }}
+                              >
+                                {chip.label}
+                              </Text>
+                              <Text
+                                style={{
+                                  fontSize: RFValue(11),
+                                  fontWeight: "700",
+                                  color: active
+                                    ? theme.success
+                                    : theme.textTertiary,
+                                }}
+                              >
+                                {active ? "On" : "Off"}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </>
+                  ) : null}
                 </View>
 
                 <View
@@ -20534,18 +20623,6 @@ const DoctorProfileScreen = ({ onLogout }) => {
                     </Text>
                   </TouchableOpacity>
                 </View>
-                {concerns.length > 0 ? (
-                  <Text
-                    style={{
-                      marginTop: RFValue(10),
-                      fontSize: RFValue(12),
-                      color: theme.textSecondary,
-                      lineHeight: RFValue(18),
-                    }}
-                  >
-                    Selected: {concerns.join(", ")}
-                  </Text>
-                ) : null}
 
                 <View
                   style={{

@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
+import { LinearGradient } from "expo-linear-gradient";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,6 +21,13 @@ import {
   UIManager,
   View,
 } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   androidKeyboardPad,
@@ -6910,6 +6918,126 @@ export function DoctorCoinPaymentHistoryPanel({ theme }) {
   );
 }
 
+/** Continuous Y-rotation with two faces for a simple 3D coin effect. */
+function PatientBalanceRotatingCoin3D({ compact }) {
+  const size = compact ? 40 : 46;
+  const rotation = useSharedValue(0);
+  useEffect(() => {
+    rotation.value = withRepeat(
+      withTiming(360, { duration: 3200, easing: Easing.linear }),
+      -1,
+      false,
+    );
+  }, [rotation]);
+  const spinStyle = useAnimatedStyle(() => ({
+    transform: [
+      { perspective: 420 },
+      { rotateY: `${rotation.value}deg` },
+    ],
+  }));
+  const inner = size - 5;
+  const r = inner / 2;
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        marginRight: compact ? 10 : 12,
+      }}
+    >
+      <Animated.View
+        style={[
+          {
+            width: size,
+            height: size,
+            alignItems: "center",
+            justifyContent: "center",
+          },
+          spinStyle,
+        ]}
+      >
+        <View
+          style={{
+            position: "absolute",
+            width: size,
+            height: size,
+            alignItems: "center",
+            justifyContent: "center",
+            backfaceVisibility: "hidden",
+          }}
+        >
+          <LinearGradient
+            colors={["#FFFBEB", "#FBBF24", "#B45309"]}
+            start={{ x: 0.15, y: 0.1 }}
+            end={{ x: 0.85, y: 0.95 }}
+            style={{
+              width: inner,
+              height: inner,
+              borderRadius: r,
+              borderWidth: 2,
+              borderColor: "rgba(255,255,255,0.55)",
+              alignItems: "center",
+              justifyContent: "center",
+              shadowColor: "#000",
+              shadowOpacity: 0.28,
+              shadowRadius: 5,
+              shadowOffset: { width: 0, height: 2 },
+              elevation: 5,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: size * 0.34,
+                fontWeight: "900",
+                color: "#78350F",
+                letterSpacing: -0.5,
+              }}
+            >
+              N
+            </Text>
+          </LinearGradient>
+        </View>
+        <View
+          style={{
+            position: "absolute",
+            width: size,
+            height: size,
+            alignItems: "center",
+            justifyContent: "center",
+            backfaceVisibility: "hidden",
+            transform: [{ rotateY: "180deg" }],
+          }}
+        >
+          <LinearGradient
+            colors={["#F1F5F9", "#94A3B8", "#334155"]}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
+            style={{
+              width: inner,
+              height: inner,
+              borderRadius: r,
+              borderWidth: 2,
+              borderColor: "rgba(255,255,255,0.35)",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: size * 0.28,
+                fontWeight: "900",
+                color: "#E2E8F0",
+              }}
+            >
+              1
+            </Text>
+          </LinearGradient>
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
 export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
   const [rows, setRows] = useState([]);
   const [balance, setBalance] = useState(0);
@@ -6938,46 +7066,90 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
 
   const sectionLabelStyle = {
     color: theme.textTertiary,
-    fontSize: S.small,
+    fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 0.6,
+    letterSpacing: 0.55,
     textTransform: "uppercase",
-    marginBottom: 8,
+    marginBottom: 4,
   };
   const cardStyle = {
-    borderRadius: 14,
-    padding: compact ? 12 : 14,
+    borderRadius: 12,
+    padding: compact ? 9 : 10,
     backgroundColor: theme.bg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.cardBorder || "#E2E8F0",
-    marginBottom: 12,
+    marginBottom: 8,
   };
 
+  const balanceGradientColors = useMemo(
+    () => [theme.accentLight || "#EEF2FF", theme.bg || "#F8FAFC"],
+    [theme.accentLight, theme.bg],
+  );
+
   return (
-    <View style={{ marginTop: 8 }}>
+    <View style={{ marginTop: 6 }}>
       <Text
-        style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 12 }}
+        style={{
+          color: theme.textPrimary,
+          fontWeight: "800",
+          fontSize: compact ? 14 : 15,
+          marginBottom: 8,
+        }}
       >
         Coin & payments history
       </Text>
 
-      <View style={cardStyle}>
-        <Text style={sectionLabelStyle}>Remaining balance</Text>
-        <Text
+      <View
+        style={{
+          borderRadius: 12,
+          marginBottom: 8,
+          overflow: "hidden",
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.cardBorder || "#E2E8F0",
+        }}
+      >
+        <LinearGradient
+          colors={balanceGradientColors}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
           style={{
-            color: theme.textPrimary,
-            fontSize: compact ? 20 : 22,
-            fontWeight: "900",
+            paddingVertical: compact ? 8 : 9,
+            paddingHorizontal: compact ? 10 : 11,
           }}
         >
-          {balance} coins
-        </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+            }}
+          >
+            <PatientBalanceRotatingCoin3D compact={compact} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={sectionLabelStyle}>Remaining balance</Text>
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+                style={{
+                  color: theme.textPrimary,
+                  fontSize: compact ? 15 : 16,
+                  fontWeight: "900",
+                  letterSpacing: -0.2,
+                }}
+              >
+                {balance} coins
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
       </View>
 
       <View style={cardStyle}>
-        <Text style={sectionLabelStyle}>Active packages</Text>
+        <Text style={[sectionLabelStyle, { marginBottom: 6 }]}>
+          Active packages
+        </Text>
         {pairs.length === 0 ? (
-          <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
+          <Text style={{ color: theme.textTertiary, fontSize: 11, lineHeight: 16 }}>
             No active package pairs.
           </Text>
         ) : (
@@ -6986,9 +7158,9 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
               key={pair.offerId}
               style={{
                 color: theme.textSecondary,
-                fontSize: S.small,
-                lineHeight: 18,
-                marginBottom: 6,
+                fontSize: 11,
+                lineHeight: 16,
+                marginBottom: 4,
               }}
             >
               {pair.title} · doctor {String(pair.doctor_user_id || "").slice(-6)}{" "}
@@ -6997,14 +7169,31 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
           ))
         )}
         {compact && pairs.length > pairsShown.length ? (
-          <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 4 }}>
+          <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 2 }}>
             +{pairs.length - pairsShown.length} more in full profile
           </Text>
         ) : null}
       </View>
 
-      <View style={{ marginBottom: 4 }}>
-        <Text style={sectionLabelStyle}>Payment history</Text>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          marginBottom: 2,
+        }}
+      >
+        <Text
+          style={{
+            ...sectionLabelStyle,
+            marginBottom: 0,
+            flex: 1,
+            flexShrink: 1,
+          }}
+        >
+          Payment history
+        </Text>
         <TouchableOpacity
           onPress={() => setHistoryOpen(true)}
           activeOpacity={0.88}
@@ -7012,19 +7201,26 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "center",
-            paddingVertical: compact ? 11 : 13,
-            paddingHorizontal: 14,
-            borderRadius: 14,
+            paddingVertical: 7,
+            paddingHorizontal: 12,
+            borderRadius: 999,
             backgroundColor: theme.accent,
+            flexShrink: 0,
           }}
         >
           <Ionicons
             name="receipt-outline"
-            size={20}
+            size={16}
             color="#fff"
-            style={{ marginRight: 8 }}
+            style={{ marginRight: 5 }}
           />
-          <Text style={{ color: "#fff", fontWeight: "800", fontSize: S.small }}>
+          <Text
+            style={{
+              color: "#fff",
+              fontWeight: "800",
+              fontSize: 11,
+            }}
+          >
             See details…
           </Text>
         </TouchableOpacity>
