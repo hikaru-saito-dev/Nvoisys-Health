@@ -16,6 +16,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { formatCurrencyFromInr } from "./currency";
 import {
   CARE_MODE,
   createPatientSelectedPackageOffer,
@@ -466,7 +467,7 @@ export function PatientPrimaryCareOnboardingScreen({
                         marginTop: 4,
                       }}
                     >
-                      Pay ₹{amount}
+                      Pay {formatCurrencyFromInr(amount)}
                     </Text>
                   </TouchableOpacity>
                 );

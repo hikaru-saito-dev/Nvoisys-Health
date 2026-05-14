@@ -3355,7 +3355,7 @@ export async function completePackageOfferPayment(
     providerPaymentId: payment.providerPaymentId,
     providerReferenceId: payment.providerReferenceId,
     amountInr: offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr,
-    currency: "INR",
+    currency: payment.currency || "INR",
     status: "success",
     description: offer?.title || "Package offer payment",
     customerName: payment.customerName,
@@ -3367,6 +3367,7 @@ export async function completePackageOfferPayment(
       platform_fee_inr: offer?.platform_fee_inr ?? offer?.platformFeeInr ?? null,
       doctor_coins: offer?.doctor_coins ?? offer?.doctorCoins ?? null,
       patient_package_coins: offer?.amount_inr ?? offer?.amountInr ?? payment.amountInr ?? null,
+      currency_quote: payment.currencyQuote || null,
       verified: payment.verified || null,
     },
   });

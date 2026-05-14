@@ -234,8 +234,8 @@ const renderCashfreeCheckout = (order) => {
 <body>
   <main>
     <h1>Complete Payment</h1>
-    <p>Cashfree will show UPI, cards, netbanking, wallets, and other available INR payment options.</p>
-    <button id="payButton" type="button">Pay ₹${escapeHtml((order.amount / 100).toFixed(2))}</button>
+    <p>Cashfree will show the payment methods available for ${escapeHtml(order.currency)}.</p>
+    <button id="payButton" type="button">Pay ${escapeHtml(order.currency)} ${escapeHtml((order.amount / 100).toFixed(2))}</button>
     <small>If checkout does not open automatically, tap Pay.</small>
   </main>
   <script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>

@@ -65,6 +65,11 @@ import {
   encryptChatText,
 } from "./chatCrypto";
 import {
+  cashfreeAmountForInr,
+  formatCurrencyFromInr,
+  getUserCurrencyInfo,
+} from "./currency";
+import {
   ensureRoleProfile,
   formatPocketBaseClientError,
   getAuthUser,
@@ -772,7 +777,14 @@ const normalizeOrderStatus = (value) => {
   return "pending";
 };
 
-const formatCurrency = (amount) => `₹${Number(amount || 0)}`;
+const formatCurrency = (amount) => formatCurrencyFromInr(amount);
+const formatProductPrice = (price) => {
+  const raw = String(price || "").trim();
+  if (!raw) return "";
+  const numeric = Number(raw.replace(/[^0-9.]/g, ""));
+  if (Number.isFinite(numeric) && numeric > 0) return formatCurrencyFromInr(numeric);
+  return raw;
+};
 
 const formatDateValue = (value) => {
   if (!value) return "";
@@ -983,15 +995,11 @@ const PAYMENT_CASHFREE_RETURN_URL = String(
   Constants.expoConfig?.extra?.cashfreeReturnUrl || "myapp://payment/cashfree",
 ).trim();
 
-const packageOfferAmountPaise = (offer) => {
-  const rupees = Number(offer?.amount_inr || offer?.amountInr || 0);
-  return Math.max(100, Math.round((Number.isFinite(rupees) ? rupees : 0) * 100));
-};
+const packageOfferPaymentAmount = (offer) =>
+  cashfreeAmountForInr(Number(offer?.amount_inr || offer?.amountInr || 0));
 
-const walletTopupAmountPaise = (amountInr) => {
-  const rupees = Math.floor(Number(amountInr));
-  return Math.max(100, Math.round((Number.isFinite(rupees) ? rupees : 0) * 100));
-};
+const walletTopupPaymentAmount = (amountInr) =>
+  cashfreeAmountForInr(Math.floor(Number(amountInr)));
 
 const parseUrlQueryParams = (url) => {
   const queryString =
@@ -4481,6 +4489,9 @@ const WalletDepositScreen = ({
   onBack,
 }) => {
   const insets = useSafeAreaInsets();
+  const currencyInfo = getUserCurrencyInfo();
+  const minTopup = formatCurrencyFromInr(WALLET_TOPUP_MIN_INR, currencyInfo);
+  const maxTopup = formatCurrencyFromInr(WALLET_TOPUP_MAX_INR, currencyInfo);
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }} edges={["left", "right"]}>
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
@@ -4624,7 +4635,7 @@ const WalletDepositScreen = ({
               Deposit coins
             </Text>
             <Text style={{ color: theme.textSecondary, fontSize: RFValue(12), marginBottom: RFValue(10) }}>
-              Enter ₹{WALLET_TOPUP_MIN_INR}-₹{WALLET_TOPUP_MAX_INR}. You’ll receive the same number of coins after Cashfree confirms payment.
+              Enter {WALLET_TOPUP_MIN_INR}-{WALLET_TOPUP_MAX_INR} coins. Cashfree charges roughly {minTopup}-{maxTopup} in {currencyInfo.currency}.
             </Text>
             <TextInput
               value={depositAmount}
@@ -4825,13 +4836,13 @@ const PatientHomeScreen = () => {
             }
             if (offer?.title) {
               lines.push(
-                `Package: ${offer.title} - ₹${offer.amount_inr ?? "-"}.`,
+                `Package: ${offer.title} - ${formatCurrencyFromInr(offer.amount_inr ?? 0)}.`,
               );
             }
             if (String(offer?.status || "").toLowerCase() === "paid") {
               lines.push(
                 `Payment received${
-                  offer?.amount_inr ? ` (₹${offer.amount_inr})` : ""
+                  offer?.amount_inr ? ` (${formatCurrencyFromInr(offer.amount_inr)})` : ""
                 }. Looking forward to working with you.`,
               );
             }
@@ -4876,7 +4887,7 @@ const PatientHomeScreen = () => {
             await sendConversationMessage(
               cid,
               `Payment confirmed for ${packageTitle || "the package"}${
-                amount ? ` (₹${amount})` : ""
+                amount ? ` (${formatCurrencyFromInr(amount)})` : ""
               }. Looking forward to working with you.`,
             );
           } catch {
@@ -5057,7 +5068,7 @@ const PatientHomeScreen = () => {
     ) {
       Alert.alert(
         "Deposit",
-        `Enter a whole number from ₹${WALLET_TOPUP_MIN_INR} to ₹${WALLET_TOPUP_MAX_INR}.`,
+        `Enter a whole number from ${WALLET_TOPUP_MIN_INR} to ${WALLET_TOPUP_MAX_INR} coins.`,
       );
       return;
     }
@@ -6415,7 +6426,7 @@ const PatientHomeScreen = () => {
                     : patientCareMode === CARE_MODE.PACKAGE
                       ? "Quick services stay separate from package care and use RMP / clinic doctors."
                       : patientCareMode === CARE_MODE.CASUAL
-                        ? "RMP / clinic doctors (1 coin = ₹1)."
+                        ? `RMP / clinic doctors (1 coin ≈ ${formatCurrencyFromInr(1)}).`
                         : "Available anytime through the RMP / clinic queue."}
                 </Text>
                 <TouchableOpacity
@@ -6474,7 +6485,7 @@ const PatientHomeScreen = () => {
                     >
                       {patientCareMode === CARE_MODE.PACKAGE
                         ? "10 coins · RMP/clinic queue"
-                        : "₹10 · Private mode available"}
+                        : `${formatCurrencyFromInr(10)} · Private mode available`}
                     </Text>
                   </View>
                   <Ionicons
@@ -6537,7 +6548,7 @@ const PatientHomeScreen = () => {
                         marginTop: RFValue(2),
                       }}
                     >
-                      {patientCareMode === CARE_MODE.PACKAGE ? "25 coins · RMP/clinic" : "₹25"}
+                      {patientCareMode === CARE_MODE.PACKAGE ? "25 coins · RMP/clinic" : `${formatCurrencyFromInr(25)}`}
                     </Text>
                   </View>
                   <Ionicons
@@ -11241,13 +11252,13 @@ const PatientAppointmentsScreen = ({ onBack }) => {
             }
             if (offer?.title) {
               lines.push(
-                `Package: ${offer.title} - ₹${offer.amount_inr ?? "-"}.`,
+                `Package: ${offer.title} - ${formatCurrencyFromInr(offer.amount_inr ?? 0)}.`,
               );
             }
             if (String(offer?.status || "").toLowerCase() === "paid") {
               lines.push(
                 `Payment received${
-                  offer?.amount_inr ? ` (₹${offer.amount_inr})` : ""
+                  offer?.amount_inr ? ` (${formatCurrencyFromInr(offer.amount_inr)})` : ""
                 }. Looking forward to working with you.`,
               );
             }
@@ -11291,7 +11302,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
             await sendConversationMessage(
               cid,
               `Payment confirmed for ${packageTitle || "the package"}${
-                amount ? ` (₹${amount})` : ""
+                amount ? ` (${formatCurrencyFromInr(amount)})` : ""
               }. Looking forward to working with you.`,
             );
           } catch {
@@ -17582,13 +17593,13 @@ const DoctorUpcomingAppointmentsSection = () => {
           }
           if (offer?.title) {
             lines.push(
-              `Package sent: ${offer.title} - ₹${offer.amount_inr ?? "-"}.`,
+              `Package sent: ${offer.title} - ${formatCurrencyFromInr(offer.amount_inr ?? 0)}.`,
             );
           }
           if (String(offer?.status || "").toLowerCase() === "paid") {
             lines.push(
               `Patient has paid${
-                offer?.amount_inr ? ` ₹${offer.amount_inr}` : ""
+                offer?.amount_inr ? ` ${formatCurrencyFromInr(offer.amount_inr)}` : ""
               }. Continue care here.`,
             );
           }
@@ -17912,7 +17923,7 @@ const DoctorUpcomingAppointmentsSection = () => {
                   {appointment.packageRequestLabel ||
                     offer?.title ||
                     "Package option sent"}
-                  {offer?.amount_inr != null ? ` · ₹${offer.amount_inr}` : ""}
+                  {offer?.amount_inr != null ? ` · ${formatCurrencyFromInr(offer.amount_inr)}` : ""}
                 </Text>
               ) : null}
             </View>
@@ -23165,7 +23176,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 {doctorItem.experience != null
                   ? `${doctorItem.experience}+ yrs`
                   : "Clinician"}{" "}
-                · {doctorItem.rating} ★ · INR {doctorItem.fee}
+                · {doctorItem.rating} ★ · {formatCurrencyFromInr(doctorItem.fee)}
               </Text>
               {doctorItem.bio ? (
                 <Text
@@ -23243,7 +23254,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                           marginTop: 4,
                         }}
                       >
-                        ₹{pkg.total_amount_inr} · {pkg.total_period} ·{" "}
+                        {formatCurrencyFromInr(pkg.total_amount_inr)} · {pkg.total_period} ·{" "}
                         {pkg.treatment_type}
                       </Text>
                       {pkg.description ? (
@@ -25598,7 +25609,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
         name: String(product.name || "").trim(),
         qty: String(config?.qty || "").trim(),
         notes: [
-          product.price ? `₹${String(product.price).replace(/^₹/, "")}` : "",
+          product.price ? formatProductPrice(product.price) : "",
           config?.notes,
         ]
           .filter(Boolean)
@@ -25776,9 +25787,7 @@ const PatientOrderComposerModal = ({ pharmacy, onClose, onOrderPlaced }) => {
                               color: theme.textSecondary,
                             }}
                           >
-                            {String(product.price).startsWith("₹")
-                              ? product.price
-                              : `₹${product.price}`}
+                            {formatProductPrice(product.price)}
                           </Text>
                         ) : null}
                       </View>
@@ -26351,9 +26360,7 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
                         color: theme.accent,
                       }}
                     >
-                      {String(product.price).startsWith("₹")
-                        ? product.price
-                        : `₹${product.price}`}
+                      {formatProductPrice(product.price)}
                     </Text>
                   ) : null}
                 </View>
@@ -31842,7 +31849,7 @@ export default function App() {
   };
 
   const runCashfreePackagePayment = async (offer, doctorUserId) => {
-    const amountPaise = packageOfferAmountPaise(offer);
+    const paymentAmount = packageOfferPaymentAmount(offer);
     const customerPhone = String(
       offer?.customerPhone ||
         patientProfilePhoneRaw(patientProfile) ||
@@ -31858,8 +31865,8 @@ export default function App() {
       appointmentId: offerId,
       sourceType: "package_offer",
       sourceId: offerId,
-      amountPaise,
-      currency: "INR",
+      amountPaise: paymentAmount.amountMinor,
+      currency: paymentAmount.currency,
       description: `Nvoisys package: ${offer?.title || "Care package"}`,
       returnUrl: PAYMENT_CASHFREE_RETURN_URL,
       customer: {
@@ -31872,6 +31879,12 @@ export default function App() {
         doctorId: doctorUserId || offer?.doctor_user_id || offer?.doctor || "",
         sourceType: "package_offer",
         packageOfferId: offerId,
+        baseCurrency: paymentAmount.baseCurrency,
+        baseAmountInr: paymentAmount.baseAmountInr,
+        displayCurrency: paymentAmount.currency,
+        displayAmount: paymentAmount.amount,
+        fxRateFromInr: paymentAmount.fxRateFromInr,
+        approximateFx: paymentAmount.approximate,
       },
     });
 
@@ -31916,7 +31929,7 @@ export default function App() {
     if (!verified?.verified) {
       throw new Error("Payment verification failed.");
     }
-    return { ...verified, customerPhone };
+    return { ...verified, customerPhone, currencyQuote: paymentAmount };
   };
 
   const payForAppointment = async (appointment) => {
@@ -31997,6 +32010,7 @@ export default function App() {
       patientUserId: currentUser?.id,
       doctorUserId,
       amountInr: offer.amount_inr ?? offer.amountInr,
+      currency: paymentResult?.currencyQuote?.currency || "INR",
       providerOrderId:
         paymentResult?.cashfreeOrderId ||
         paymentResult?.orderId ||
@@ -32016,12 +32030,14 @@ export default function App() {
       customerPhone:
         paymentResult?.customerPhone || patientProfilePhoneRaw(patientProfile),
       verified: paymentResult || null,
+      currencyQuote: paymentResult?.currencyQuote || null,
     });
     await refreshAllData();
   };
 
   const runCashfreeWalletTopup = async (amountInr) => {
     const amount = Math.floor(Number(amountInr));
+    const paymentAmount = walletTopupPaymentAmount(amount);
     const customerPhone = String(
       patientProfilePhoneRaw(patientProfile) ||
         patientProfilePhoneRaw(currentUser) ||
@@ -32035,8 +32051,8 @@ export default function App() {
       appointmentId: sourceId,
       sourceType: "wallet_deposit",
       sourceId,
-      amountPaise: walletTopupAmountPaise(amount),
-      currency: "INR",
+      amountPaise: paymentAmount.amountMinor,
+      currency: paymentAmount.currency,
       description: `Nvoisys wallet top-up: ${amount} coins`,
       returnUrl: PAYMENT_CASHFREE_RETURN_URL,
       customer: {
@@ -32050,6 +32066,12 @@ export default function App() {
         walletDepositId: sourceId,
         amountInr: amount,
         coins: amount,
+        baseCurrency: paymentAmount.baseCurrency,
+        baseAmountInr: paymentAmount.baseAmountInr,
+        displayCurrency: paymentAmount.currency,
+        displayAmount: paymentAmount.amount,
+        fxRateFromInr: paymentAmount.fxRateFromInr,
+        approximateFx: paymentAmount.approximate,
       },
     });
 
@@ -32099,6 +32121,7 @@ export default function App() {
       customerPhone,
       sourceId,
       cashfreeOrderId: verifyPayload.cashfreeOrderId,
+      currencyQuote: paymentAmount,
     };
   };
 
@@ -32111,7 +32134,7 @@ export default function App() {
       amount > WALLET_TOPUP_MAX_INR
     ) {
       throw new Error(
-        `Enter a whole number from ₹${WALLET_TOPUP_MIN_INR} to ₹${WALLET_TOPUP_MAX_INR}.`,
+        `Enter a whole number from ${WALLET_TOPUP_MIN_INR} to ${WALLET_TOPUP_MAX_INR} coins.`,
       );
     }
     let paymentResult = null;
@@ -32141,6 +32164,7 @@ export default function App() {
         paymentResult?.bank_reference,
       meta: {
         payment_mode: PAYMENT_MODE,
+        currency_quote: paymentResult?.currencyQuote || null,
         verified: paymentResult || null,
       },
     });

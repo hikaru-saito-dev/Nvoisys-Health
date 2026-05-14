@@ -35,6 +35,7 @@ import {
   scrollInputAboveImeAndroid,
   useKeyboardBottomInset,
 } from "./keyboardScrollUtils";
+import { formatCurrencyFromInr, getUserCurrencyInfo } from "./currency";
 import { getAuthUser, pb } from "./pocketbase";
 import {
   acceptQuickHelpOffer,
@@ -184,6 +185,7 @@ export function CareModeOnboardingScreen({
   packageOnly = false,
 }) {
   const insets = useSafeAreaInsets();
+  const currencyInfo = getUserCurrencyInfo();
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState(null);
   const [packageStep, setPackageStep] = useState(Boolean(startInPackageStep));
@@ -319,7 +321,7 @@ export function CareModeOnboardingScreen({
     ) {
       Alert.alert(
         "Top up coins",
-        `Enter a whole number from ₹${WALLET_TOPUP_MIN_INR} to ₹${WALLET_TOPUP_MAX_INR}.`,
+        `Enter a whole number from ${WALLET_TOPUP_MIN_INR} to ${WALLET_TOPUP_MAX_INR} coins.`,
       );
       return;
     }
@@ -401,9 +403,9 @@ export function CareModeOnboardingScreen({
               lineHeight: 20,
             }}
           >
-            Enter ₹{WALLET_TOPUP_MIN_INR}-₹{WALLET_TOPUP_MAX_INR}. You get the
-            same number of coins after Cashfree confirms payment. Quick Solution
-            costs 10 coins and Quick Counselling costs 25 coins.
+            Enter {WALLET_TOPUP_MIN_INR}-{WALLET_TOPUP_MAX_INR} coins. Cashfree
+            charges roughly {formatCurrencyFromInr(WALLET_TOPUP_MIN_INR, currencyInfo)}-
+            {formatCurrencyFromInr(WALLET_TOPUP_MAX_INR, currencyInfo)}. Quick Solution costs 10 coins and Quick Counselling costs 25 coins.
           </Text>
           <TextInput
             placeholder="e.g. 500"
@@ -575,7 +577,7 @@ export function CareModeOnboardingScreen({
                         marginTop: 4,
                       }}
                     >
-                      Pay ₹{amount}
+                      Pay {formatCurrencyFromInr(amount, currencyInfo)}
                       {usesDefault ? " · default amount" : " · doctor fee"}
                     </Text>
                   </TouchableOpacity>
@@ -2950,6 +2952,7 @@ export function PatientPackageMeetingsPanel({
   onMeetingsChanged,
 }) {
   const insets = useSafeAreaInsets();
+  const currencyInfo = getUserCurrencyInfo();
   const [meetings, setMeetings] = useState([]);
   const [offers, setOffers] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -3224,7 +3227,7 @@ export function PatientPackageMeetingsPanel({
             ? ""
             : !linkedOffer
               ? "The doctor has not suggested a package option yet."
-              : `Doctor suggested ${String(x.package_request_label || linkedOffer.title || "a package").trim()}. Payment: ₹${linkedOffer.amount_inr ?? "-"}.`;
+              : `Doctor suggested ${String(x.package_request_label || linkedOffer.title || "a package").trim()}. Payment: ${formatCurrencyFromInr(linkedOffer.amount_inr ?? 0, currencyInfo)}.`;
           return (
             <View
               key={x.id}
@@ -3409,11 +3412,10 @@ export function PatientPackageMeetingsPanel({
                     }}
                   >
                     <Text style={{ color: "#fff", fontWeight: "800" }}>
-                      Pay ₹
-                      {linkedOffer?.amount_inr ??
-                        x.consultation_fee ??
-                        x.fee ??
-                        500}
+                      Pay {formatCurrencyFromInr(
+                        linkedOffer?.amount_inr ?? x.consultation_fee ?? x.fee ?? 500,
+                        currencyInfo,
+                      )}
                     </Text>
                   </TouchableOpacity>
                 ) : null}
@@ -3538,7 +3540,7 @@ export function PatientPackageMeetingsPanel({
                       marginTop: 6,
                     }}
                   >
-                    Service fee ₹{o.amount_inr ?? "-"} ·{" "}
+                    Service fee {formatCurrencyFromInr(o.amount_inr ?? 0, currencyInfo)} ·{" "}
                     {isPaid ? "Paid" : "Awaiting payment"}
                   </Text>
                   {!isPaid ? (
@@ -3554,7 +3556,7 @@ export function PatientPackageMeetingsPanel({
                       }}
                     >
                       <Text style={{ color: "#fff", fontWeight: "800" }}>
-                        Pay ₹{o.amount_inr ?? "-"}
+                        Pay {formatCurrencyFromInr(o.amount_inr ?? 0, currencyInfo)}
                       </Text>
                     </TouchableOpacity>
                   ) : (
@@ -3599,6 +3601,7 @@ export function PackageDoctorJourneyScreen({
   onPackagePaid,
 }) {
   const insets = useSafeAreaInsets();
+  const currencyInfo = getUserCurrencyInfo();
   const [search, setSearch] = useState("");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -3999,7 +4002,7 @@ export function PackageDoctorJourneyScreen({
                       marginTop: 4,
                     }}
                   >
-                    Pay ₹{amount}
+                    Pay {formatCurrencyFromInr(amount, currencyInfo)}
                     {usesDefault ? " · default amount" : " · doctor fee"}
                   </Text>
                 </TouchableOpacity>
