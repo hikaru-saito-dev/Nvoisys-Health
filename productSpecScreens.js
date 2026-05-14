@@ -170,43 +170,57 @@ export function CareModeOnboardingScreen({
   theme,
   patientProfile,
   currentUser,
+  onBack,
   onDone,
   onCommitPackageDoctor,
   onLoadPackageDoctors,
   onPaySelectedPackage,
   onWalletTopUp,
   paymentMode,
+  startInPackageStep = false,
+  packageOnly = false,
 }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState(null);
-  const [packageStep, setPackageStep] = useState(false);
+  const [packageStep, setPackageStep] = useState(Boolean(startInPackageStep));
   const [packageDoctors, setPackageDoctors] = useState([]);
   const [doctorSearch, setDoctorSearch] = useState("");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [loadingDoctors, setLoadingDoctors] = useState(false);
+  const [packageDoctorsLoaded, setPackageDoctorsLoaded] = useState(false);
   const [casualStep, setCasualStep] = useState(false);
   const [casualAmount, setCasualAmount] = useState(
     String(WALLET_TOPUP_MIN_INR),
   );
 
   const loadPackageDoctors = useCallback(async () => {
-    if (typeof onLoadPackageDoctors !== "function") return [];
+    if (typeof onLoadPackageDoctors !== "function") {
+      setPackageDoctorsLoaded(true);
+      return [];
+    }
     setLoadingDoctors(true);
     try {
       const list = await onLoadPackageDoctors();
       const next = Array.isArray(list) ? list : [];
       setPackageDoctors(next);
+      setPackageDoctorsLoaded(true);
       return next;
     } catch (e) {
       Alert.alert("Doctors", e?.message || "Could not load package doctors.");
       setPackageDoctors([]);
+      setPackageDoctorsLoaded(true);
       return [];
     } finally {
       setLoadingDoctors(false);
     }
   }, [onLoadPackageDoctors]);
+
+  useEffect(() => {
+    if (!packageStep || loadingDoctors || packageDoctorsLoaded) return;
+    void loadPackageDoctors();
+  }, [packageStep, loadingDoctors, packageDoctorsLoaded, loadPackageDoctors]);
 
   const confirm = async () => {
     if (!selected) {
@@ -440,7 +454,10 @@ export function CareModeOnboardingScreen({
           }}
         >
           <TouchableOpacity
-            onPress={() => setPackageStep(false)}
+            onPress={() => {
+              if (packageOnly) onBack?.();
+              else setPackageStep(false);
+            }}
             disabled={busy}
             style={{ marginBottom: 14, alignSelf: "flex-start" }}
           >

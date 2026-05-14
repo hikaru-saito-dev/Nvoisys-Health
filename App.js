@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+﻿import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
@@ -105,9 +105,11 @@ import {
   entitlementsForConsumerPlan,
   fetchUsersAuthByIds,
   fetchPatientProfilesByIds,
-  getCoinBalanceForUser,
+  getPatientCasualCoinBalance,
+  getPatientPackageCoinBalance,
   getPatientActiveQuickCareBinding,
   listPackageOffersForDoctor,
+  listActivePackagePairsForPatient,
   recordPatientWalletDeposit,
   mergeLocalFeesOntoSlots,
   minutesUsedWithDoctorThisRollingWeek,
@@ -962,10 +964,9 @@ const parseDurationDays = (raw) => {
 };
 
 // ---------------------------------------------------------------------------
-// Step 8 - Appointment payment configuration.
-// In "stub" mode the Pay Fee button just updates the status locally. When
-// `paymentMode` is set to "stripe" or "cashfree" the corresponding values
-// become available to an external helper (not wired by default).
+// Step 8 - Payment configuration.
+// Package purchases use Cashfree when configured; approved appointments are
+// covered by package wallet coins and settle from the ledger on completion.
 // ---------------------------------------------------------------------------
 const PAYMENT_MODE = String(Constants.expoConfig?.extra?.paymentMode || "stub")
   .trim()
@@ -981,16 +982,6 @@ const PAYMENT_BACKEND_URL = String(
 const PAYMENT_CASHFREE_RETURN_URL = String(
   Constants.expoConfig?.extra?.cashfreeReturnUrl || "myapp://payment/cashfree",
 ).trim();
-
-const appointmentFeePaise = (appointment) => {
-  const rupees = Number(
-    appointment?.consultationFee || appointment?.fee || 500,
-  );
-  return Math.max(
-    100,
-    Math.round((Number.isFinite(rupees) ? rupees : 500) * 100),
-  );
-};
 
 const packageOfferAmountPaise = (offer) => {
   const rupees = Number(offer?.amount_inr || offer?.amountInr || 0);
@@ -4760,6 +4751,7 @@ const PatientHomeScreen = () => {
     sendAssistantMessage,
     topUpPatientWallet,
     paymentMode,
+    setLocalCareMode,
   } = useAppData();
   const patientQuickCareBinding = usePatientQuickCareBinding();
   const patientFirstName =
@@ -4926,7 +4918,7 @@ const PatientHomeScreen = () => {
   const [showQuickCounselling, setShowQuickCounselling] = useState(false);
   const [showPackageJourney, setShowPackageJourney] = useState(false);
   const [packageDoctors, setPackageDoctors] = useState([]);
-  const [showWallet, setShowWallet] = useState(false);
+  const [walletMode, setWalletMode] = useState(null);
   const [depositAmount, setDepositAmount] = useState("");
   const [patientCoinBalance, setPatientCoinBalance] = useState(0);
 
@@ -4945,7 +4937,7 @@ const PatientHomeScreen = () => {
     if (!currentUser?.id || dataLoading) return undefined;
     (async () => {
       try {
-        const b = await getCoinBalanceForUser(currentUser.id);
+        const b = await getPatientCasualCoinBalance(currentUser.id);
         if (!cancelled) setPatientCoinBalance(Number(b) || 0);
       } catch {
         if (!cancelled) setPatientCoinBalance(0);
@@ -5037,10 +5029,20 @@ const PatientHomeScreen = () => {
   const refreshPatientCoinBalance = useCallback(async () => {
     if (!currentUser?.id) return;
     try {
-      const b = await getCoinBalanceForUser(currentUser.id);
+      const b = await getPatientCasualCoinBalance(currentUser.id);
       setPatientCoinBalance(Number(b) || 0);
     } catch {
       // keep the last visible balance
+    }
+  }, [currentUser?.id]);
+
+  const refreshPackagePoolCoins = useCallback(async () => {
+    if (!currentUser?.id) return;
+    try {
+      const p = await getPatientPackagePoolCoinsRemaining(currentUser.id);
+      setPackagePoolCoins(Number(p) || 0);
+    } catch {
+      // keep the last visible package balance
     }
   }, [currentUser?.id]);
 
@@ -5233,8 +5235,8 @@ const PatientHomeScreen = () => {
         setStartCallType(null);
         return true;
       }
-      if (showWallet) {
-        setShowWallet(false);
+      if (walletMode) {
+        setWalletMode(null);
         return true;
       }
       if (showFindDoctor) {
@@ -5297,7 +5299,7 @@ const PatientHomeScreen = () => {
     feelingSendBusy,
     upgradeModalVisible,
     startCallType,
-    showWallet,
+    walletMode,
     showFindDoctor,
     showPrescription,
     showMeds,
@@ -5321,7 +5323,33 @@ const PatientHomeScreen = () => {
         scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
-  if (showWallet)
+  if (walletMode === "package")
+    return (
+      <CareModeOnboardingScreen
+        theme={theme}
+        patientProfile={patientProfile}
+        currentUser={currentUser}
+        paymentMode={paymentMode}
+        startInPackageStep
+        packageOnly
+        onBack={() => setWalletMode(null)}
+        onLoadPackageDoctors={() => fetchApprovedDoctors({ packageModeOnly: true })}
+        onPaySelectedPackage={payForPackageOffer}
+        onWalletTopUp={topUpPatientWallet}
+        onDone={async () => {
+          setLocalCareMode?.(CARE_MODE.PACKAGE);
+          setWalletMode(null);
+          try {
+            await refreshAllData?.();
+            await refreshPatientCoinBalance();
+            await refreshPackagePoolCoins();
+          } catch {
+            // Payment already completed; the next dashboard refresh will sync.
+          }
+        }}
+      />
+    );
+  if (walletMode === "casual")
     return (
       <WalletDepositScreen
         theme={theme}
@@ -5331,12 +5359,8 @@ const PatientHomeScreen = () => {
         onDeposit={handleWalletDeposit}
         paymentMode={paymentMode}
         onBack={() => {
-          setShowWallet(false);
-          if (currentUser?.id) {
-            void getCoinBalanceForUser(currentUser.id)
-              .then((b) => setPatientCoinBalance(Number(b) || 0))
-              .catch(() => {});
-          }
+          setWalletMode(null);
+          void refreshPatientCoinBalance();
         }}
       />
     );
@@ -5407,6 +5431,7 @@ const PatientHomeScreen = () => {
         onPackagePaid={() => {
           void refreshAllData();
           void refreshPatientCoinBalance();
+          void refreshPackagePoolCoins();
         }}
       />
     );
@@ -6001,7 +6026,7 @@ const PatientHomeScreen = () => {
                 >
                   <TouchableOpacity
                     activeOpacity={0.9}
-                    onPress={() => setShowWallet(true)}
+                    onPress={() => setWalletMode("casual")}
                     style={{
                       flex: 1,
                       borderRadius: RFValue(16),
@@ -6059,13 +6084,17 @@ const PatientHomeScreen = () => {
                   </TouchableOpacity>
                   <TouchableOpacity
                     activeOpacity={0.9}
-                    onPress={() => setShowWallet(true)}
+                    onPress={() => setWalletMode("package")}
                     style={{
                       flex: 1,
                       borderRadius: RFValue(16),
                       overflow: "hidden",
-                      ...elevatedSurfaceShadow(theme),
-                      opacity: packageStyleHome ? 1 : 0.55,
+                      shadowColor: theme.shadowColor,
+                      shadowOpacity: 0.14,
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowRadius: 10,
+                      elevation: 4,
+                      opacity: 1,
                     }}
                   >
                     <LinearGradient
@@ -6111,7 +6140,7 @@ const PatientHomeScreen = () => {
                             letterSpacing: -0.3,
                           }}
                         >
-                          {packageStyleHome ? packagePoolCoins : "—"}
+                          {packagePoolCoins}
                         </Text>
                       </View>
                     </LinearGradient>
@@ -11097,19 +11126,14 @@ const PatientAppointmentsScreen = ({ onBack }) => {
 
   const handlePayForAppointment = async (appointment) => {
     if (!payForAppointment || !appointment?.id) return;
-    const phoneDigits = String(
-      appointment.customerPhone || patientProfilePhoneRaw(patientProfile) || "",
-    ).replace(/\D/g, "");
-    if (phoneDigits.length < 10) {
-      setPhonePaymentAppointment(appointment);
-      setPaymentPhone(phoneDigits);
-      return false;
-    }
     try {
       setPayingAppointmentId(appointment.id);
-      await payForAppointment({ ...appointment, customerPhone: phoneDigits });
+      await payForAppointment(appointment);
       await refreshAllData?.();
-      Alert.alert("Payment", "Payment confirmed for this appointment.");
+      Alert.alert(
+        "Package wallet",
+        "Appointment confirmed against your package coins. Coins settle after the completed session.",
+      );
       return true;
     } catch (error) {
       Alert.alert(
@@ -11426,8 +11450,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                     }}
                   >
                     {formatAppointmentSummaryDate(appointment.scheduledAt)} ·{" "}
-                    {formatTimeValue(appointment.scheduledAt)} · ₹
-                    {appointment.consultationFee || 500}
+                    {formatTimeValue(appointment.scheduledAt)} · Package wallet
                   </Text>
                   {canPay ? (
                     <TouchableOpacity
@@ -11453,7 +11476,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                             fontWeight: "800",
                           }}
                         >
-                          Pay fee
+                          Use package coins
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -16826,7 +16849,6 @@ const AuthScreen = ({ onLogin }) => {
                 setPatientCondition("");
                 setPatientGender("");
                 setPatientRegAvatar(null);
-                setDoctorPracticeType("");
                 setDoctorSpecialtyField("");
                 setDoctorClinic("");
                 setProfilePhone("");
@@ -22353,7 +22375,7 @@ const AppointmentBookingScreen = ({
                   fontWeight: "700",
                 }}
               >
-                INR {activeDoctor.fee}
+                Package coins
               </Text>
             </View>
           </View>
@@ -22769,10 +22791,11 @@ const AppointmentBookingScreen = ({
 
 const PatientDoctorBookingFlow = ({ onBack }) => {
   const { theme } = useTheme();
-  const { fetchApprovedDoctors, patientProfile } = useAppData();
+  const { fetchApprovedDoctors, patientProfile, currentUser } = useAppData();
   const [step, setStep] = useState("browse");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [doctors, setDoctors] = useState([]);
+  const [packagePairs, setPackagePairs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
@@ -22807,8 +22830,23 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
       try {
         setLoading(true);
         setLoadError("");
-        const list = await fetchApprovedDoctors();
-        if (!cancelled) setDoctors(list);
+        const pairs = await listActivePackagePairsForPatient(
+          currentUser?.id,
+          patientProfile?.id,
+        );
+        const allowedDoctorIds = new Set(
+          (pairs || [])
+            .map((pair) => String(pair.doctor_user_id || "").trim())
+            .filter(Boolean),
+        );
+        const list = await fetchApprovedDoctors({ packageModeOnly: true });
+        const next = (list || []).filter((doctorItem) =>
+          allowedDoctorIds.has(String(doctorItem.userId || "").trim()),
+        );
+        if (!cancelled) {
+          setPackagePairs(pairs || []);
+          setDoctors(next);
+        }
       } catch (error) {
         if (!cancelled) {
           setLoadError(error?.message || "Unable to load doctors");
@@ -22820,7 +22858,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
     return () => {
       cancelled = true;
     };
-  }, [fetchApprovedDoctors]);
+  }, [fetchApprovedDoctors, currentUser?.id, patientProfile?.id]);
 
   const categories = [
     "All",
@@ -23098,8 +23136,8 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                   }}
                 >
                   This doctor is still completing their three care packages in
-                  the app. You can book a general appointment; package offers
-                  will appear once their catalogue is published.
+                  the app. Package appointments are available after their
+                  catalogue is published.
                 </Text>
               ) : null}
               {doctorItem.packagesSetupComplete &&
@@ -23248,7 +23286,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                   fontSize: RFValue(16),
                 }}
               >
-                Book appointment
+                Book package appointment
               </Text>
             </TouchableOpacity>
           </View>
@@ -23301,7 +23339,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
               Find a doctor
             </Text>
             <Text style={{ fontSize: RFValue(12), color: theme.textSecondary }}>
-              Search by name or specialty
+              Book only with doctors whose package you have purchased
             </Text>
           </View>
         </View>
@@ -23560,23 +23598,6 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             <Text style={{ color: theme.danger, fontWeight: "600" }}>
               {loadError}
             </Text>
-            <TouchableOpacity
-              onPress={() => {
-                setSelectedDoctor(null);
-                setStep("book");
-              }}
-              style={{ marginTop: RFValue(16) }}
-            >
-              <Text
-                style={{
-                  fontSize: RFValue(14),
-                  fontWeight: "700",
-                  color: theme.accent,
-                }}
-              >
-                Continue with general booking
-              </Text>
-            </TouchableOpacity>
           </View>
         ) : filteredDoctors.length === 0 ? (
           <View style={{ alignItems: "center", marginTop: RFValue(40) }}>
@@ -23592,13 +23613,15 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 textAlign: "center",
               }}
             >
-              {languageFilterText.trim()
-                ? "No doctors list that language yet. Clear the language field, try different spelling, or relax other filters."
-                : selectedConcern
-                  ? "No doctors match this health concern yet. Try another chip or clear the filter."
-                  : hasHealthFocus && !showAllDoctors
-                    ? "No doctors matched your health profile yet. Try showing all doctors or adjust search."
-                    : "No doctors match your filters. Try another specialty or clear search."}
+              {packagePairs.length === 0
+                ? "No active package doctor found. Buy a package from the Package wallet first."
+                : languageFilterText.trim()
+                  ? "No package doctors list that language yet. Clear the language field, try different spelling, or relax other filters."
+                  : selectedConcern
+                    ? "No package doctors match this health concern yet. Try another chip or clear the filter."
+                    : hasHealthFocus && !showAllDoctors
+                      ? "No package doctors matched your health profile yet. Try showing all package doctors or adjust search."
+                      : "No package doctors match your filters. Try another specialty or clear search."}
             </Text>
             {languageFilterText.trim() ? (
               <TouchableOpacity
@@ -23648,23 +23671,6 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 </Text>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity
-              onPress={() => {
-                setSelectedDoctor(null);
-                setStep("book");
-              }}
-              style={{ marginTop: RFValue(16) }}
-            >
-              <Text
-                style={{
-                  fontSize: RFValue(14),
-                  fontWeight: "700",
-                  color: theme.accent,
-                }}
-              >
-                Continue with general booking
-              </Text>
-            </TouchableOpacity>
           </View>
         ) : (
           filteredDoctors.map((doctorItem) => (
@@ -23743,7 +23749,7 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 <Text
                   style={{ fontSize: RFValue(11), color: theme.textTertiary }}
                 >
-                  INR {doctorItem.fee} consult
+                  Package active
                 </Text>
                 {(doctorItem.languages || []).length > 0 ? (
                   <Text
@@ -30669,6 +30675,29 @@ export default function App() {
       throw new Error("Please describe the reason for your visit.");
     }
 
+    const activePairs = await listActivePackagePairsForPatient(
+      currentUser.id,
+      patientProfile?.id,
+    );
+    const activePair = (activePairs || []).find(
+      (pair) => String(pair.doctor_user_id || "") === String(doctorUserId),
+    );
+    if (!activePair) {
+      throw new Error(
+        "Book appointments only with professional or specialist doctors whose package you have purchased.",
+      );
+    }
+    const cachedPackageCoins = Number(activePair.remaining_coins ?? 0) || 0;
+    const packageCoins =
+      cachedPackageCoins > 0
+        ? cachedPackageCoins
+        : activePair.offerId
+          ? await getPatientPackageCoinBalance(currentUser.id, activePair.offerId)
+          : 0;
+    if (packageCoins <= 0) {
+      throw new Error("Your package wallet has no coins left for this doctor.");
+    }
+
     const created = await createPackageMeetingRequest({
       patientUserId: currentUser.id,
       doctorUserId,
@@ -31757,86 +31786,6 @@ export default function App() {
     return { order: orderRecord, conversationId: conversation.id };
   };
 
-  // -------------------------------------------------------------------------
-  // Step 8 - Appointment payment.
-  // In "stub" mode (the default) this just flips the status to "paid". In
-  // "cashfree" mode the hosted checkout must verify successfully first.
-  // -------------------------------------------------------------------------
-  const runCashfreeAppointmentPayment = async (appointment) => {
-    const amountPaise = appointmentFeePaise(appointment);
-    const customerPhone = String(
-      appointment?.customerPhone ||
-        patientProfilePhoneRaw(patientProfile) ||
-        patientProfilePhoneRaw(currentUser) ||
-        "",
-    ).replace(/\D/g, "");
-    if (customerPhone.length < 10) {
-      throw new Error("Please add your mobile number before paying.");
-    }
-    const order = await postPaymentJson("/payments/cashfree/orders", {
-      appointmentId: appointment.id,
-      amountPaise,
-      currency: "INR",
-      description: `Nvoisys appointment with ${appointment.doctor || "doctor"}`,
-      returnUrl: PAYMENT_CASHFREE_RETURN_URL,
-      customer: {
-        name: currentUser?.name || "Patient",
-        email: currentUser?.email || "",
-        phone: customerPhone,
-      },
-      metadata: {
-        patientId: currentUser?.id || appointment.patientId || "",
-        doctorId: appointment.doctorUserId || appointment.doctorId || "",
-      },
-    });
-
-    const checkoutUrl = order.checkoutUrl || order.paymentUrl;
-    if (!checkoutUrl) {
-      throw new Error("Payment checkout URL was not returned by the backend.");
-    }
-
-    const browserResult = await WebBrowser.openAuthSessionAsync(
-      checkoutUrl,
-      PAYMENT_CASHFREE_RETURN_URL,
-    );
-
-    if (browserResult.type !== "success" || !browserResult.url) {
-      throw new Error("Payment was cancelled before completion.");
-    }
-
-    const params = parseUrlQueryParams(browserResult.url);
-    if (params.status !== "success") {
-      throw new Error(
-        params.message || "Payment was cancelled before completion.",
-      );
-    }
-
-    const verifyPayload = {
-      appointmentId: appointment.id,
-      cashfreeOrderId:
-        params.cashfree_order_id ||
-        params.cashfreeOrderId ||
-        params.order_id ||
-        order.cashfreeOrderId ||
-        order.orderId,
-    };
-
-    if (!verifyPayload.cashfreeOrderId) {
-      throw new Error(
-        "Payment response was incomplete. Please contact support.",
-      );
-    }
-
-    const verified = await postPaymentJson(
-      "/payments/cashfree/verify",
-      verifyPayload,
-    );
-    if (!verified?.verified) {
-      throw new Error("Payment verification failed.");
-    }
-    return verified;
-  };
-
   const runCashfreePackagePayment = async (offer, doctorUserId) => {
     const amountPaise = packageOfferAmountPaise(offer);
     const customerPhone = String(
@@ -31926,47 +31875,51 @@ export default function App() {
         "You can only pay after the doctor has approved this appointment.",
       );
     }
-    let paymentResult = null;
-    if (PAYMENT_MODE === "cashfree") {
-      paymentResult = await runCashfreeAppointmentPayment(appointment);
-    } else if (PAYMENT_MODE === "stripe") {
-      throw new Error("Stripe payment mode is not configured in this build.");
+    const patientUserId = currentUser?.id || appointment.patientId;
+    const doctorUserId = appointment.doctorUserId || appointment.doctorId;
+    const activePairs = await listActivePackagePairsForPatient(
+      patientUserId,
+      patientProfile?.id,
+    );
+    const activePair = (activePairs || []).find(
+      (pair) => String(pair.doctor_user_id || "") === String(doctorUserId),
+    );
+    if (!activePair) {
+      throw new Error(
+        "This appointment is not covered by an active purchased package.",
+      );
     }
-    const amountPaise = appointmentFeePaise(appointment);
+    const cachedPackageCoins = Number(activePair.remaining_coins ?? 0) || 0;
+    const packageCoins =
+      cachedPackageCoins > 0
+        ? cachedPackageCoins
+        : activePair.offerId
+          ? await getPatientPackageCoinBalance(patientUserId, activePair.offerId)
+          : 0;
+    if (packageCoins <= 0) {
+      throw new Error("Your package wallet has no coins left for this doctor.");
+    }
     await recordPaymentTransaction({
-      patientUserId: currentUser?.id || appointment.patientId,
-      doctorUserId: appointment.doctorUserId || appointment.doctorId,
+      patientUserId,
+      doctorUserId,
       sourceCollection: PB_APPOINTMENTS_COLLECTION,
       sourceId: appointment.id,
       kind: "appointment",
-      provider: PAYMENT_MODE === "cashfree" ? "cashfree" : "stub",
-      providerOrderId:
-        paymentResult?.cashfreeOrderId ||
-        paymentResult?.orderId ||
-        paymentResult?.order_id,
-      providerPaymentId:
-        paymentResult?.paymentId ||
-        paymentResult?.payment_id ||
-        paymentResult?.cfPaymentId ||
-        paymentResult?.cf_payment_id,
-      providerReferenceId:
-        paymentResult?.referenceId ||
-        paymentResult?.reference_id ||
-        paymentResult?.bankReference ||
-        paymentResult?.bank_reference,
-      amountPaise,
+      provider: "stub",
+      amountInr: 0,
       currency: "INR",
       status: "success",
-      description: `Appointment payment with ${appointment.doctor || "doctor"}`,
+      description: `Package wallet appointment with ${appointment.doctor || "doctor"}`,
       customerName: currentUser?.name || "Patient",
       customerEmail: currentUser?.email || "",
-      customerPhone:
-        appointment.customerPhone || patientProfilePhoneRaw(patientProfile),
+      customerPhone: patientProfilePhoneRaw(patientProfile),
       metadata: {
-        payment_mode: PAYMENT_MODE,
+        payment_mode: "package_wallet",
+        package_offer_id: activePair.offerId || null,
+        package_coins_available: packageCoins,
+        settlement: "deduct_on_completed_package_appointment",
         appointment_id: appointment.id,
         consultation_type: appointment.consultationType || "video",
-        verified: paymentResult || null,
       },
     });
     await updateAppointmentStatus({
