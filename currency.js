@@ -42,17 +42,46 @@ export const CURRENCY_SYMBOLS = {
   USD: "$",
 };
 
+function normalizeRegion(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function localeHasIndiaRegion(locale) {
+  const region = normalizeRegion(locale?.regionCode);
+  if (region === "IN") return true;
+  const tag = String(locale?.languageTag || locale?.languageCode || "")
+    .trim()
+    .toUpperCase();
+  return tag === "IN" || tag.endsWith("-IN") || tag.endsWith("_IN");
+}
+
+function timezoneLooksIndian(value) {
+  const tz = String(value || "").trim().toLowerCase();
+  return tz === "asia/kolkata" || tz === "asia/calcutta";
+}
+
 export function getUserCurrencyInfo() {
   const locales = Localization.getLocales?.() || [];
+  const calendars = Localization.getCalendars?.() || [];
   const primary = locales[0] || {};
-  const region = String(primary.regionCode || "").toUpperCase();
+  const region = normalizeRegion(primary.regionCode);
   const rawCurrency = String(primary.currencyCode || "").toUpperCase();
-  const currency = INR_FX_RATES[rawCurrency]
-    ? rawCurrency
-    : CURRENCY_BY_REGION[region] || BASE_CURRENCY;
+  const hasIndiaSignal =
+    locales.some(
+      (locale) =>
+        localeHasIndiaRegion(locale) ||
+        String(locale?.currencyCode || "").toUpperCase() === BASE_CURRENCY,
+    ) ||
+    calendars.some((calendar) => timezoneLooksIndian(calendar?.timeZone)) ||
+    timezoneLooksIndian(Intl.DateTimeFormat?.().resolvedOptions?.().timeZone);
+  const currency = hasIndiaSignal
+    ? BASE_CURRENCY
+    : INR_FX_RATES[rawCurrency]
+      ? rawCurrency
+      : CURRENCY_BY_REGION[region] || BASE_CURRENCY;
   return {
     currency,
-    region,
+    region: hasIndiaSignal ? "IN" : region,
     symbol: CURRENCY_SYMBOLS[currency] || currency,
     rateFromInr: INR_FX_RATES[currency] || 1,
   };
