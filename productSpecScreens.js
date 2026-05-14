@@ -6920,31 +6920,31 @@ export function DoctorCoinPaymentHistoryPanel({ theme }) {
 
 const COIN_VARIANT_STYLES = {
   profile: {
-    front: ["#EDE6D6", "#C9A24A", "#7C6328"],
+    front: ["#E8E4DC", "#B8A882", "#6B6348"],
     frontEnd: { x: 0.82, y: 0.92 },
-    rim: "rgba(255,255,255,0.42)",
-    symbol: "#2A2115",
-    back: ["#4A3B22", "#6B5634", "#9A8354"],
-    backSymbol: "rgba(248,250,252,0.88)",
-    spec: "rgba(255,255,255,0.38)",
+    rim: "rgba(255,255,255,0.35)",
+    symbol: "#2C2820",
+    back: ["#3A3528", "#5C5542", "#7A7260"],
+    backSymbol: "rgba(248,250,252,0.85)",
+    spec: "rgba(255,255,255,0.28)",
   },
   casual: {
-    front: ["#F0E8D8", "#D4B968", "#8F7130"],
+    front: ["#EDE8DE", "#C4B08A", "#7D6E4F"],
     frontEnd: { x: 0.78, y: 0.88 },
-    rim: "rgba(255,255,255,0.45)",
-    symbol: "#2C2212",
-    back: ["#3D311C", "#5C4A2A", "#8E7544"],
-    backSymbol: "rgba(255,250,235,0.9)",
-    spec: "rgba(255,255,255,0.42)",
+    rim: "rgba(255,255,255,0.38)",
+    symbol: "#2A261E",
+    back: ["#353028", "#524A3A", "#6E6654"],
+    backSymbol: "rgba(255,250,240,0.88)",
+    spec: "rgba(255,255,255,0.3)",
   },
   package: {
-    front: ["#EEF2FF", "#818CF8", "#312E81"],
+    front: ["#E4E7F5", "#6B73B5", "#2C3158"],
     frontEnd: { x: 0.75, y: 0.9 },
-    rim: "rgba(255,255,255,0.5)",
-    symbol: "#F8FAFC",
-    back: ["#1E1B4B", "#4338CA", "#6366F1"],
-    backSymbol: "rgba(224,231,255,0.92)",
-    spec: "rgba(255,255,255,0.35)",
+    rim: "rgba(255,255,255,0.42)",
+    symbol: "#F4F6FC",
+    back: ["#1E2238", "#3D4568", "#5A6290"],
+    backSymbol: "rgba(226,232,255,0.9)",
+    spec: "rgba(255,255,255,0.28)",
   },
 };
 
@@ -7140,14 +7140,41 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
     textTransform: "uppercase",
     marginBottom: 4,
   };
-  const cardStyle = {
-    borderRadius: 12,
-    padding: compact ? 9 : 10,
-    backgroundColor: theme.bg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.cardBorder || "#E2E8F0",
-    marginBottom: 8,
-  };
+
+  const surfaceGradientColors = useMemo(() => {
+    if (
+      Array.isArray(theme.surfaceGradient) &&
+      theme.surfaceGradient.length >= 2
+    ) {
+      return theme.surfaceGradient;
+    }
+    return [theme.card, theme.bgSolid || theme.bg || theme.card];
+  }, [theme.surfaceGradient, theme.card, theme.bg, theme.bgSolid]);
+
+  const elevatedWrap = useMemo(
+    () => ({
+      borderRadius: 12,
+      marginBottom: 8,
+      overflow: "hidden",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.cardBorder || "#E2E8F0",
+      shadowColor: theme.shadowColor || "#000",
+      shadowOpacity:
+        typeof theme.elevatedShadowOpacity === "number"
+          ? theme.elevatedShadowOpacity
+          : 0.12,
+      shadowRadius:
+        typeof theme.elevatedShadowRadius === "number"
+          ? theme.elevatedShadowRadius
+          : 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation:
+        typeof theme.elevatedElevation === "number"
+          ? theme.elevatedElevation
+          : 8,
+    }),
+    [theme],
+  );
 
   const balanceGradientColors = useMemo(
     () => [
@@ -7171,15 +7198,7 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
         Coin & payments history
       </Text>
 
-      <View
-        style={{
-          borderRadius: 12,
-          marginBottom: 8,
-          overflow: "hidden",
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: theme.cardBorder || "#E2E8F0",
-        }}
-      >
+      <View style={elevatedWrap}>
         <LinearGradient
           colors={balanceGradientColors}
           start={{ x: 0, y: 0 }}
@@ -7220,7 +7239,15 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
         </LinearGradient>
       </View>
 
-      <View style={cardStyle}>
+      <View style={elevatedWrap}>
+        <LinearGradient
+          colors={surfaceGradientColors}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={{
+            padding: compact ? 9 : 10,
+          }}
+        >
         <Text style={[sectionLabelStyle, { marginBottom: 6 }]}>
           Active packages
         </Text>
@@ -7249,6 +7276,7 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
             +{pairs.length - pairsShown.length} more in full profile
           </Text>
         ) : null}
+        </LinearGradient>
       </View>
 
       <TouchableOpacity
@@ -7258,6 +7286,11 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
           borderRadius: 12,
           overflow: "hidden",
           marginBottom: 2,
+          shadowColor: theme.shadowColor || "#000",
+          shadowOpacity: 0.28,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: 9,
         }}
       >
         <LinearGradient
@@ -7319,8 +7352,15 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
               borderTopLeftRadius: 20,
               borderTopRightRadius: 20,
               paddingBottom: Math.max(insets.bottom, 12) + 8,
+              overflow: "hidden",
             }}
           >
+            <LinearGradient
+              colors={[theme.accent, theme.accentBg || theme.accent]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{ height: 4, width: "100%" }}
+            />
             <View
               style={{
                 flexDirection: "row",

@@ -403,179 +403,269 @@ class RootErrorBoundary extends React.Component {
 const THEMES = {
   light: {
     name: "Light",
-    bg: "#F0F4F8",
+    bg: "#F2F4F7",
     bgSolid: "#FFFFFF",
     card: "#FFFFFF",
-    cardBorder: "#E2E8F0",
-    textPrimary: "#0F172A",
-    textSecondary: "#64748B",
-    textTertiary: "#94A3B8",
-    accent: "#4F46E5",
-    accentLight: "#EEF2FF",
-    accentBg: "#4338CA",
-    success: "#059669",
+    cardBorder: "#E4E7EC",
+    textPrimary: "#101828",
+    textSecondary: "#5F6B7A",
+    textTertiary: "#8A94A6",
+    accent: "#3730A3",
+    accentLight: "#EEF0FA",
+    accentBg: "#312E81",
+    success: "#047857",
     successLight: "#ECFDF5",
-    warning: "#D97706",
-    warningLight: "#FEF3C7",
-    danger: "#DC2626",
+    warning: "#B45309",
+    warningLight: "#FFFBEB",
+    danger: "#B91C1C",
     dangerLight: "#FEF2F2",
     inputBg: "#F9FAFB",
-    inputBorder: "#E5E7EB",
-    headerBg: "#4F46E5",
+    inputBorder: "#E4E7EC",
+    headerBg: "#312E81",
     headerText: "#FFFFFF",
     tabBarBg: "#FFFFFF",
-    tabBarBorder: "#E8ECF0",
-    shadowColor: "#000",
+    tabBarBorder: "#E4E7EC",
+    shadowColor: "#0F172A",
     statusBarStyle: "dark-content",
     statusBarBg: "#FFFFFF",
-    divider: "#F3F4F6",
+    divider: "#EEF1F4",
+    homeHeroGradient: ["#4B5568", "#374151", "#1F2937"],
+    surfaceGradient: ["#FFFFFF", "#F7F8FA"],
+    tabBarGradient: ["#FFFFFF", "#F5F6F8"],
+    elevatedShadowOpacity: 0.07,
+    elevatedShadowRadius: 22,
+    elevatedElevation: 5,
   },
   dark: {
     name: "Obsidian Care",
-    bg: "#090E18",
-    bgSolid: "#0E1624",
-    card: "#121B2C",
-    cardBorder: "#26364F",
-    textPrimary: "#F8FAFC",
-    textSecondary: "#B6C3D6",
-    textTertiary: "#7F8EA5",
-    accent: "#A78BFA",
-    accentLight: "#2E235A",
-    accentBg: "#6D5BD0",
-    success: "#2DD4BF",
-    successLight: "#073B35",
-    warning: "#FBBF24",
+    bg: "#0A0D12",
+    bgSolid: "#0F1218",
+    card: "#151A22",
+    cardBorder: "#2A313D",
+    textPrimary: "#F1F5F9",
+    textSecondary: "#94A3B8",
+    textTertiary: "#6B7380",
+    accent: "#818CF8",
+    accentLight: "#1F2433",
+    accentBg: "#6366F1",
+    success: "#14B8A6",
+    successLight: "#0D3D38",
+    warning: "#D97706",
     warningLight: "#3F2D08",
-    danger: "#FB7185",
-    dangerLight: "#451722",
-    inputBg: "#0E1624",
-    inputBorder: "#2B3B55",
-    headerBg: "#0E1624",
+    danger: "#F87171",
+    dangerLight: "#451A1A",
+    inputBg: "#131820",
+    inputBorder: "#2A313D",
+    headerBg: "#0F1218",
     headerText: "#F8FAFC",
-    tabBarBg: "#0B1220",
-    tabBarBorder: "#22314A",
-    shadowColor: "#000",
+    tabBarBg: "#0C0F14",
+    tabBarBorder: "#242932",
+    shadowColor: "#000000",
     statusBarStyle: "light-content",
-    statusBarBg: "#090E18",
-    divider: "#26364F",
+    statusBarBg: "#0A0D12",
+    divider: "#242932",
+    homeHeroGradient: ["#1F2736", "#141A22", "#0A0D12"],
+    surfaceGradient: ["#1C2230", "#151A22"],
+    tabBarGradient: ["#161B26", "#0C0F14"],
+    elevatedShadowOpacity: 0.36,
+    elevatedShadowRadius: 24,
+    elevatedElevation: 10,
   },
   midnight: {
     name: "Midnight Blue",
-    bg: "#0C1222",
-    bgSolid: "#162032",
-    card: "#162032",
-    cardBorder: "#1E3A5F",
-    textPrimary: "#E2E8F0",
-    textSecondary: "#94A3B8",
-    textTertiary: "#64748B",
+    bg: "#0B1020",
+    bgSolid: "#111827",
+    card: "#151F32",
+    cardBorder: "#243045",
+    textPrimary: "#E8EDF5",
+    textSecondary: "#8B9CB8",
+    textTertiary: "#5C6B82",
     accent: "#3B82F6",
-    accentLight: "#1E3A5F",
+    accentLight: "#1E293B",
     accentBg: "#2563EB",
     success: "#10B981",
     successLight: "#064E3B",
-    warning: "#F59E0B",
+    warning: "#D97706",
     warningLight: "#78350F",
     danger: "#EF4444",
     dangerLight: "#7F1D1D",
-    inputBg: "#162032",
-    inputBorder: "#1E3A5F",
-    headerBg: "#162032",
-    headerText: "#E2E8F0",
-    tabBarBg: "#162032",
-    tabBarBorder: "#1E3A5F",
-    shadowColor: "#000",
+    inputBg: "#151F32",
+    inputBorder: "#243045",
+    headerBg: "#111827",
+    headerText: "#E8EDF5",
+    tabBarBg: "#0F1628",
+    tabBarBorder: "#243045",
+    shadowColor: "#000000",
     statusBarStyle: "light-content",
-    statusBarBg: "#162032",
-    divider: "#1E3A5F",
+    statusBarBg: "#111827",
+    divider: "#243045",
+    homeHeroGradient: ["#1E3A5F", "#152238", "#0B1020"],
+    surfaceGradient: ["#1A2740", "#151F32"],
+    tabBarGradient: ["#162238", "#0F1628"],
+    elevatedShadowOpacity: 0.34,
+    elevatedShadowRadius: 22,
+    elevatedElevation: 9,
   },
   forest: {
     name: "Forest Green",
-    bg: "#052E16",
-    bgSolid: "#14532D",
-    card: "#14532D",
-    cardBorder: "#166534",
-    textPrimary: "#F0FDF4",
-    textSecondary: "#86EFAC",
-    textTertiary: "#4ADE80",
-    accent: "#34D399",
-    accentLight: "#064E3B",
-    accentBg: "#059669",
-    success: "#34D399",
-    successLight: "#064E3B",
-    warning: "#FBBF24",
+    bg: "#061A10",
+    bgSolid: "#0F2918",
+    card: "#132A1C",
+    cardBorder: "#1F3D2A",
+    textPrimary: "#ECFDF5",
+    textSecondary: "#86B89A",
+    textTertiary: "#5A8F72",
+    accent: "#22C55E",
+    accentLight: "#0D2818",
+    accentBg: "#15803D",
+    success: "#22C55E",
+    successLight: "#052E16",
+    warning: "#D97706",
     warningLight: "#78350F",
     danger: "#F87171",
     dangerLight: "#7F1D1D",
-    inputBg: "#14532D",
-    inputBorder: "#166534",
-    headerBg: "#14532D",
-    headerText: "#F0FDF4",
-    tabBarBg: "#14532D",
-    tabBarBorder: "#166534",
-    shadowColor: "#000",
+    inputBg: "#132A1C",
+    inputBorder: "#1F3D2A",
+    headerBg: "#0F2918",
+    headerText: "#ECFDF5",
+    tabBarBg: "#0C2215",
+    tabBarBorder: "#1F3D2A",
+    shadowColor: "#000000",
     statusBarStyle: "light-content",
-    statusBarBg: "#14532D",
-    divider: "#166534",
+    statusBarBg: "#0F2918",
+    divider: "#1F3D2A",
+    homeHeroGradient: ["#1A3D2C", "#132A1C", "#061A10"],
+    surfaceGradient: ["#173224", "#132A1C"],
+    tabBarGradient: ["#142F20", "#0C2215"],
+    elevatedShadowOpacity: 0.34,
+    elevatedShadowRadius: 22,
+    elevatedElevation: 9,
   },
   rose: {
     name: "Rose Gold",
-    bg: "#1C1017",
-    bgSolid: "#2D1B24",
-    card: "#2D1B24",
-    cardBorder: "#4C1D35",
-    textPrimary: "#FCE7F3",
-    textSecondary: "#F9A8D4",
-    textTertiary: "#EC4899",
-    accent: "#FB7185",
-    accentLight: "#4C1D35",
-    accentBg: "#E11D48",
+    bg: "#120A0E",
+    bgSolid: "#1C1218",
+    card: "#241820",
+    cardBorder: "#3D2A35",
+    textPrimary: "#FDF2F8",
+    textSecondary: "#D4A5BC",
+    textTertiary: "#9E7A8E",
+    accent: "#E879A9",
+    accentLight: "#2D1A24",
+    accentBg: "#BE185D",
     success: "#34D399",
     successLight: "#064E3B",
-    warning: "#FBBF24",
+    warning: "#D97706",
     warningLight: "#78350F",
     danger: "#F87171",
     dangerLight: "#7F1D1D",
-    inputBg: "#2D1B24",
-    inputBorder: "#4C1D35",
-    headerBg: "#2D1B24",
-    headerText: "#FCE7F3",
-    tabBarBg: "#2D1B24",
-    tabBarBorder: "#4C1D35",
-    shadowColor: "#000",
+    inputBg: "#241820",
+    inputBorder: "#3D2A35",
+    headerBg: "#1C1218",
+    headerText: "#FDF2F8",
+    tabBarBg: "#160E14",
+    tabBarBorder: "#3D2A35",
+    shadowColor: "#000000",
     statusBarStyle: "light-content",
-    statusBarBg: "#2D1B24",
-    divider: "#4C1D35",
+    statusBarBg: "#1C1218",
+    divider: "#3D2A35",
+    homeHeroGradient: ["#3D2A35", "#241820", "#120A0E"],
+    surfaceGradient: ["#2A1E26", "#241820"],
+    tabBarGradient: ["#201820", "#160E14"],
+    elevatedShadowOpacity: 0.36,
+    elevatedShadowRadius: 22,
+    elevatedElevation: 10,
   },
   ocean: {
     name: "Ocean Teal",
-    bg: "#042F2E",
-    bgSolid: "#134E4A",
-    card: "#134E4A",
-    cardBorder: "#115E59",
+    bg: "#051816",
+    bgSolid: "#0C2422",
+    card: "#102E2C",
+    cardBorder: "#1A4542",
     textPrimary: "#F0FDFA",
-    textSecondary: "#5EEAD4",
-    textTertiary: "#2DD4BF",
-    accent: "#2DD4BF",
-    accentLight: "#115E59",
+    textSecondary: "#7CB8B0",
+    textTertiary: "#4F9088",
+    accent: "#14B8A6",
+    accentLight: "#0F2E2C",
     accentBg: "#0D9488",
-    success: "#34D399",
+    success: "#22C55E",
     successLight: "#064E3B",
-    warning: "#FBBF24",
+    warning: "#D97706",
     warningLight: "#78350F",
     danger: "#F87171",
     dangerLight: "#7F1D1D",
-    inputBg: "#134E4A",
-    inputBorder: "#115E59",
-    headerBg: "#134E4A",
+    inputBg: "#102E2C",
+    inputBorder: "#1A4542",
+    headerBg: "#0C2422",
     headerText: "#F0FDFA",
-    tabBarBg: "#134E4A",
-    tabBarBorder: "#115E59",
-    shadowColor: "#000",
+    tabBarBg: "#081E1C",
+    tabBarBorder: "#1A4542",
+    shadowColor: "#000000",
     statusBarStyle: "light-content",
-    statusBarBg: "#134E4A",
-    divider: "#115E59",
+    statusBarBg: "#0C2422",
+    divider: "#1A4542",
+    homeHeroGradient: ["#134E4A", "#0E3A38", "#051816"],
+    surfaceGradient: ["#123835", "#102E2C"],
+    tabBarGradient: ["#102E2C", "#081E1C"],
+    elevatedShadowOpacity: 0.34,
+    elevatedShadowRadius: 22,
+    elevatedElevation: 9,
   },
 };
+
+function elevatedSurfaceShadow(theme) {
+  const opacity =
+    typeof theme.elevatedShadowOpacity === "number"
+      ? theme.elevatedShadowOpacity
+      : 0.08;
+  const radius =
+    typeof theme.elevatedShadowRadius === "number"
+      ? theme.elevatedShadowRadius
+      : 20;
+  const elevation =
+    typeof theme.elevatedElevation === "number" ? theme.elevatedElevation : 5;
+  return {
+    shadowColor: theme.shadowColor || "#0F172A",
+    shadowOpacity: opacity,
+    shadowRadius: radius,
+    shadowOffset: { width: 0, height: 5 },
+    elevation,
+  };
+}
+
+function heroGradientColors(theme) {
+  if (
+    Array.isArray(theme.homeHeroGradient) &&
+    theme.homeHeroGradient.length >= 2
+  ) {
+    return theme.homeHeroGradient;
+  }
+  return [
+    theme.accent,
+    theme.accentBg || theme.accent,
+    theme.headerBg || theme.accent,
+  ];
+}
+
+function surfaceGradientColors(theme) {
+  if (
+    Array.isArray(theme.surfaceGradient) &&
+    theme.surfaceGradient.length >= 2
+  ) {
+    return theme.surfaceGradient;
+  }
+  return [theme.card, theme.bgSolid || theme.bg || theme.card];
+}
+
+function tabBarGradientColors(theme) {
+  if (
+    Array.isArray(theme.tabBarGradient) &&
+    theme.tabBarGradient.length >= 2
+  ) {
+    return theme.tabBarGradient;
+  }
+  return [theme.tabBarBg, theme.tabBarBg];
+}
 
 const THEME_STORAGE_KEY = "app_theme_key";
 /** When true, effective theme follows OS light/dark (maps to `light` / `dark` palettes). */
@@ -5691,7 +5781,7 @@ const PatientHomeScreen = () => {
         style={{ flex: 1, backgroundColor: theme.bg }}
         edges={["left", "right"]}
       >
-        <StatusBar barStyle="light-content" backgroundColor={theme.accent} />
+        <StatusBar barStyle="light-content" backgroundColor={heroGradientColors(theme)[0]} />
         {dataLoading ? (
           <View
             style={{
@@ -5711,10 +5801,12 @@ const PatientHomeScreen = () => {
             flexGrow: 1,
           }}
         >
-          <FadeInView delay={60}>
-            <View
+            <FadeInView delay={60}>
+            <LinearGradient
+              colors={heroGradientColors(theme)}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
               style={{
-                backgroundColor: theme.accent,
                 borderBottomLeftRadius: RFValue(28),
                 borderBottomRightRadius: RFValue(28),
                 overflow: "hidden",
@@ -5726,7 +5818,7 @@ const PatientHomeScreen = () => {
                   width: RFValue(190),
                   height: RFValue(190),
                   borderRadius: RFValue(95),
-                  backgroundColor: "rgba(255,255,255,0.12)",
+                  backgroundColor: "rgba(255,255,255,0.06)",
                   top: RFValue(-76),
                   right: RFValue(-56),
                 }}
@@ -5737,7 +5829,7 @@ const PatientHomeScreen = () => {
                   width: RFValue(110),
                   height: RFValue(110),
                   borderRadius: RFValue(55),
-                  backgroundColor: "rgba(255,255,255,0.08)",
+                  backgroundColor: "rgba(255,255,255,0.04)",
                   bottom: RFValue(36),
                   left: RFValue(-40),
                 }}
@@ -5768,9 +5860,9 @@ const PatientHomeScreen = () => {
                     paddingHorizontal: RFValue(14),
                     paddingVertical: RFValue(8),
                     borderRadius: RFValue(20),
-                    backgroundColor: "rgba(255,255,255,0.2)",
+                    backgroundColor: "rgba(255,255,255,0.14)",
                     borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: "rgba(255,255,255,0.45)",
+                    borderColor: "rgba(255,255,255,0.32)",
                   }}
                 >
                   <Text
@@ -5805,11 +5897,11 @@ const PatientHomeScreen = () => {
                     width: RFValue(46),
                     height: RFValue(46),
                     borderRadius: RFValue(15),
-                    backgroundColor: "rgba(255,255,255,0.22)",
+                    backgroundColor: "rgba(255,255,255,0.14)",
                     justifyContent: "center",
                     alignItems: "center",
                     borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: "rgba(255,255,255,0.38)",
+                    borderColor: "rgba(255,255,255,0.28)",
                   }}
                 >
                   <Ionicons
@@ -5914,11 +6006,7 @@ const PatientHomeScreen = () => {
                       flex: 1,
                       borderRadius: RFValue(16),
                       overflow: "hidden",
-                      shadowColor: theme.shadowColor,
-                      shadowOpacity: 0.14,
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowRadius: 10,
-                      elevation: 4,
+                      ...elevatedSurfaceShadow(theme),
                     }}
                   >
                     <LinearGradient
@@ -5976,11 +6064,7 @@ const PatientHomeScreen = () => {
                       flex: 1,
                       borderRadius: RFValue(16),
                       overflow: "hidden",
-                      shadowColor: theme.shadowColor,
-                      shadowOpacity: 0.14,
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowRadius: 10,
-                      elevation: 4,
+                      ...elevatedSurfaceShadow(theme),
                       opacity: packageStyleHome ? 1 : 0.55,
                     }}
                   >
@@ -6037,12 +6121,12 @@ const PatientHomeScreen = () => {
                 <View
                   style={{
                     marginTop: RFValue(18),
-                    backgroundColor: "rgba(255,255,255,0.14)",
+                    backgroundColor: "rgba(255,255,255,0.08)",
                     borderRadius: RFValue(20),
                     paddingVertical: RFValue(14),
                     paddingHorizontal: RFValue(14),
                     borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: "rgba(255,255,255,0.28)",
+                    borderColor: "rgba(255,255,255,0.18)",
                   }}
                 >
                   <Text
@@ -6093,7 +6177,7 @@ const PatientHomeScreen = () => {
                   </View>
                 </View>
               </View>
-            </View>
+            </LinearGradient>
           </FadeInView>
 
           <FadeInView delay={140}>
@@ -6103,19 +6187,20 @@ const PatientHomeScreen = () => {
               {/* Quick Actions Grid */}
               <View
                 style={{
-                  backgroundColor: theme.card,
                   borderRadius: RFValue(20),
-                  padding: RFValue(16),
                   marginBottom: RFValue(16),
+                  overflow: "hidden",
                   borderWidth: StyleSheet.hairlineWidth,
                   borderColor: theme.cardBorder,
-                  shadowColor: theme.shadowColor,
-                  shadowOpacity: 0.07,
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowRadius: 16,
-                  elevation: 2,
+                  ...elevatedSurfaceShadow(theme),
                 }}
               >
+                <LinearGradient
+                  colors={surfaceGradientColors(theme)}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={{ padding: RFValue(16) }}
+                >
                 <View
                   style={{
                     flexDirection: "row",
@@ -6263,6 +6348,7 @@ const PatientHomeScreen = () => {
                     </Text>
                   </TouchableOpacity>
                 </View>
+                </LinearGradient>
               </View>
 
               {/* General: Quick Solve & Quick Counselling (separate from package journey) */}
@@ -12429,14 +12515,20 @@ const PatientProfileScreen = ({
 
           <View
             style={{
-              backgroundColor: theme.card,
               borderRadius: RFValue(18),
               marginBottom: RFValue(16),
-              padding: RFValue(16),
+              overflow: "hidden",
               borderWidth: StyleSheet.hairlineWidth,
               borderColor: theme.cardBorder,
+              ...elevatedSurfaceShadow(theme),
             }}
           >
+            <LinearGradient
+              colors={surfaceGradientColors(theme)}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={{ padding: RFValue(16) }}
+            >
             <Text
               style={{
                 fontSize: RFValue(12),
@@ -12510,6 +12602,7 @@ const PatientProfileScreen = ({
               splits follow admin ledger rules.
             </Text>
             <PatientCoinHistoryPanel theme={theme} userId={currentUser?.id} />
+            </LinearGradient>
           </View>
 
           <View
@@ -12726,16 +12819,19 @@ const PatientProfileScreen = ({
 
           <View
             style={{
-              backgroundColor: theme.card,
               borderRadius: RFValue(18),
               marginBottom: RFValue(16),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
+              overflow: "hidden",
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+              ...elevatedSurfaceShadow(theme),
             }}
           >
+            <LinearGradient
+              colors={surfaceGradientColors(theme)}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+            >
             <Text
               style={{
                 fontSize: RFValue(12),
@@ -12774,7 +12870,8 @@ const PatientProfileScreen = ({
                     lineHeight: RFValue(16),
                   }}
                 >
-                  Matches this phone&apos;s light or dark mode when enabled.
+                  Matches this phone&apos;s light or dark mode. Colors,
+                  shadows, and surfaces update automatically.
                 </Text>
               </View>
               <Switch
@@ -12841,6 +12938,7 @@ const PatientProfileScreen = ({
                 color={theme.textTertiary}
               />
             </TouchableOpacity>
+            </LinearGradient>
           </View>
 
           <View
@@ -27997,23 +28095,30 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
 
   return (
     <View
+      onLayout={(e) => setTabBarWidth(e.nativeEvent.layout.width)}
       style={{
-        flexDirection: "row",
         width: "100%",
-        backgroundColor: theme.tabBarBg,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.tabBarBorder,
-        paddingBottom: bottomPad,
-        paddingTop: Math.min(RFValue(9), 11),
-        minHeight: Math.round(RFValue(58) + bottomPad),
         shadowColor: theme.shadowColor,
-        shadowOpacity: 0.08,
-        shadowOffset: { width: 0, height: -2 },
-        shadowRadius: 10,
-        elevation: 16,
+        shadowOpacity: 0.09,
+        shadowOffset: { width: 0, height: -4 },
+        shadowRadius: 16,
+        elevation: 12,
       }}
-      onLayout={(e) => setTabBarWidth(e.nativeEvent.layout.width)}
     >
+      <LinearGradient
+        colors={tabBarGradientColors(theme)}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={{
+          flexDirection: "row",
+          width: "100%",
+          paddingBottom: bottomPad,
+          paddingTop: Math.min(RFValue(9), 11),
+          minHeight: Math.round(RFValue(58) + bottomPad),
+        }}
+      >
       {state.routes.map((route, index) => {
         const { options } = descriptors[route.key];
         const isFocused = state.index === index;
@@ -28070,6 +28175,7 @@ const CustomTabBar = ({ state, descriptors, navigation, activeColor }) => {
           </TouchableOpacity>
         );
       })}
+      </LinearGradient>
     </View>
   );
 };
