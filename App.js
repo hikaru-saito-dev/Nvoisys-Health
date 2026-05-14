@@ -128,6 +128,7 @@ import {
   normalizePharmacyProviderKind,
   packageSlotDisplayName,
   packageSlotToConsumerPlan,
+  patientCareModeUsesQuickDoctorsOnly,
   PHARMACY_PROVIDER_KIND,
   packageTemplatesRawFromRecord,
   pharmacyReceivesMedicineOrders,
@@ -5165,7 +5166,7 @@ const PatientHomeScreen = () => {
       setFeelingDoctorsLoading(true);
       try {
         const list = await fetchApprovedDoctors({
-          quickServiceOnly: patientCareMode === CARE_MODE.CASUAL,
+          quickServiceOnly: patientCareModeUsesQuickDoctorsOnly(patientCareMode),
         }).catch(() => []);
         setFeelingDoctors(Array.isArray(list) ? list : []);
       } finally {
@@ -8789,7 +8790,27 @@ const PatientChatScreen = () => {
     if (aAssist !== bAssist) return bAssist - aAssist;
     return 0;
   });
-  const filteredContacts = sortedConversations.filter((c) => {
+  const quickDoctorDirectoryIds = new Set(
+    directoryContacts
+      .filter((user) => normalizeUserRole(user?.role) === "doctor")
+      .map((user) => String(user.id || "").trim())
+      .filter(Boolean),
+  );
+  const visibleConversations = sortedConversations.filter((conversation) => {
+    if (
+      userRole !== "patient" ||
+      !patientCareModeUsesQuickDoctorsOnly(patientCareMode) ||
+      isAssistantConversation(conversation)
+    ) {
+      return true;
+    }
+    const pair = patientDoctorPairFromConversation(conversation, {
+      id: currentUserId,
+    });
+    if (!pair.doctorUserId) return true;
+    return quickDoctorDirectoryIds.has(String(pair.doctorUserId || "").trim());
+  });
+  const filteredContacts = visibleConversations.filter((c) => {
     if (!normalizedQuery) return true;
     return (
       c.displayName.toLowerCase().includes(normalizedQuery) ||
@@ -30003,6 +30024,29 @@ export default function App() {
         ? ["doctor", "pharmacy"]
         : ["doctor", "pharmacy", "patient"];
 
+    const mode = effectiveCareMode(patientProfile, localCareMode);
+    const quickDoctorsOnly =
+      userRole === "patient" && patientCareModeUsesQuickDoctorsOnly(mode);
+    if (quickDoctorsOnly && roles.includes("doctor")) {
+      const nonDoctorRoles = roles.filter((role) => role !== "doctor");
+      const [doctorRows, nonDoctorRecordsByRole] = await Promise.all([
+        fetchApprovedDoctors({ quickServiceOnly: true }),
+        Promise.all(nonDoctorRoles.map((role) => fetchUsersByRole(role))),
+      ]);
+      const doctorUsers = (doctorRows || []).map((doctor) => ({
+        id: doctor.userId,
+        name: doctor.name,
+        email: doctor.raw?.expand?.user?.email || "",
+        role: "doctor",
+      }));
+      const seen = new Set();
+      return [...doctorUsers, ...nonDoctorRecordsByRole.flat()].filter((user) => {
+        if (!user?.id || seen.has(user.id)) return false;
+        seen.add(user.id);
+        return true;
+      });
+    }
+
     const recordsByRole = await Promise.all(
       roles.map((role) => fetchUsersByRole(role)),
     );
@@ -30047,9 +30091,10 @@ export default function App() {
 
   const assertCasualPatientMayTalkToDoctor = async (doctorUserId) => {
     const did = String(doctorUserId || "").trim();
+    const mode = effectiveCareMode(patientProfile, localCareMode);
     if (
       userRole !== "patient" ||
-      effectiveCareMode(patientProfile, localCareMode) !== CARE_MODE.CASUAL ||
+      !patientCareModeUsesQuickDoctorsOnly(mode) ||
       !did
     ) {
       return true;
@@ -30063,7 +30108,7 @@ export default function App() {
       // Missing profile is not an allowed RMP/clinic doctor.
     }
     throw new Error(
-      "Casual mode can only contact RMP or clinic doctors. Switch to Package mode for professional/specialist doctors.",
+      "This mode can only contact RMP or clinic doctors. Switch to Package mode for professional/specialist doctors.",
     );
   };
 
@@ -30629,7 +30674,9 @@ export default function App() {
       await assertCasualPatientMayTalkToDoctor(targetId);
     } else if (
       userRole === "patient" &&
-      effectiveCareMode(patientProfile, localCareMode) === CARE_MODE.CASUAL &&
+      patientCareModeUsesQuickDoctorsOnly(
+        effectiveCareMode(patientProfile, localCareMode),
+      ) &&
       !targetRole
     ) {
       try {
