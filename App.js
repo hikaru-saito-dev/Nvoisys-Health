@@ -9,6 +9,7 @@ import * as SystemUI from "expo-system-ui";
 import * as WebBrowser from "expo-web-browser";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import * as ExpoSplashScreen from "expo-splash-screen";
 import * as FileSystem from "expo-file-system/legacy";
 import React, {
   createContext,
@@ -13364,6 +13365,7 @@ const SplashScreen = ({ onNext }) => {
   const splashScale = useRef(new Animated.Value(0.94)).current;
 
   useEffect(() => {
+    ExpoSplashScreen.hideAsync().catch(() => {});
     const enter = Animated.parallel([
       Animated.timing(splashOpacity, {
         toValue: 1,
@@ -13396,44 +13398,6 @@ const SplashScreen = ({ onNext }) => {
       }}
     >
       <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
-
-      {/* Background decorative circles */}
-      <View
-        style={{
-          position: "absolute",
-          top: -60,
-          right: -60,
-          width: 200,
-          height: 200,
-          borderRadius: 100,
-          backgroundColor: theme.accentLight,
-          opacity: 0.55,
-        }}
-      />
-      <View
-        style={{
-          position: "absolute",
-          bottom: -40,
-          left: -40,
-          width: 160,
-          height: 160,
-          borderRadius: 80,
-          backgroundColor: theme.successLight,
-          opacity: 0.45,
-        }}
-      />
-      <View
-        style={{
-          position: "absolute",
-          top: "40%",
-          left: -30,
-          width: 100,
-          height: 100,
-          borderRadius: 50,
-          backgroundColor: theme.accentLight,
-          opacity: 0.35,
-        }}
-      />
 
       {/* Main content - flex so it does not collide with footer dots */}
       <Animated.View
