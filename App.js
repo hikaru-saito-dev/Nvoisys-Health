@@ -124,6 +124,7 @@ import {
   readPatientPrimaryCarePaths,
   writePatientPrimaryCarePaths,
   getPatientPackagePoolCoinsRemaining,
+  getDoctorCoinBucketBalances,
   getMedicalRecordFileDownloadUrl,
   PACKAGE_MEETING_STATUS,
   normalizeDoctorPackageSlots,
@@ -18977,17 +18978,24 @@ const QuickRequestPrescribeModal = ({
   );
 };
 
-const DoctorDashboard = ({ wounds, patients }) => {
+const DoctorDashboard = () => {
   const { theme } = useTheme();
   const {
     currentUser,
     patientProfile: doctorProfile,
+    wounds,
+    patients,
     requestOpenConversation,
     requestOpenDirectChatWithPatient,
     prescribeForQuickRequest,
     runSideEffectCheck,
   } = useAppData();
   const tabNav = useMainTabNav();
+  const [doctorWalletBuckets, setDoctorWalletBuckets] = useState({
+    quickCoins: 0,
+    packageCoins: 0,
+  });
+  const [doctorWalletLoading, setDoctorWalletLoading] = useState(false);
 
   const [quickPrescribeTarget, setQuickPrescribeTarget] = useState(null);
   const [quickPrescribeDiagnosis, setQuickPrescribeDiagnosis] = useState("");
@@ -19006,6 +19014,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
     (w) => w.status === "Review Pending",
   ).length;
   const isPackageDoctor = doctorProfileIsPackageDoctor(doctorProfile);
+  const patientList = patients || [];
 
   const openQuickPrescribeModal = useCallback(({ kind, record }) => {
     if (!record?.id) return;
@@ -19049,6 +19058,20 @@ const DoctorDashboard = ({ wounds, patients }) => {
       setQuickPrescribeTarget(null);
       setQuickPrescribeDiagnosis("");
       setQuickPrescribeMedRows([createEmptyQuickPrescribeMedRow()]);
+      try {
+        const uid = String(currentUser?.id || "").trim();
+        if (uid) {
+          const b = await getDoctorCoinBucketBalances(uid);
+          if (b) {
+            setDoctorWalletBuckets({
+              quickCoins: Number(b.quickCoins) || 0,
+              packageCoins: Number(b.packageCoins) || 0,
+            });
+          }
+        }
+      } catch {
+        /* ignore wallet refresh */
+      }
     } catch (e) {
       Alert.alert(
         "Could not prescribe",
@@ -19062,6 +19085,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
     quickPrescribeMedRows,
     quickPrescribeDiagnosis,
     prescribeForQuickRequest,
+    currentUser?.id,
   ]);
 
   const quickPrescribePreview = quickPrescribeTarget
@@ -19083,6 +19107,34 @@ const DoctorDashboard = ({ wounds, patients }) => {
     },
     [requestOpenConversation, requestOpenDirectChatWithPatient, tabNav],
   );
+
+  useEffect(() => {
+    const uid = String(currentUser?.id || "").trim();
+    if (!uid) {
+      setDoctorWalletBuckets({ quickCoins: 0, packageCoins: 0 });
+      return undefined;
+    }
+    let cancelled = false;
+    setDoctorWalletLoading(true);
+    void getDoctorCoinBucketBalances(uid)
+      .then((b) => {
+        if (!cancelled && b) {
+          setDoctorWalletBuckets({
+            quickCoins: Number(b.quickCoins) || 0,
+            packageCoins: Number(b.packageCoins) || 0,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setDoctorWalletBuckets({ quickCoins: 0, packageCoins: 0 });
+      })
+      .finally(() => {
+        if (!cancelled) setDoctorWalletLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
 
   const practitionerTier = String(
     doctorProfile?.practitioner_tier ||
@@ -19252,9 +19304,143 @@ const DoctorDashboard = ({ wounds, patients }) => {
 
           <View
             style={{
+              marginTop: RFValue(14),
+              flexDirection: "row",
+              alignItems: "stretch",
+              gap: RFValue(10),
+            }}
+          >
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => tabNav?.navigateTab?.("Profile")}
+              style={{
+                flex: 1,
+                borderRadius: RFValue(16),
+                overflow: "hidden",
+                ...elevatedSurfaceShadow(theme),
+              }}
+            >
+              <LinearGradient
+                colors={[theme.card, theme.bgSolid || theme.bg]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0.9, y: 1 }}
+                style={{
+                  flex: 1,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  paddingVertical: RFValue(9),
+                  paddingHorizontal: RFValue(10),
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.cardBorder,
+                  borderRadius: RFValue(16),
+                }}
+              >
+                <PatientBalanceRotatingCoin3D
+                  variant="casual"
+                  size={34}
+                  noSideMargin
+                />
+                <View style={{ flex: 1, marginLeft: RFValue(10) }}>
+                  <Text
+                    style={{
+                      color: theme.textTertiary,
+                      fontSize: RFValue(8.5),
+                      fontWeight: "800",
+                      letterSpacing: 1.1,
+                    }}
+                  >
+                    QUICK CARE
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.65}
+                    style={{
+                      color: theme.textPrimary,
+                      fontSize: RFValue(12),
+                      fontWeight: "800",
+                      marginTop: RFValue(2),
+                      letterSpacing: -0.3,
+                    }}
+                  >
+                    {doctorWalletLoading
+                      ? "…"
+                      : doctorWalletBuckets.quickCoins}
+                  </Text>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => tabNav?.navigateTab?.("Profile")}
+              style={{
+                flex: 1,
+                borderRadius: RFValue(16),
+                overflow: "hidden",
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.14,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 10,
+                elevation: 4,
+              }}
+            >
+              <LinearGradient
+                colors={[theme.card, theme.accentLight || theme.bg]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0.85, y: 1 }}
+                style={{
+                  flex: 1,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  paddingVertical: RFValue(9),
+                  paddingHorizontal: RFValue(10),
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.cardBorder,
+                  borderRadius: RFValue(16),
+                }}
+              >
+                <PatientBalanceRotatingCoin3D
+                  variant="package"
+                  size={34}
+                  noSideMargin
+                />
+                <View style={{ flex: 1, marginLeft: RFValue(10) }}>
+                  <Text
+                    style={{
+                      color: theme.textTertiary,
+                      fontSize: RFValue(8.5),
+                      fontWeight: "800",
+                      letterSpacing: 1.1,
+                    }}
+                  >
+                    PACKAGE
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.65}
+                    style={{
+                      color: theme.textPrimary,
+                      fontSize: RFValue(12),
+                      fontWeight: "800",
+                      marginTop: RFValue(2),
+                      letterSpacing: -0.3,
+                    }}
+                  >
+                    {doctorWalletLoading
+                      ? "…"
+                      : doctorWalletBuckets.packageCoins}
+                  </Text>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+
+          <View
+            style={{
               flexDirection: "row",
               justifyContent: "space-between",
-              marginTop: RFValue(2),
+              marginTop: RFValue(14),
             }}
           >
               <View
@@ -19274,7 +19460,7 @@ const DoctorDashboard = ({ wounds, patients }) => {
                     marginBottom: RFValue(4),
                   }}
                 >
-                  {patients.length}
+                  {patientList.length}
                 </Text>
                 <Text
                   style={{
@@ -19429,8 +19615,10 @@ const DoctorDashboard = ({ wounds, patients }) => {
   );
 };
 
-const DoctorPatientsScreen = ({ patients }) => {
+const DoctorPatientsScreen = () => {
   const { theme } = useTheme();
+  const { patients } = useAppData();
+  const patientList = patients || [];
 
   const riskColor = (level) =>
     level === "High" ? "#DC2626" : level === "Medium" ? "#D97706" : "#059669";
@@ -19521,8 +19709,8 @@ const DoctorPatientsScreen = ({ patients }) => {
           paddingBottom: tabScrollBottomPadding(),
         }}
       >
-        {patients.length > 0 ? (
-          patients.map((p, idx) => (
+        {patientList.length > 0 ? (
+          patientList.map((p, idx) => (
             <View
               key={idx}
               style={{
@@ -34556,9 +34744,7 @@ const AppContent = ({
     const home = {
       name: "Home",
       label: "Home",
-      component: (props) => (
-        <DoctorDashboard {...props} wounds={wounds} patients={patients} />
-      ),
+      component: DoctorDashboard,
       icon: ({ color, focused }) => (
         <Ionicons
           name={focused ? "home" : "home-outline"}
@@ -34597,9 +34783,7 @@ const AppContent = ({
         {
           name: "Patients",
           label: "Patients",
-          component: (props) => (
-            <DoctorPatientsScreen {...props} patients={patients} />
-          ),
+          component: DoctorPatientsScreen,
           icon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "people" : "people-outline"}
@@ -34613,12 +34797,7 @@ const AppContent = ({
       ];
     }
     return [home, chat, profile];
-  }, [
-    doctorShellIsPackage,
-    patients,
-    renderDoctorProfileTab,
-    wounds,
-  ]);
+  }, [doctorShellIsPackage, renderDoctorProfileTab]);
 
   const handleMandatoryNameSaved = async (updatedUser) => {
     setCurrentUser(updatedUser);

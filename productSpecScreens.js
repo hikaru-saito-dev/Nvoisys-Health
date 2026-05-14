@@ -6268,6 +6268,9 @@ export function DoctorQuickRequestsPanel({
   const [counsellingRows, setCounsellingRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const lastQueueSnapshotRef = useRef("");
+  const bumpTimerRef = useRef(null);
+  const [expandedQueueKeys, setExpandedQueueKeys] = useState({});
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
@@ -6299,6 +6302,26 @@ export function DoctorQuickRequestsPanel({
     } catch (e) {
       console.log("hydrateRowsPatientAuthUsers (counselling) skipped:", e?.message);
     }
+
+    const queueSnapshot = `${(sol || [])
+      .map((r) => {
+        const st = String(r?.status || "queued").toLowerCase();
+        return `s:${r?.id}:${st}:${quickRequestPatientUserId(r) || ""}`;
+      })
+      .sort()
+      .join("|")}~${(cou || [])
+      .map((r) => {
+        const st = String(r?.status || "queued").toLowerCase();
+        return `c:${r?.id}:${st}:${quickRequestPatientUserId(r) || ""}`;
+      })
+      .sort()
+      .join("|")}`;
+
+    if (silent && queueSnapshot === lastQueueSnapshotRef.current) {
+      return;
+    }
+    lastQueueSnapshotRef.current = queueSnapshot;
+
     setSolutionRows(sol || []);
     setCounsellingRows(cou || []);
 
@@ -6312,23 +6335,31 @@ export function DoctorQuickRequestsPanel({
 
   useEffect(() => {
     if (!autoRefreshQuickQueues) return undefined;
-    const pollMs = 12000;
-    const poll = setInterval(() => void load({ silent: true }), pollMs);
     let cancelled = false;
-    const bump = () => {
-      if (!cancelled) void load({ silent: true });
+    const debounceMs = 500;
+    const scheduleSilentReload = () => {
+      if (bumpTimerRef.current) clearTimeout(bumpTimerRef.current);
+      bumpTimerRef.current = setTimeout(() => {
+        bumpTimerRef.current = null;
+        if (!cancelled) void load({ silent: true });
+      }, debounceMs);
     };
     (async () => {
       try {
-        await pb.collection("quick_solution_requests").subscribe("*", bump);
-        await pb.collection("quick_counselling_requests").subscribe("*", bump);
+        await pb.collection("quick_solution_requests").subscribe("*", scheduleSilentReload);
+        await pb.collection("quick_counselling_requests").subscribe("*", scheduleSilentReload);
       } catch (e) {
         console.log("quick queue subscribe skipped:", e?.message);
       }
     })();
+    const slowPoll = setInterval(() => {
+      if (!cancelled) void load({ silent: true });
+    }, 60000);
     return () => {
       cancelled = true;
-      clearInterval(poll);
+      if (bumpTimerRef.current) clearTimeout(bumpTimerRef.current);
+      bumpTimerRef.current = null;
+      clearInterval(slowPoll);
       try {
         pb.collection("quick_solution_requests").unsubscribe("*");
       } catch {
@@ -6341,6 +6372,17 @@ export function DoctorQuickRequestsPanel({
       }
     };
   }, [autoRefreshQuickQueues, load]);
+
+  const toggleQueueRow = useCallback((key) => {
+    if (
+      Platform.OS === "android" &&
+      UIManager.setLayoutAnimationEnabledExperimental
+    ) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedQueueKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const quickRequestStatusLabel = (record) =>
     String(record?.status || "queued").toLowerCase();
@@ -6438,69 +6480,142 @@ export function DoctorQuickRequestsPanel({
     </View>
   );
 
-  const renderSolutionCard = (r) => (
-    <View
-      key={r.id}
-      style={{
-        padding: 12,
-        borderRadius: 14,
-        marginBottom: 10,
-        backgroundColor: theme.card,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.cardBorder,
-      }}
-    >
-      <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
-        Quick Solution · {quickRequestStatusLabel(r)}
-      </Text>
-      <Text
-        style={{ color: theme.textPrimary, fontWeight: "700", marginTop: 4 }}
+  const renderSolutionCard = (r) => {
+    const key = `s:${r.id}`;
+    const open = !!expandedQueueKeys[key];
+    return (
+      <View
+        key={r.id}
+        style={{
+          marginBottom: 10,
+          borderRadius: 14,
+          overflow: "hidden",
+          backgroundColor: theme.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.cardBorder,
+        }}
       >
-        {quickRequestPatientLabel(r)}
-      </Text>
-      <Text
-        style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}
-      >
-        {truncateOneLine(displayQuickSolutionNotes(r), 160) || "-"}
-      </Text>
-      <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
-        {r.created ? new Date(r.created).toLocaleString() : ""}
-      </Text>
-      {renderQuickActionsRow(r, "solution")}
-    </View>
-  );
+        <TouchableOpacity
+          onPress={() => toggleQueueRow(key)}
+          activeOpacity={0.85}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            padding: 12,
+          }}
+        >
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
+              Quick Solution · {quickRequestStatusLabel(r)}
+            </Text>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "700",
+                marginTop: 4,
+              }}
+              numberOfLines={1}
+            >
+              {quickRequestPatientLabel(r)}
+            </Text>
+          </View>
+          <Ionicons
+            name={open ? "chevron-up" : "chevron-down"}
+            size={20}
+            color={theme.textTertiary}
+          />
+        </TouchableOpacity>
+        {open ? (
+          <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginTop: 2,
+              }}
+            >
+              {truncateOneLine(displayQuickSolutionNotes(r), 160) || "-"}
+            </Text>
+            <Text
+              style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}
+            >
+              {r.created ? new Date(r.created).toLocaleString() : ""}
+            </Text>
+            {renderQuickActionsRow(r, "solution")}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
 
-  const renderCounsellingCard = (r) => (
-    <View
-      key={r.id}
-      style={{
-        padding: 12,
-        borderRadius: 14,
-        marginBottom: 10,
-        backgroundColor: theme.card,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.cardBorder,
-      }}
-    >
-      <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
-        Quick Counselling · {quickRequestStatusLabel(r)}
-      </Text>
-      <Text
-        style={{ color: theme.textPrimary, fontWeight: "700", marginTop: 4 }}
+  const renderCounsellingCard = (r) => {
+    const key = `c:${r.id}`;
+    const open = !!expandedQueueKeys[key];
+    return (
+      <View
+        key={r.id}
+        style={{
+          marginBottom: 10,
+          borderRadius: 14,
+          overflow: "hidden",
+          backgroundColor: theme.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.cardBorder,
+        }}
       >
-        {quickRequestPatientLabel(r)}
-      </Text>
-      <Text
-        style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 6 }}
-      >
-        Topic: {truncateOneLine(displayQuickCounsellingTopic(r), 120) || "-"}
-      </Text>
-      <Text style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}>
-        {r.created ? new Date(r.created).toLocaleString() : ""}
-      </Text>
-      {renderQuickActionsRow(r, "counselling")}
-    </View>
-  );
+        <TouchableOpacity
+          onPress={() => toggleQueueRow(key)}
+          activeOpacity={0.85}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            padding: 12,
+          }}
+        >
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ color: theme.textSecondary, fontSize: 11 }}>
+              Quick Counselling · {quickRequestStatusLabel(r)}
+            </Text>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontWeight: "700",
+                marginTop: 4,
+              }}
+              numberOfLines={1}
+            >
+              {quickRequestPatientLabel(r)}
+            </Text>
+          </View>
+          <Ionicons
+            name={open ? "chevron-up" : "chevron-down"}
+            size={20}
+            color={theme.textTertiary}
+          />
+        </TouchableOpacity>
+        {open ? (
+          <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginTop: 2,
+              }}
+            >
+              Topic:{" "}
+              {truncateOneLine(displayQuickCounsellingTopic(r), 120) || "-"}
+            </Text>
+            <Text
+              style={{ color: theme.textTertiary, fontSize: 10, marginTop: 6 }}
+            >
+              {r.created ? new Date(r.created).toLocaleString() : ""}
+            </Text>
+            {renderQuickActionsRow(r, "counselling")}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
 
   const trackCardShell = (children, { icon, title, testId } = {}) => (
     <View
