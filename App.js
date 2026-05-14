@@ -5164,13 +5164,15 @@ const PatientHomeScreen = () => {
       setFeelingModalVisible(true);
       setFeelingDoctorsLoading(true);
       try {
-        const list = await fetchApprovedDoctors().catch(() => []);
+        const list = await fetchApprovedDoctors({
+          quickServiceOnly: patientCareMode === CARE_MODE.CASUAL,
+        }).catch(() => []);
         setFeelingDoctors(Array.isArray(list) ? list : []);
       } finally {
         setFeelingDoctorsLoading(false);
       }
     },
-    [currentUser?.id, feelingLastSentAt, fetchApprovedDoctors],
+    [currentUser?.id, feelingLastSentAt, fetchApprovedDoctors, patientCareMode],
   );
 
   const sendFeelingCheckIn = useCallback(async () => {
@@ -8305,6 +8307,8 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
   const {
     userRole,
     currentUserId,
+    patientCareMode,
+    patientPrimaryCarePaths,
     loadDirectoryContacts,
     ensureDirectConversation,
   } = useAppData();
@@ -8389,6 +8393,29 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
   const handleStartCall = async (contact) => {
     if (!contact?.id || !currentUserId || startingCallId) return;
     setStartingCallId(contact.id);
+
+    if (userRole === "patient" && contact.role === "doctor") {
+      try {
+        const res = await assertPatientMayPlaceCallToDoctor({
+          patientUserId: currentUserId,
+          doctorUserId: contact.id,
+          primaryPaths: patientPrimaryCarePaths,
+          patientCareMode,
+        });
+        if (!res.ok) {
+          Alert.alert("Call not available", res.message || "");
+          setStartingCallId(null);
+          return;
+        }
+      } catch (error) {
+        Alert.alert(
+          "Call not available",
+          error?.message || "This doctor is not available in your care mode.",
+        );
+        setStartingCallId(null);
+        return;
+      }
+    }
 
     const roomId = buildDirectCallRoomId(currentUserId, contact.id);
     const contactForCall = {
@@ -30018,6 +30045,28 @@ export default function App() {
     return patientCount >= 2;
   };
 
+  const assertCasualPatientMayTalkToDoctor = async (doctorUserId) => {
+    const did = String(doctorUserId || "").trim();
+    if (
+      userRole !== "patient" ||
+      effectiveCareMode(patientProfile, localCareMode) !== CARE_MODE.CASUAL ||
+      !did
+    ) {
+      return true;
+    }
+    try {
+      const profile = await pb
+        .collection("doctor_profile")
+        .getFirstListItem(`user="${did}"`, { requestKey: null });
+      if (doctorTierEligibleForQuickService(profile)) return true;
+    } catch {
+      // Missing profile is not an allowed RMP/clinic doctor.
+    }
+    throw new Error(
+      "Casual mode can only contact RMP or clinic doctors. Switch to Package mode for professional/specialist doctors.",
+    );
+  };
+
   /** Latest message per thread: small `getList(1,1)` calls (batched) - avoids loading every message in the database. */
   const loadMessagePreviewMap = async (conversationIds) => {
     if (!conversationIds.length) return {};
@@ -30576,6 +30625,24 @@ export default function App() {
         "Patients cannot start direct chats with other patients.",
       );
     }
+    if (userRole === "patient" && targetRole === "doctor") {
+      await assertCasualPatientMayTalkToDoctor(targetId);
+    } else if (
+      userRole === "patient" &&
+      effectiveCareMode(patientProfile, localCareMode) === CARE_MODE.CASUAL &&
+      !targetRole
+    ) {
+      try {
+        const profile = await pb
+          .collection("doctor_profile")
+          .getFirstListItem(`user="${targetId}"`, { requestKey: null });
+        if (profile && !doctorTierEligibleForQuickService(profile)) {
+          await assertCasualPatientMayTalkToDoctor(targetId);
+        }
+      } catch (error) {
+        if (error?.message?.includes("Casual mode")) throw error;
+      }
+    }
 
     const existingConversation = conversations.find((conversation) => {
       const members = safeArray(conversation.members);
@@ -30656,6 +30723,22 @@ export default function App() {
       );
       return null;
     }
+    if (userRole === "patient" && conversation) {
+      const pair = patientDoctorPairFromConversation(conversation, {
+        id: currentUser.id,
+      });
+      if (pair.doctorUserId) {
+        try {
+          await assertCasualPatientMayTalkToDoctor(pair.doctorUserId);
+        } catch (error) {
+          Alert.alert(
+            "Chat unavailable",
+            error?.message || "This doctor is not available in Casual mode.",
+          );
+          return null;
+        }
+      }
+    }
     const trimmed = text.trim();
     let createdMessage = null;
     try {
@@ -30692,6 +30775,26 @@ export default function App() {
 
   const sendConversationImage = async (conversationId, asset, caption = "") => {
     if (!currentUser?.id || !conversationId || !asset?.uri) return null;
+
+    const conversation = conversations.find(
+      (item) => item.id === conversationId,
+    );
+    if (userRole === "patient" && conversation) {
+      const pair = patientDoctorPairFromConversation(conversation, {
+        id: currentUser.id,
+      });
+      if (pair.doctorUserId) {
+        try {
+          await assertCasualPatientMayTalkToDoctor(pair.doctorUserId);
+        } catch (error) {
+          Alert.alert(
+            "Chat unavailable",
+            error?.message || "This doctor is not available in Casual mode.",
+          );
+          return null;
+        }
+      }
+    }
 
     const uri = asset.uri;
     const mimeType = (() => {

@@ -1436,6 +1436,27 @@ export async function assertPatientMayPlaceCallToDoctor({
   const pid = String(patientUserId || "").trim();
   if (!did || !pid) return { ok: true };
 
+  if (patientCareMode === CARE_MODE.CASUAL) {
+    try {
+      const profile = await pb
+        .collection("doctor_profile")
+        .getFirstListItem(`user="${did}"`, { requestKey: null });
+      if (!doctorTierEligibleForQuickService(profile)) {
+        return {
+          ok: false,
+          message:
+            "Casual mode can only contact RMP or clinic doctors. Switch to Package mode for professional/specialist doctors.",
+        };
+      }
+    } catch {
+      return {
+        ok: false,
+        message:
+          "Casual mode can only contact verified RMP or clinic doctors.",
+      };
+    }
+  }
+
   const paths =
     primaryPaths && typeof primaryPaths === "object"
       ? primaryPaths
