@@ -40,6 +40,7 @@ import {
   acceptQuickHelpOffer,
   cancelQuickRequest,
   CARE_MODE,
+  buildConsultationTimeWindowFromStartDate,
   closeQuickRequest,
   createPatientSelectedPackageOffer,
   createPackageMeetingRequest,
@@ -82,6 +83,8 @@ import {
   normalizeDoctorPackageSlots,
   packageSlotDisplayName,
   packageSlotMinimumFeeInr,
+  packageSlotScheduledConsultationBlockHours,
+  parseLeadingTime12hToReferenceDate,
   PACKAGE_MEETING_STATUS,
   packageMeetingClosedLabel,
   packageMeetingDoctorListBucket,
@@ -842,24 +845,27 @@ export function DoctorPackageSetupScreen({
   const focusedFeeSlotIndexRef = useRef(-1);
   const activePackageFeeFieldRef = useRef("fee");
   const feeInputRefs = useRef([]);
-  const timeWindowInputRefs = useRef([]);
   const feeScrollMeasureRef = useRef(null);
   const [slots, setSlots] = useState(() =>
     normalizeDoctorPackageSlots(packageTemplatesRawFromRecord(initialRecord)),
   );
   const [busy, setBusy] = useState(false);
+  const [consultTimePickerIdx, setConsultTimePickerIdx] = useState(null);
+  const [consultTimeDraft, setConsultTimeDraft] = useState(() => {
+    const d = new Date();
+    d.setSeconds(0, 0);
+    d.setMilliseconds(0);
+    d.setHours(9, 0, 0, 0);
+    return d;
+  });
 
   const scrollFocusedFeeAboveIme = useCallback(() => {
     if (Platform.OS !== "android") {
-      packageFeeScrollRef.current?.scrollToEnd({ animated: true });
       return;
     }
     const idx = focusedFeeSlotIndexRef.current;
     if (idx < 0) return;
-    const inputEl =
-      activePackageFeeFieldRef.current === "time"
-        ? timeWindowInputRefs.current[idx]
-        : feeInputRefs.current[idx];
+    const inputEl = feeInputRefs.current[idx];
     if (!inputEl) return;
     if (keyboardInset.height <= 0 && keyboardInset.screenY == null) return;
     feeScrollMeasureRef.current = inputEl;
@@ -869,8 +875,8 @@ export function DoctorPackageSetupScreen({
       inputRef: feeScrollMeasureRef,
       keyboardHeight: keyboardInset.height,
       keyboardScreenY: keyboardInset.screenY,
-      extraClearance: 96,
-      breathing: 18,
+      extraClearance: 52,
+      breathing: 10,
     });
   }, [keyboardInset.height, keyboardInset.screenY]);
 
@@ -980,6 +986,72 @@ export function DoctorPackageSetupScreen({
     }
   };
 
+  const consultTimePickerMetaRef = useRef({ index: -1, slot: 1 });
+
+  const openConsultTimePicker = (index) => {
+    Keyboard.dismiss();
+    const slot = slots[index];
+    const n = Number(slot?.slot) || 1;
+    consultTimePickerMetaRef.current = { index, slot: n };
+    const parsed = parseLeadingTime12hToReferenceDate(
+      String(slot?.consultation_time_window || ""),
+    );
+    const d = new Date();
+    d.setSeconds(0, 0);
+    d.setMilliseconds(0);
+    if (parsed && !Number.isNaN(parsed.getTime())) {
+      d.setTime(parsed.getTime());
+    } else if (n === 2) {
+      d.setHours(12, 0, 0, 0);
+    } else {
+      d.setHours(9, 0, 0, 0);
+    }
+    setConsultTimeDraft(d);
+    setConsultTimePickerIdx(index);
+  };
+
+  const closeConsultTimePicker = () => {
+    setConsultTimePickerIdx(null);
+    consultTimePickerMetaRef.current = { index: -1, slot: 1 };
+  };
+
+  const applyConsultTimeFromDraft = () => {
+    const { index, slot } = consultTimePickerMetaRef.current;
+    if (index < 0) return;
+    const tw = buildConsultationTimeWindowFromStartDate(
+      consultTimeDraft,
+      slot,
+    );
+    if (tw) patchSlot(index, { consultation_time_window: tw });
+    closeConsultTimePicker();
+  };
+
+  const onConsultTimeAndroidChange = (event, selectedDate) => {
+    const { index, slot } = consultTimePickerMetaRef.current;
+    closeConsultTimePicker();
+    if (event?.type !== "set" || !selectedDate || index < 0) return;
+    const tw = buildConsultationTimeWindowFromStartDate(selectedDate, slot);
+    if (tw) patchSlot(index, { consultation_time_window: tw });
+  };
+
+  const consultTimePickerOpen = consultTimePickerIdx != null;
+  const consultTimeBlockHours = consultTimePickerOpen
+    ? packageSlotScheduledConsultationBlockHours(
+        consultTimePickerMetaRef.current.slot,
+      )
+    : 0;
+  const consultTimeEndPreview =
+    consultTimePickerOpen && consultTimeBlockHours > 0
+      ? new Date(
+          consultTimeDraft.getTime() +
+            consultTimeBlockHours * 60 * 60 * 1000,
+        ).toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
+      : "";
+
   return (
     <View
       style={{ flex: 1, backgroundColor: theme.bg, paddingTop: insets.top }}
@@ -1077,11 +1149,10 @@ export function DoctorPackageSetupScreen({
             lineHeight: 20,
           }}
         >
-          Enter your INR fee for each tier. For Basic and Gold, also enter when
-          you usually offer scheduled package consultation time, using 12-hour
-          times with am/pm (for example 9:00 AM to 12:00 PM). Premium is 24/7 in
-          the app — no time window to fill in. Skip and finish later from
-          Profile.
+          Enter your INR fee for each tier. For Basic and Gold, pick your usual
+          scheduled consultation start time with the clock; the end time is set
+          automatically (Basic 3 hours, Gold 5 hours). Premium is 24/7 in the app
+          — no time window. Skip and finish later from Profile.
         </Text>
         <View
           style={{
@@ -1280,23 +1351,9 @@ export function DoctorPackageSetupScreen({
                 activePackageFeeFieldRef.current = "fee";
                 focusedFeeSlotIndexRef.current = index;
                 if (Platform.OS === "android") {
-                  packageFeeScrollRef.current?.scrollToEnd({ animated: false });
                   requestAnimationFrame(() => {
                     scrollFocusedFeeAboveIme();
-                  });
-                  [40, 120, 260, 420, 600].forEach((ms) =>
-                    setTimeout(() => {
-                      if (focusedFeeSlotIndexRef.current !== index) return;
-                      scrollFocusedFeeAboveIme();
-                    }, ms),
-                  );
-                } else {
-                  requestAnimationFrame(() => {
-                    setTimeout(() => {
-                      packageFeeScrollRef.current?.scrollToEnd({
-                        animated: true,
-                      });
-                    }, 120);
+                    setTimeout(scrollFocusedFeeAboveIme, 140);
                   });
                 }
               }}
@@ -1352,7 +1409,7 @@ export function DoctorPackageSetupScreen({
                     marginTop: 4,
                   }}
                 >
-                  Your usual consultation hours (12-hour format)
+                  Scheduled consultation window
                 </Text>
                 <Text
                   style={{
@@ -1362,53 +1419,64 @@ export function DoctorPackageSetupScreen({
                     lineHeight: 16,
                   }}
                 >
-                  Type a window you can repeat for scheduled package time, with
-                  two times and am/pm — e.g. matching the example above.
+                  Pick your usual start time with the clock. The end time is set
+                  for you (
+                  {packageSlotScheduledConsultationBlockHours(slot.slot)} hours
+                  for {packageSlotDisplayName(slot.slot)}
+                  {
+                    " — same length as this package's scheduled doctor time)."
+                  }
                 </Text>
-                <TextInput
-                  placeholder={PACKAGE_CONSULT_TIME_EXAMPLES[slot.slot] || ""}
-                  placeholderTextColor={theme.textTertiary}
-                  ref={(el) => {
-                    timeWindowInputRefs.current[index] = el;
+                <View
+                  style={{
+                    borderWidth: 1,
+                    borderColor: theme.inputBorder,
+                    borderRadius: 12,
+                    paddingHorizontal: 12,
+                    paddingVertical: 12,
+                    backgroundColor: theme.inputBg,
+                    marginBottom: 10,
                   }}
-                  value={String(slot.consultation_time_window ?? "")}
-                  onChangeText={(t) => {
-                    patchSlot(index, { consultation_time_window: t });
-                    scheduleFeeVisibleWhileTyping();
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: theme.textPrimary,
+                      fontWeight: "700",
+                    }}
+                  >
+                    {String(slot.consultation_time_window || "").trim()
+                      ? slot.consultation_time_window
+                      : "Not set yet"}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => openConsultTimePicker(index)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: theme.accent,
+                    paddingVertical: 12,
+                    borderRadius: 14,
                   }}
-                  onFocus={() => {
-                    activePackageFeeFieldRef.current = "time";
-                    focusedFeeSlotIndexRef.current = index;
-                    if (Platform.OS === "android") {
-                      packageFeeScrollRef.current?.scrollToEnd({
-                        animated: false,
-                      });
-                      requestAnimationFrame(() => {
-                        scrollFocusedFeeAboveIme();
-                      });
-                      [40, 120, 260, 420, 600].forEach((ms) =>
-                        setTimeout(() => {
-                          if (focusedFeeSlotIndexRef.current !== index) return;
-                          scrollFocusedFeeAboveIme();
-                        }, ms),
-                      );
-                    } else {
-                      requestAnimationFrame(() => {
-                        setTimeout(() => {
-                          packageFeeScrollRef.current?.scrollToEnd({
-                            animated: true,
-                          });
-                        }, 120);
-                      });
-                    }
-                  }}
-                  onBlur={() => {
-                    if (focusedFeeSlotIndexRef.current === index) {
-                      focusedFeeSlotIndexRef.current = -1;
-                    }
-                  }}
-                  style={slotInput(theme)}
-                />
+                >
+                  <Ionicons
+                    name="time-outline"
+                    size={20}
+                    color="#fff"
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text
+                    style={{
+                      color: "#fff",
+                      fontWeight: "800",
+                      fontSize: 14,
+                    }}
+                  >
+                    Set start time
+                  </Text>
+                </TouchableOpacity>
               </>
             )}
           </View>
@@ -1434,6 +1502,85 @@ export function DoctorPackageSetupScreen({
           )}
         </TouchableOpacity>
       </ScrollView>
+        {Platform.OS === "android" && consultTimePickerOpen ? (
+          <DateTimePicker
+            value={consultTimeDraft}
+            mode="time"
+            display="default"
+            is24Hour={false}
+            onChange={onConsultTimeAndroidChange}
+          />
+        ) : null}
+        {Platform.OS === "ios" && consultTimePickerOpen ? (
+          <Modal
+            transparent
+            animationType="fade"
+            visible
+            onRequestClose={closeConsultTimePicker}
+          >
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.45)",
+                justifyContent: "flex-end",
+              }}
+            >
+              <View
+                style={{
+                  backgroundColor: theme.card,
+                  padding: 16,
+                  paddingBottom: 28,
+                  borderTopLeftRadius: 16,
+                  borderTopRightRadius: 16,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    marginBottom: 8,
+                  }}
+                >
+                  <TouchableOpacity onPress={closeConsultTimePicker}>
+                    <Text style={{ color: theme.warning, fontWeight: "700" }}>
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+                  <Text
+                    style={{ color: theme.textPrimary, fontWeight: "800" }}
+                  >
+                    Start time
+                  </Text>
+                  <TouchableOpacity onPress={applyConsultTimeFromDraft}>
+                    <Text style={{ color: theme.accent, fontWeight: "800" }}>
+                      Done
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    fontSize: 12,
+                    marginBottom: 8,
+                    textAlign: "center",
+                  }}
+                >
+                  End time: {consultTimeEndPreview || "—"}
+                </Text>
+                <DateTimePicker
+                  value={consultTimeDraft}
+                  mode="time"
+                  display="spinner"
+                  is24Hour={false}
+                  locale="en-US"
+                  onChange={(_, d) => {
+                    if (d && !Number.isNaN(d.getTime())) setConsultTimeDraft(d);
+                  }}
+                />
+              </View>
+            </View>
+          </Modal>
+        ) : null}
       </KeyboardAvoidingView>
     </View>
   );

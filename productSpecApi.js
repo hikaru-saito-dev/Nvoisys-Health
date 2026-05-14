@@ -299,6 +299,60 @@ export function consultationTimeWindowAcceptable(raw, slotNum) {
   return Array.isArray(hits) && hits.length >= 2;
 }
 
+/** Scheduled consultation block length (hours) used for package time windows: Basic 3h, Gold 5h. */
+export function packageSlotScheduledConsultationBlockHours(slotNum) {
+  const n = Number(slotNum) || 1;
+  if (n === 1) return 3;
+  if (n === 2) return 5;
+  return 0;
+}
+
+function formatTime12hEnUs(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+/**
+ * Builds stored `consultation_time_window` from a start time and tier block length.
+ * @param {Date} startDate
+ * @param {number} slotNum 1 = Basic, 2 = Gold
+ */
+export function buildConsultationTimeWindowFromStartDate(startDate, slotNum) {
+  const hours = packageSlotScheduledConsultationBlockHours(slotNum);
+  if (!(startDate instanceof Date) || Number.isNaN(startDate.getTime()) || hours <= 0) {
+    return "";
+  }
+  const end = new Date(startDate.getTime() + hours * 60 * 60 * 1000);
+  const startStr = formatTime12hEnUs(startDate);
+  const endStr = formatTime12hEnUs(end);
+  if (!startStr || !endStr) return "";
+  return `${startStr} to ${endStr}`;
+}
+
+/** Parses the first 12h clock time in a window string into today's calendar Date (for pickers). */
+export function parseLeadingTime12hToReferenceDate(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return null;
+  const re = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i;
+  const m = t.match(re);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const minute = parseInt(m[2] != null ? m[2] : "0", 10);
+  const ap = String(m[3]).toLowerCase();
+  if (hour < 1 || hour > 12 || minute > 59) return null;
+  if (ap === "pm" && hour !== 12) hour += 12;
+  if (ap === "am" && hour === 12) hour = 0;
+  const d = new Date();
+  d.setSeconds(0, 0);
+  d.setMilliseconds(0);
+  d.setHours(hour, minute, 0, 0);
+  return d;
+}
+
 /**
  * Normalizes stored fee strings: empty stays empty; amounts below the tier
  * minimum are cleared so doctors must re-enter a valid fee (save stays blocked
@@ -636,6 +690,33 @@ export function doctorTierEligibleForQuickService(userOrProfileOrTier) {
   if (!explicitTier) return true;
 
   return false;
+}
+
+/**
+ * Doctor Home dashboard: specialist tier hides Booking Tracks, Quick Queues,
+ * package appointments strip, and Recent Activity.
+ */
+export function doctorDashboardIsSpecialist(
+  doctorProfileRecord,
+  authUserRecord,
+) {
+  const tier = String(
+    doctorProfileRecord?.practitioner_tier ||
+      doctorProfileRecord?.practitionerTier ||
+      doctorProfileRecord?.tier ||
+      doctorProfileRecord?.verification_tier ||
+      doctorProfileRecord?.doctor_class ||
+      authUserRecord?.practitioner_tier ||
+      authUserRecord?.practitionerTier ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  if (tier === "specialist") return true;
+  const dtype = String(doctorProfileRecord?.doctor_type || "")
+    .trim()
+    .toLowerCase();
+  return dtype === "specialist";
 }
 
 /** PocketBase `pharmacy_profile.provider_kind` — drives medicine orders vs quick queues only. */

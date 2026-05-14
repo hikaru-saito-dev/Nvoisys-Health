@@ -1,0 +1,53 @@
+diff --git a/node_modules/@expo/cli/build/src/start/platforms/android/adb.js b/node_modules/@expo/cli/build/src/start/platforms/android/adb.js
+index a8dafb4..544059a 100644
+--- a/node_modules/@expo/cli/build/src/start/platforms/android/adb.js
++++ b/node_modules/@expo/cli/build/src/start/platforms/android/adb.js
+@@ -289,13 +289,43 @@ async function getAttachedDevicesAsync() {
+     });
+     return Promise.all(devicePromises);
+ }
++async function getAdbNameFromShellGetpropAsync(pid) {
++    const propNames = [
++        'ro.boot.qemu.avd_name',
++        'ro.kernel.qemu.avd_name'
++    ];
++    for (const propName of propNames){
++        try {
++            const out = await getServer().runAsync(adbArgs(pid, 'shell', 'getprop', propName));
++            const value = sanitizeAdbDeviceName(out);
++            if (value) {
++                return value;
++            }
++        } catch  {}
++    }
++    return null;
++}
+ async function getAdbNameForDeviceIdAsync(device) {
+-    const results = await getServer().runAsync(adbArgs(device.pid, 'emu', 'avd', 'name'));
+-    if (results.match(/could not connect to TCP port .*: Connection refused/)) {
+-        // Can also occur when the emulator does not exist.
+-        throw new _errors.CommandError('EMULATOR_NOT_FOUND', results);
++    try {
++        const results = await getServer().runAsync(adbArgs(device.pid, 'emu', 'avd', 'name'));
++        if (results.match(/could not connect to TCP port .*:( Connection refused| cannot connect)/i)) {
++            // Can also occur when the emulator does not exist.
++            throw new _errors.CommandError('EMULATOR_NOT_FOUND', results);
++        }
++        return sanitizeAdbDeviceName(results) ?? null;
++    } catch (error) {
++        const message = typeof error?.message === 'string' ? error.message : String(error);
++        const consoleBroken = /could not connect to TCP port|actively refused|Connection refused/i.test(message);
++        if (!consoleBroken) {
++            throw error;
++        }
++        const fromProp = await getAdbNameFromShellGetpropAsync(device.pid);
++        if (fromProp) {
++            return fromProp;
++        }
++        _log.warn(`Could not read AVD name from emulator console (${device.pid}). Using the device serial instead. If targeting fails, cold boot the AVD in Android Studio (Device Manager).`);
++        return sanitizeAdbDeviceName(device.pid) ?? device.pid;
+     }
+-    return sanitizeAdbDeviceName(results) ?? null;
+ }
+ async function isDeviceBootedAsync({ name } = {}) {
+     const devices = await getAttachedDevicesAsync();
