@@ -266,9 +266,9 @@ export function packageSlotDisplayName(slot) {
 
 /** Minimum package fee (INR) per catalogue slot — Basic / Gold / Premium. No maximum. */
 export const PACKAGE_SLOT_MIN_FEE_INR = Object.freeze({
-  1: 10,
-  2: 10,
-  3: 10,
+  1: 12000,
+  2: 20000,
+  3: 50000,
 });
 
 export function packageSlotMinimumFeeInr(slotNum) {
@@ -765,8 +765,8 @@ const DEFAULT_PACKAGE_AMOUNT_INR = Math.max(
   Number(
     (typeof process !== "undefined" &&
       process.env?.EXPO_PUBLIC_DEFAULT_PACKAGE_AMOUNT_INR) ||
-      10,
-  ) || 10,
+      8000,
+  ) || 8000,
 );
 const REFERRAL_MONTHLY_COMMISSION_COINS = 1000;
 
@@ -926,8 +926,7 @@ const LEDGER_REASON_QUICK_SOLUTION_EARNED = "quick_solution_provider_earned";
 const LEDGER_REASON_QUICK_COUNSELLING_EARNED =
   "quick_counselling_provider_earned";
 const LEDGER_REASON_QUICK_SOLUTION_SPENT = "quick_solution_patient_spent";
-const LEDGER_REASON_QUICK_COUNSELLING_SPENT =
-  "quick_counselling_patient_spent";
+const LEDGER_REASON_QUICK_COUNSELLING_SPENT = "quick_counselling_patient_spent";
 const LEDGER_REASON_QUICK_SOLUTION_REFUNDED =
   "quick_solution_patient_refunded_uncredited";
 const LEDGER_REASON_QUICK_COUNSELLING_REFUNDED =
@@ -5277,8 +5276,9 @@ function quickRequestCoinSettlementConfig(kind, request = {}) {
   const patientCostCoins =
     Number(request?.patient_cost_coins ?? patientDefault) || patientDefault;
   const providerCoins =
-    Number(request?.provider_coins ?? request?.doctor_coins ?? providerDefault) ||
-    providerDefault;
+    Number(
+      request?.provider_coins ?? request?.doctor_coins ?? providerDefault,
+    ) || providerDefault;
   const platformFeeCoins =
     Number(request?.platform_fee_coins ?? platformDefault) || platformDefault;
   return {
@@ -5338,9 +5338,13 @@ export async function settleQuickRequestCasualCoins({
   const cfg = quickRequestCoinSettlementConfig(kind, request);
   let row = request;
   if (!row?.id) {
-    row = await pb.collection(cfg.collection).getOne(reqId, { requestKey: null });
+    row = await pb
+      .collection(cfg.collection)
+      .getOne(reqId, { requestKey: null });
   }
-  const patient = String(patientUserId || relationId(row?.patient) || "").trim();
+  const patient = String(
+    patientUserId || relationId(row?.patient) || "",
+  ).trim();
   const provider = String(
     providerUserId || relationId(row?.recipient) || "",
   ).trim();
@@ -5348,8 +5352,8 @@ export async function settleQuickRequestCasualCoins({
     throw new Error("Missing patient or provider for quick coin settlement.");
   }
 
-  const [patientSpentRows, patientRefundRows, providerRows] =
-    await Promise.all([
+  const [patientSpentRows, patientRefundRows, providerRows] = await Promise.all(
+    [
       listCoinLedgerRowsForQuickReason({
         userId: patient,
         collection: cfg.collection,
@@ -5368,18 +5372,13 @@ export async function settleQuickRequestCasualCoins({
         requestId: reqId,
         reason: cfg.providerReason,
       }),
-    ]);
+    ],
+  );
   const patientNet =
     sumLedgerDelta(patientSpentRows) + sumLedgerDelta(patientRefundRows);
   const providerNet = sumLedgerDelta(providerRows);
-  const remainingPatientDebit = Math.max(
-    0,
-    cfg.patientCostCoins + patientNet,
-  );
-  const remainingProviderCredit = Math.max(
-    0,
-    cfg.providerCoins - providerNet,
-  );
+  const remainingPatientDebit = Math.max(0, cfg.patientCostCoins + patientNet);
+  const remainingProviderCredit = Math.max(0, cfg.providerCoins - providerNet);
 
   if (remainingPatientDebit <= 0 && remainingProviderCredit <= 0) {
     return {
