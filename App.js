@@ -12401,35 +12401,6 @@ const PatientProfileScreen = ({
               Care journey & records
             </Text>
             <TouchableOpacity
-              onPress={() => setShowMedicalRecords(true)}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: RFValue(14),
-              }}
-            >
-              <Ionicons
-                name="document-text-outline"
-                size={22}
-                color={theme.accent}
-              />
-              <Text
-                style={{
-                  marginLeft: 10,
-                  fontWeight: "700",
-                  color: theme.textPrimary,
-                  flex: 1,
-                }}
-              >
-                Medical records
-              </Text>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.textTertiary}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
               onPress={() => {
                 Alert.alert(
                   "Choose again?",
@@ -12444,10 +12415,39 @@ const PatientProfileScreen = ({
                   ],
                 );
               }}
+              activeOpacity={0.88}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: theme.accent,
+                borderRadius: RFValue(14),
+                paddingVertical: RFValue(14),
+                paddingHorizontal: RFValue(16),
+                marginBottom: RFValue(4),
+              }}
             >
-              <Text style={{ color: theme.accent, fontWeight: "700" }}>
-                Switch care journey…
+              <Ionicons
+                name="swap-horizontal-outline"
+                size={RFValue(22)}
+                color="#fff"
+                style={{ marginRight: RFValue(10) }}
+              />
+              <Text
+                style={{
+                  flex: 1,
+                  color: "#fff",
+                  fontWeight: "800",
+                  fontSize: RFValue(15),
+                }}
+              >
+                Switch care journey
               </Text>
+              <Ionicons
+                name="chevron-forward"
+                size={RFValue(20)}
+                color="rgba(255,255,255,0.9)"
+              />
             </TouchableOpacity>
             <Text
               style={{
@@ -20398,7 +20398,8 @@ const DoctorProfileScreen = ({ onLogout }) => {
                 marginBottom: RFValue(12),
               }}
             >
-              Tap a tag to toggle. Selected tags show in Find Doctor filters.
+              Tap a row to select or clear. Selected concerns appear in Find
+              Doctor filters.
             </Text>
             {loadingConcerns ? (
               <ActivityIndicator color={theme.success} />
@@ -20406,37 +20407,63 @@ const DoctorProfileScreen = ({ onLogout }) => {
               <>
                 <View
                   style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    marginHorizontal: RFValue(-4),
+                    borderRadius: RFValue(14),
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.cardBorder,
+                    overflow: "hidden",
+                    backgroundColor: theme.bg,
                   }}
                 >
-                  {CONCERN_CHIP_OPTIONS.map((chip) => {
+                  {CONCERN_CHIP_OPTIONS.map((chip, index) => {
                     const active = concerns.includes(chip.id);
+                    const isLast = index === CONCERN_CHIP_OPTIONS.length - 1;
                     return (
                       <TouchableOpacity
                         key={chip.id}
                         onPress={() => toggleConcernChip(chip.id)}
-                        activeOpacity={0.85}
+                        activeOpacity={0.75}
                         style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          paddingVertical: RFValue(14),
                           paddingHorizontal: RFValue(14),
-                          paddingVertical: RFValue(10),
-                          borderRadius: RFValue(14),
-                          marginHorizontal: RFValue(4),
-                          marginBottom: RFValue(10),
-                          backgroundColor: active ? theme.success : theme.bg,
-                          borderWidth: StyleSheet.hairlineWidth,
-                          borderColor: active ? theme.success : theme.cardBorder,
+                          borderBottomWidth: isLast
+                            ? 0
+                            : StyleSheet.hairlineWidth,
+                          borderBottomColor: theme.cardBorder,
+                          backgroundColor: active
+                            ? theme.success + "14"
+                            : "transparent",
                         }}
                       >
+                        <Ionicons
+                          name={
+                            active ? "checkmark-circle" : "ellipse-outline"
+                          }
+                          size={RFValue(22)}
+                          color={
+                            active ? theme.success : theme.textTertiary
+                          }
+                          style={{ marginRight: RFValue(12) }}
+                        />
                         <Text
                           style={{
-                            fontSize: RFValue(13),
-                            fontWeight: "700",
-                            color: active ? "#FFF" : theme.textPrimary,
+                            flex: 1,
+                            fontSize: RFValue(15),
+                            fontWeight: active ? "800" : "600",
+                            color: theme.textPrimary,
                           }}
                         >
                           {chip.label}
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: RFValue(12),
+                            fontWeight: "700",
+                            color: active ? theme.success : theme.textTertiary,
+                          }}
+                        >
+                          {active ? "On" : "Off"}
                         </Text>
                       </TouchableOpacity>
                     );

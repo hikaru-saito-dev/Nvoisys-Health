@@ -6914,6 +6914,8 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
   const [rows, setRows] = useState([]);
   const [balance, setBalance] = useState(0);
   const [pairs, setPairs] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const insets = useSafeAreaInsets();
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -6931,46 +6933,215 @@ export function PatientCoinHistoryPanel({ theme, userId, compact = false }) {
       cancelled = true;
     };
   }, [userId]);
+
+  const pairsShown = compact ? pairs.slice(0, 2) : pairs;
+
+  const sectionLabelStyle = {
+    color: theme.textTertiary,
+    fontSize: S.small,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  };
+  const cardStyle = {
+    borderRadius: 14,
+    padding: compact ? 12 : 14,
+    backgroundColor: theme.bg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.cardBorder || "#E2E8F0",
+    marginBottom: 12,
+  };
+
   return (
     <View style={{ marginTop: 8 }}>
       <Text
-        style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 6 }}
+        style={{ color: theme.textPrimary, fontWeight: "800", marginBottom: 12 }}
       >
         Coin & payments history
       </Text>
-      <Text style={{ color: theme.textPrimary, fontWeight: "900", marginBottom: 6 }}>
-        Balance: {balance} coins
-      </Text>
-      <Text style={{ color: theme.textSecondary, fontSize: S.small, marginBottom: 6 }}>
-        Active package pairs: {pairs.length}
-      </Text>
-      {pairs.slice(0, compact ? 2 : 4).map((pair) => (
+
+      <View style={cardStyle}>
+        <Text style={sectionLabelStyle}>Remaining balance</Text>
         <Text
-          key={pair.offerId}
-          style={{ color: theme.textTertiary, fontSize: 11, marginBottom: 3 }}
+          style={{
+            color: theme.textPrimary,
+            fontSize: compact ? 20 : 22,
+            fontWeight: "900",
+          }}
         >
-          {pair.title} · doctor {String(pair.doctor_user_id || "").slice(-6)} ·
-          pool {pair.doctor_coins} coins
+          {balance} coins
         </Text>
-      ))}
-      {compact ? null : rows.length === 0 ? (
-        <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
-          No movements yet.
-        </Text>
-      ) : (
-        rows.map((r) => (
-          <Text
-            key={r.id}
+      </View>
+
+      <View style={cardStyle}>
+        <Text style={sectionLabelStyle}>Active packages</Text>
+        {pairs.length === 0 ? (
+          <Text style={{ color: theme.textTertiary, fontSize: S.small }}>
+            No active package pairs.
+          </Text>
+        ) : (
+          pairsShown.map((pair) => (
+            <Text
+              key={pair.offerId}
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                lineHeight: 18,
+                marginBottom: 6,
+              }}
+            >
+              {pair.title} · doctor {String(pair.doctor_user_id || "").slice(-6)}{" "}
+              · pool {pair.doctor_coins} coins
+            </Text>
+          ))
+        )}
+        {compact && pairs.length > pairsShown.length ? (
+          <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 4 }}>
+            +{pairs.length - pairsShown.length} more in full profile
+          </Text>
+        ) : null}
+      </View>
+
+      <View style={{ marginBottom: 4 }}>
+        <Text style={sectionLabelStyle}>Payment history</Text>
+        <TouchableOpacity
+          onPress={() => setHistoryOpen(true)}
+          activeOpacity={0.88}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            paddingVertical: compact ? 11 : 13,
+            paddingHorizontal: 14,
+            borderRadius: 14,
+            backgroundColor: theme.accent,
+          }}
+        >
+          <Ionicons
+            name="receipt-outline"
+            size={20}
+            color="#fff"
+            style={{ marginRight: 8 }}
+          />
+          <Text style={{ color: "#fff", fontWeight: "800", fontSize: S.small }}>
+            See details…
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <Modal
+        visible={historyOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setHistoryOpen(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.45)",
+            justifyContent: "flex-end",
+          }}
+        >
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => setHistoryOpen(false)}
+          />
+          <View
             style={{
-              color: theme.textSecondary,
-              fontSize: S.small,
-              marginBottom: 4,
+              maxHeight: "88%",
+              backgroundColor: theme.card,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              paddingBottom: Math.max(insets.bottom, 12) + 8,
             }}
           >
-            {formatCoinLedgerReasonForDisplay(r.reason)} · {r.delta}
-          </Text>
-        ))
-      )}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                paddingHorizontal: 16,
+                paddingTop: 16,
+                paddingBottom: 8,
+              }}
+            >
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontSize: 18,
+                  fontWeight: "800",
+                }}
+              >
+                Payment history
+              </Text>
+              <TouchableOpacity
+                onPress={() => setHistoryOpen(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Close payment history"
+              >
+                <Ionicons name="close" size={26} color={theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={{ paddingHorizontal: 16 }}
+              contentContainerStyle={{ paddingBottom: 8 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {rows.length === 0 ? (
+                <Text
+                  style={{
+                    color: theme.textTertiary,
+                    fontSize: S.small,
+                    paddingVertical: 12,
+                  }}
+                >
+                  No movements yet.
+                </Text>
+              ) : (
+                rows.map((r, idx) => (
+                  <View
+                    key={r.id}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      marginBottom: idx === rows.length - 1 ? 0 : 10,
+                      paddingBottom: idx === rows.length - 1 ? 0 : 10,
+                      borderBottomWidth:
+                        idx === rows.length - 1 ? 0 : StyleSheet.hairlineWidth,
+                      borderBottomColor: theme.cardBorder || "#E2E8F0",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: theme.textSecondary,
+                        fontSize: S.small,
+                        lineHeight: 18,
+                        marginRight: 10,
+                      }}
+                    >
+                      {formatCoinLedgerReasonForDisplay(r.reason)}
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.textPrimary,
+                        fontSize: S.small,
+                        fontWeight: "800",
+                      }}
+                    >
+                      {Number(r.delta) > 0 ? `+${r.delta}` : String(r.delta)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
