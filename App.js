@@ -123,6 +123,7 @@ import {
   readPatientPrimaryCarePaths,
   writePatientPrimaryCarePaths,
   getPatientPackagePoolCoinsRemaining,
+  getMedicalRecordFileDownloadUrl,
   PACKAGE_MEETING_STATUS,
   normalizeDoctorPackageSlots,
   normalizePharmacyProviderKind,
@@ -4738,6 +4739,54 @@ function patientHomeFeelingStorageKey(userId) {
   return `patient_home_feeling_checkin_v1:${String(userId || "").trim()}`;
 }
 
+async function shareMedicalRecordInDoctorChat({
+  record,
+  doctorUserId,
+  ensureDirectConversation,
+  sendConversationMessage,
+  refreshAllData,
+}) {
+  if (!record?.id || !doctorUserId) {
+    Alert.alert("Share", "Missing record or doctor.");
+    return;
+  }
+  try {
+    const url = getMedicalRecordFileDownloadUrl(record);
+    if (!url) {
+      Alert.alert(
+        "Share",
+        "This record has no downloadable file. Check that the PocketBase `medical_records` collection stores the upload in a `file` field.",
+      );
+      return;
+    }
+    const conv = await ensureDirectConversation(doctorUserId);
+    if (!conv?.id) {
+      Alert.alert("Chat", "Could not open a chat thread with that doctor.");
+      return;
+    }
+    const t = String(record.title || "Medical record").trim();
+    const msg = [
+      "Shared medical record",
+      `Title: ${t}`,
+      "",
+      "Open the link to view the file (sign in to Nvoisys if prompted):",
+      url,
+    ].join("\n");
+    const mapped = await sendConversationMessage(conv.id, msg);
+    if (!mapped) {
+      Alert.alert("Chat", "Message could not be sent. Try again.");
+      return;
+    }
+    await refreshAllData();
+    Alert.alert(
+      "Sent",
+      "Your record was shared in your chat with that doctor. Open the Chat tab to continue the conversation.",
+    );
+  } catch (e) {
+    Alert.alert("Share", e?.message || "Could not share this record.");
+  }
+}
+
 const PatientHomeScreen = () => {
   const { theme } = useTheme();
   const {
@@ -4934,6 +4983,17 @@ const PatientHomeScreen = () => {
   const [walletMode, setWalletMode] = useState(null);
   const [depositAmount, setDepositAmount] = useState("");
   const [patientCoinBalance, setPatientCoinBalance] = useState(0);
+
+  const handleShareMedicalRecordToDoctor = useCallback(
+    (args) =>
+      shareMedicalRecordInDoctorChat({
+        ...args,
+        ensureDirectConversation,
+        sendConversationMessage,
+        refreshAllData,
+      }),
+    [ensureDirectConversation, sendConversationMessage, refreshAllData],
+  );
 
   useEffect(() => {
     if (!nearbyPharmaciesOpenNonce) return;
@@ -5335,6 +5395,9 @@ const PatientHomeScreen = () => {
         theme={theme}
         onBack={() => setShowMedical(false)}
         patientUserId={currentUser?.id}
+        patientProfileId={patientProfile?.id}
+        patientCareMode={patientCareMode}
+        onShareMedicalRecordToDoctor={handleShareMedicalRecordToDoctor}
         scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );
@@ -12435,7 +12498,21 @@ const PatientProfileScreen = ({
     resetCareOnboarding,
     patientCareMode,
     CARE_MODE,
+    ensureDirectConversation,
+    sendConversationMessage,
+    refreshAllData,
   } = useAppData();
+
+  const handleShareMedicalRecordToDoctor = useCallback(
+    (args) =>
+      shareMedicalRecordInDoctorChat({
+        ...args,
+        ensureDirectConversation,
+        sendConversationMessage,
+        refreshAllData,
+      }),
+    [ensureDirectConversation, sendConversationMessage, refreshAllData],
+  );
 
   const avatarUrl = patientProfileAvatarUrl(patientProfile);
   const phoneDisplay = formatPhoneForDisplay(
@@ -12528,6 +12605,9 @@ const PatientProfileScreen = ({
         theme={theme}
         onBack={() => setShowMedicalRecords(false)}
         patientUserId={currentUser?.id}
+        patientProfileId={patientProfile?.id}
+        patientCareMode={patientCareMode}
+        onShareMedicalRecordToDoctor={handleShareMedicalRecordToDoctor}
         scrollContentBottomInset={patientFullScreenScrollBottomInset()}
       />
     );

@@ -1540,6 +1540,96 @@ export async function uploadMedicalRecord({ patientUserId, title, filePart }) {
   }
 }
 
+/** First file field name on a `medical_records` row (schema may use `file`, `document`, etc.). */
+export function medicalRecordPrimaryFileName(record) {
+  const keys = ["file", "document", "attachment", "pdf", "photo", "image"];
+  for (const key of keys) {
+    const v = record?.[key];
+    if (typeof v === "string" && String(v).trim()) return String(v).trim();
+    if (Array.isArray(v) && v.length) {
+      const first = v.find((x) => typeof x === "string" && String(x).trim());
+      if (first) return String(first).trim();
+    }
+  }
+  return "";
+}
+
+/** Authenticated download URL for the record's primary file (for in-app browser / sharing). */
+export function getMedicalRecordFileDownloadUrl(record) {
+  const fname = medicalRecordPrimaryFileName(record);
+  if (!fname || !record?.id) return "";
+  const token = pb.authStore?.token;
+  return pb.files.getUrl(record, fname, token ? { token } : undefined);
+}
+
+export async function deleteMedicalRecord(recordId) {
+  const id = String(recordId || "").trim();
+  if (!id) throw new Error("Missing record id");
+  await pb.collection("medical_records").delete(id);
+}
+
+/**
+ * Doctors the patient may share a medical record with in chat.
+ * Package mode: active package doctors only. Other modes: RMP / quick-service-eligible doctors only.
+ */
+export async function listDoctorsForMedicalRecordShare({
+  careMode,
+  patientAuthUserId,
+  patientProfileId,
+}) {
+  const uid = String(patientAuthUserId || "").trim();
+  if (!uid) return [];
+  const mode = String(careMode || "").trim();
+
+  if (mode === CARE_MODE.PACKAGE) {
+    const pairs = await listActivePackagePairsForPatient(uid, patientProfileId);
+    const seen = new Map();
+    for (const p of pairs || []) {
+      const did = String(p.doctor_user_id || "").trim();
+      if (!did || seen.has(did)) continue;
+      seen.set(did, String(p.title || "Care package").trim() || "Care package");
+    }
+    if (!seen.size) return [];
+    const authMap = await fetchUsersAuthByIds([...seen.keys()]);
+    return [...seen.entries()].map(([doctorUserId, pkgTitle]) => {
+      const u = authMap.get(doctorUserId);
+      const name =
+        resolveListingDisplayName(null, u) ||
+        `Doctor (${doctorUserId.slice(0, 6)}…)`;
+      return { doctorUserId, label: name, subtitle: pkgTitle };
+    });
+  }
+
+  try {
+    const records = await pb.collection("doctor_profile").getFullList({
+      requestKey: null,
+      filter: `status="approved"`,
+      expand: "user",
+    });
+    const out = [];
+    const seenU = new Set();
+    for (const rec of records || []) {
+      if (!doctorTierEligibleForQuickService(rec)) continue;
+      const rawUser = rec.expand?.user;
+      let user = Array.isArray(rawUser) ? rawUser[0] : rawUser;
+      const userId =
+        (typeof rec.user === "string" ? rec.user : rec.user?.id) || user?.id;
+      if (!userId || seenU.has(userId)) continue;
+      seenU.add(userId);
+      const name = resolveListingDisplayName(rec, user) || "Doctor";
+      out.push({
+        doctorUserId: userId,
+        label: name,
+        subtitle: "RMP / quick consult doctor",
+      });
+    }
+    return out;
+  } catch (e) {
+    console.log("listDoctorsForMedicalRecordShare:", e?.message || e);
+    return [];
+  }
+}
+
 // --- Package demo meetings (uses existing `appointments` collection) ---
 // Negotiation state is stored in `reason` after marker ---NVHS_MEETING_WORKFLOW--- (same as legacy
 // description encoding). Rows are normal appointments with consultation_type + status; only rows

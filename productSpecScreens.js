@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
+import * as WebBrowser from "expo-web-browser";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -104,6 +106,9 @@ import {
   saveDoctorPackageTemplates,
   settleDueReferralMonthlyCommissions,
   uploadMedicalRecord,
+  deleteMedicalRecord,
+  getMedicalRecordFileDownloadUrl,
+  listDoctorsForMedicalRecordShare,
   WALLET_TOPUP_MAX_INR,
   WALLET_TOPUP_MIN_INR,
 } from "./productSpecApi";
@@ -1592,6 +1597,9 @@ export function MedicalRecordsScreen({
   theme,
   onBack,
   patientUserId,
+  patientProfileId = null,
+  patientCareMode = null,
+  onShareMedicalRecordToDoctor,
   scrollContentBottomInset = 100,
 }) {
   const insets = useSafeAreaInsets();
@@ -1601,6 +1609,13 @@ export function MedicalRecordsScreen({
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [shareRecord, setShareRecord] = useState(null);
+  const [shareDoctors, setShareDoctors] = useState([]);
+  const [shareDoctorsLoading, setShareDoctorsLoading] = useState(false);
+  const [shareSendingId, setShareSendingId] = useState(null);
+
+  const effectiveCareMode = patientCareMode || CARE_MODE.CASUAL;
 
   const tabAndSafe = scrollContentBottomInset + Math.max(insets.bottom, 8);
   const keyboardScrollPad = keyboardExtraScrollPad(keyboardPad);
@@ -1617,11 +1632,36 @@ export function MedicalRecordsScreen({
     void load();
   }, [load]);
 
-  const pickAndUpload = async () => {
+  const uploadWithPart = async (filePart) => {
+    if (!patientUserId) {
+      Alert.alert("Upload", "Please sign in again.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await uploadMedicalRecord({
+        patientUserId,
+        title: title.trim() || "Medical record",
+        filePart,
+      });
+      setTitle("");
+      await load();
+      Alert.alert(
+        "Saved",
+        "Your record is stored on your profile. Use Open to view, or Send to share it in chat with a doctor.",
+      );
+    } catch (e) {
+      Alert.alert("Upload", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickImageAndUpload = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert("Permission", "Photo access is needed to upload records.");
+        Alert.alert("Permission", "Photo access is needed to upload images.");
         return;
       }
       const res = await ImagePicker.launchImageLibraryAsync({
@@ -1646,24 +1686,139 @@ export function MedicalRecordsScreen({
         name: asset.fileName || `record_${Date.now()}.jpg`,
         type: mime,
       };
-      setBusy(true);
-      await uploadMedicalRecord({
-        patientUserId,
-        title: title.trim() || "Medical record",
-        filePart: part,
-      });
-      setTitle("");
-      await load();
-      Alert.alert(
-        "Saved",
-        "Your record is stored on your profile for sharing during consults.",
-      );
+      await uploadWithPart(part);
     } catch (e) {
       Alert.alert("Upload", e?.message || "Failed");
-    } finally {
-      setBusy(false);
     }
   };
+
+  const pickDocumentAndUpload = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/*"],
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const asset = res.assets[0];
+      if (!asset?.uri) return;
+      const uri = asset.uri;
+      const mime =
+        asset.mimeType && String(asset.mimeType).includes("/")
+          ? asset.mimeType
+          : "application/pdf";
+      const part = {
+        uri: Platform.OS === "ios" ? uri.replace("file://", "") : uri,
+        name: asset.name || `record_${Date.now()}.pdf`,
+        type: mime,
+      };
+      await uploadWithPart(part);
+    } catch (e) {
+      Alert.alert("Upload", e?.message || "Failed");
+    }
+  };
+
+  const promptUploadSource = () => {
+    Alert.alert("Upload file", "Choose a source", [
+      { text: "Photos & screenshots", onPress: () => void pickImageAndUpload() },
+      { text: "PDF or document", onPress: () => void pickDocumentAndUpload() },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const openRecord = async (record) => {
+    const url = getMedicalRecordFileDownloadUrl(record);
+    if (!url) {
+      Alert.alert(
+        "Cannot open",
+        "No file is attached to this record, or your server uses a different field name than `file`.",
+      );
+      return;
+    }
+    try {
+      await WebBrowser.openBrowserAsync(url);
+    } catch (e) {
+      Alert.alert("Open", e?.message || "Could not open this file.");
+    }
+  };
+
+  const confirmDeleteRecord = (record) => {
+    const label = String(record?.title || "this record").trim() || "this record";
+    Alert.alert(
+      "Delete record",
+      `Remove “${label}” from your profile? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteMedicalRecord(record.id);
+              await load();
+            } catch (e) {
+              Alert.alert("Delete", e?.message || "Could not delete.");
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const beginShareToDoctor = async (record) => {
+    if (!onShareMedicalRecordToDoctor) {
+      Alert.alert("Send to doctor", "Sharing from this screen is not available.");
+      return;
+    }
+    setShareRecord(record);
+    setShareModalVisible(true);
+    setShareDoctors([]);
+    setShareDoctorsLoading(true);
+    try {
+      const list = await listDoctorsForMedicalRecordShare({
+        careMode: effectiveCareMode,
+        patientAuthUserId: patientUserId,
+        patientProfileId,
+      });
+      setShareDoctors(list);
+      if (!list.length) {
+        Alert.alert(
+          "No doctors available",
+          effectiveCareMode === CARE_MODE.PACKAGE
+            ? "You need an active care package with a doctor to share from package mode."
+            : "No RMP / quick-consult doctors are listed yet. Try again after doctors are approved in your system.",
+        );
+        setShareModalVisible(false);
+        setShareRecord(null);
+      }
+    } catch (e) {
+      Alert.alert("Doctors", e?.message || "Could not load doctor list.");
+    } finally {
+      setShareDoctorsLoading(false);
+    }
+  };
+
+  const sendShareToDoctor = async (doctorUserId) => {
+    if (!shareRecord || !onShareMedicalRecordToDoctor) return;
+    setShareSendingId(doctorUserId);
+    try {
+      await onShareMedicalRecordToDoctor({
+        record: shareRecord,
+        doctorUserId,
+      });
+      setShareModalVisible(false);
+      setShareRecord(null);
+      setShareDoctors([]);
+    } catch (e) {
+      Alert.alert("Send", e?.message || "Could not send.");
+    } finally {
+      setShareSendingId(null);
+    }
+  };
+
+  const shareDoctorHint =
+    effectiveCareMode === CARE_MODE.PACKAGE
+      ? "Package mode: only doctors from your active packages."
+      : "Casual / other modes: only RMP / quick-consult doctors.";
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -1702,39 +1857,40 @@ export function MedicalRecordsScreen({
           paddingBottom: scrollBottomPad,
         }}
       >
-          <Text
-            style={{
-              color: theme.textSecondary,
-              fontSize: S.small,
-              marginBottom: 12,
-            }}
-          >
-            Upload prescriptions, lab reports, or images. They stay on your
-            profile and can be shared during demo calls, package sessions, or
-            quick consults.
-          </Text>
-          <TextInput
-            placeholder="Title (e.g. Lab report Dec 2025)"
-            placeholderTextColor={theme.textTertiary}
-            value={title}
-            onChangeText={setTitle}
-            onFocus={() => {
-              requestAnimationFrame(() =>
-                scrollRef.current?.scrollTo({ y: 0, animated: true }),
-              );
-            }}
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: 14,
-              padding: 14,
-              color: theme.textPrimary,
-              borderWidth: 1,
-              borderColor: theme.cardBorder,
-              marginBottom: 12,
-            }}
-          />
+        <Text
+          style={{
+            color: theme.textSecondary,
+            fontSize: S.small,
+            marginBottom: 12,
+          }}
+        >
+          Upload prescriptions, lab reports (PDF), or images. Open anytime,
+          delete if you like, or send a copy into your chat with a doctor (you
+          pick the doctor — package doctors in package mode, RMP doctors in
+          casual mode).
+        </Text>
+        <TextInput
+          placeholder="Title (e.g. Lab report Dec 2025)"
+          placeholderTextColor={theme.textTertiary}
+          value={title}
+          onChangeText={setTitle}
+          onFocus={() => {
+            requestAnimationFrame(() =>
+              scrollRef.current?.scrollTo({ y: 0, animated: true }),
+            );
+          }}
+          style={{
+            backgroundColor: theme.card,
+            borderRadius: 14,
+            padding: 14,
+            color: theme.textPrimary,
+            borderWidth: 1,
+            borderColor: theme.cardBorder,
+            marginBottom: 12,
+          }}
+        />
         <TouchableOpacity
-          onPress={pickAndUpload}
+          onPress={promptUploadSource}
           disabled={busy}
           style={{
             backgroundColor: theme.accent,
@@ -1794,10 +1950,195 @@ export function MedicalRecordsScreen({
               >
                 {r.created ? String(r.created).slice(0, 10) : ""}
               </Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  marginTop: 10,
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => void openRecord(r)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    backgroundColor: theme.accentLight,
+                  }}
+                >
+                  <Text style={{ color: theme.accent, fontWeight: "700" }}>
+                    Open
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => confirmDeleteRecord(r)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    backgroundColor: theme.inputBg,
+                    borderWidth: 1,
+                    borderColor: theme.cardBorder,
+                  }}
+                >
+                  <Text style={{ color: theme.danger, fontWeight: "700" }}>
+                    Delete
+                  </Text>
+                </TouchableOpacity>
+                {onShareMedicalRecordToDoctor ? (
+                  <TouchableOpacity
+                    onPress={() => void beginShareToDoctor(r)}
+                    style={{
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderRadius: 10,
+                      backgroundColor: theme.inputBg,
+                      borderWidth: 1,
+                      borderColor: theme.accent,
+                    }}
+                  >
+                    <Text style={{ color: theme.accent, fontWeight: "700" }}>
+                      Send to doctor
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
           ))
         )}
       </ScrollView>
+
+      <Modal
+        visible={shareModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setShareModalVisible(false);
+          setShareRecord(null);
+        }}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            justifyContent: "flex-end",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderTopLeftRadius: 18,
+              borderTopRightRadius: 18,
+              padding: S.pad,
+              paddingBottom: (insets.bottom || 0) + S.pad,
+              maxHeight: "72%",
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontSize: S.title,
+                fontWeight: "800",
+              }}
+            >
+              Send to doctor
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: S.small,
+                marginTop: 6,
+                marginBottom: 8,
+              }}
+            >
+              {shareDoctorHint}
+            </Text>
+            {shareRecord ? (
+              <Text
+                style={{
+                  color: theme.textTertiary,
+                  fontSize: 12,
+                  marginBottom: 12,
+                }}
+                numberOfLines={2}
+              >
+                Record: {shareRecord.title || "Untitled"}
+              </Text>
+            ) : null}
+            {shareDoctorsLoading ? (
+              <ActivityIndicator color={theme.accent} style={{ marginVertical: 16 }} />
+            ) : (
+              <ScrollView keyboardShouldPersistTaps="handled">
+                {shareDoctors.map((d) => (
+                  <TouchableOpacity
+                    key={d.doctorUserId}
+                    disabled={!!shareSendingId}
+                    onPress={() => void sendShareToDoctor(d.doctorUserId)}
+                    style={{
+                      paddingVertical: 12,
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: theme.cardBorder,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text
+                        style={{
+                          color: theme.textPrimary,
+                          fontWeight: "700",
+                          fontSize: S.body,
+                        }}
+                      >
+                        {d.label}
+                      </Text>
+                      <Text
+                        style={{
+                          color: theme.textTertiary,
+                          fontSize: 11,
+                          marginTop: 2,
+                        }}
+                        numberOfLines={2}
+                      >
+                        {d.subtitle}
+                      </Text>
+                    </View>
+                    {shareSendingId === d.doctorUserId ? (
+                      <ActivityIndicator color={theme.accent} />
+                    ) : (
+                      <Ionicons
+                        name="chevron-forward"
+                        size={20}
+                        color={theme.textTertiary}
+                      />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+            <TouchableOpacity
+              onPress={() => {
+                setShareModalVisible(false);
+                setShareRecord(null);
+                setShareDoctors([]);
+              }}
+              style={{
+                marginTop: 12,
+                padding: 14,
+                alignItems: "center",
+                borderRadius: 12,
+                backgroundColor: theme.inputBg,
+              }}
+            >
+              <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
