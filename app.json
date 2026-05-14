@@ -4,7 +4,7 @@
     "slug": "nvoisys-health",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icons/logo_N.png",
+    "icon": "./assets/icons/app_icon.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "splash": {
@@ -38,7 +38,7 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#1E1B4B",
-        "foregroundImage": "./assets/icons/logo_N.png"
+        "foregroundImage": "./assets/icons/app_icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.myapp",
@@ -63,7 +63,14 @@
       ],
       "expo-router",
       "expo-web-browser",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icons/notification_icon.png",
+          "color": "#1E1B4B",
+          "defaultChannel": "default"
+        }
+      ],
       "@livekit/react-native-expo-plugin",
       "expo-font",
       "expo-image",
