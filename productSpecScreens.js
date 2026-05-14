@@ -7558,6 +7558,10 @@ export function CoinWalletDoctorPanel({
       await doctorWithdrawCoinsStub(user?.id, Number(withdraw));
       setWithdraw("");
       await refreshBalance();
+      Alert.alert(
+        "Withdraw request submitted",
+        "Your withdraw request has been made and will be processed soon.",
+      );
     } catch (e) {
       Alert.alert("Withdraw", e?.message || "Failed");
     } finally {
