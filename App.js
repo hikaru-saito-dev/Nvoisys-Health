@@ -12553,6 +12553,74 @@ const PatientAppointmentsScreen = ({ onBack }) => {
   };
 
 const NVOISYS_PRIVACY_POLICY_URL = "https://nvoisyshealth.com/privacy";
+/** In-app registration gate; host a matching page or redirect at this path. */
+const NVOISYS_TERMS_AND_CONDITIONS_URL = "https://nvoisyshealth.com/terms";
+
+/** Checkbox + link for patient / doctor / pharmacy registration. */
+const RegistrationTermsAcceptRow = ({ accepted, onAcceptedChange, accentColor }) => {
+  const openTerms = async () => {
+    try {
+      const supported = await Linking.canOpenURL(NVOISYS_TERMS_AND_CONDITIONS_URL);
+      if (supported) await Linking.openURL(NVOISYS_TERMS_AND_CONDITIONS_URL);
+      else Alert.alert("Terms", "Unable to open Terms and Conditions.");
+    } catch {
+      Alert.alert("Terms", "Unable to open Terms and Conditions.");
+    }
+  };
+
+  return (
+    <View
+      style={{
+        marginTop: RFValue(12),
+        marginBottom: RFValue(4),
+        paddingVertical: RFValue(4),
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+        <TouchableOpacity
+          onPress={() => onAcceptedChange(!accepted)}
+          activeOpacity={0.85}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: !!accepted }}
+          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          style={{
+            width: RFValue(24),
+            height: RFValue(24),
+            borderRadius: RFValue(7),
+            borderWidth: 2,
+            borderColor: accepted ? accentColor : "#D1D5DB",
+            backgroundColor: accepted ? accentColor : "#FFFFFF",
+            marginRight: RFValue(12),
+            marginTop: RFValue(2),
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {accepted ? (
+            <Ionicons name="checkmark" size={RFValue(15)} color="#FFFFFF" />
+          ) : null}
+        </TouchableOpacity>
+        <Text
+          style={{
+            flex: 1,
+            fontSize: RFValue(13),
+            color: "#4B5563",
+            lineHeight: RFValue(20),
+          }}
+        >
+          I have read and agree to the{" "}
+          <Text
+            style={{ color: accentColor, fontWeight: "800" }}
+            onPress={() => void openTerms()}
+          >
+            Terms and Conditions
+          </Text>
+          .
+        </Text>
+      </View>
+    </View>
+  );
+};
 
 const PatientProfileScreen = ({
   currentUser,
@@ -14736,6 +14804,7 @@ const RegisterScreen = ({ onFinish, onBack }) => {
   const [email, setEmail] = useState("");
   const [dob, setDob] = useState("");
   const [gender, setGender] = useState("Male");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const inputStyle = {
     backgroundColor: "#F9FAFB",
@@ -15046,6 +15115,12 @@ const RegisterScreen = ({ onFinish, onBack }) => {
                   </TouchableOpacity>
                 ))}
               </View>
+
+              <RegistrationTermsAcceptRow
+                accepted={acceptedTerms}
+                onAcceptedChange={setAcceptedTerms}
+                accentColor="#4338CA"
+              />
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -15071,8 +15146,18 @@ const RegisterScreen = ({ onFinish, onBack }) => {
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
             elevation: 4,
+            opacity: acceptedTerms ? 1 : 0.45,
           }}
-          onPress={() => onFinish(mobile)}
+          onPress={() => {
+            if (!acceptedTerms) {
+              Alert.alert(
+                "Terms and Conditions",
+                "Please read and accept the Terms and Conditions to continue.",
+              );
+              return;
+            }
+            onFinish(mobile);
+          }}
         >
           <Text
             style={{ color: "#FFF", fontSize: RFValue(16), fontWeight: "700" }}
@@ -15094,6 +15179,7 @@ const DoctorRegisterScreen = ({ onFinish, onBack }) => {
   const [email, setEmail] = useState("");
   const [mci, setMci] = useState("");
   const [spec, setSpec] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FAFBFF" }}>
@@ -15427,6 +15513,12 @@ const DoctorRegisterScreen = ({ onFinish, onBack }) => {
                   onChangeText={setSpec}
                 />
               </View>
+
+              <RegistrationTermsAcceptRow
+                accepted={acceptedTerms}
+                onAcceptedChange={setAcceptedTerms}
+                accentColor="#059669"
+              />
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -15452,8 +15544,18 @@ const DoctorRegisterScreen = ({ onFinish, onBack }) => {
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
             elevation: 4,
+            opacity: acceptedTerms ? 1 : 0.45,
           }}
-          onPress={() => onFinish(mobile)}
+          onPress={() => {
+            if (!acceptedTerms) {
+              Alert.alert(
+                "Terms and Conditions",
+                "Please read and accept the Terms and Conditions to continue.",
+              );
+              return;
+            }
+            onFinish(mobile);
+          }}
         >
           <Text
             style={{ color: "#FFF", fontSize: RFValue(16), fontWeight: "700" }}
@@ -15472,6 +15574,7 @@ const PharmacyRegisterScreen = ({ onFinish, onBack }) => {
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
   const [email, setEmail] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const labelStyle = {
     fontSize: RFValue(13),
@@ -15701,6 +15804,12 @@ const PharmacyRegisterScreen = ({ onFinish, onBack }) => {
                   onChangeText={setEmail}
                 />
               </View>
+
+              <RegistrationTermsAcceptRow
+                accepted={acceptedTerms}
+                onAcceptedChange={setAcceptedTerms}
+                accentColor="#8B5CF6"
+              />
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -15726,8 +15835,18 @@ const PharmacyRegisterScreen = ({ onFinish, onBack }) => {
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
             elevation: 4,
+            opacity: acceptedTerms ? 1 : 0.45,
           }}
-          onPress={() => onFinish(mobile)}
+          onPress={() => {
+            if (!acceptedTerms) {
+              Alert.alert(
+                "Terms and Conditions",
+                "Please read and accept the Terms and Conditions to continue.",
+              );
+              return;
+            }
+            onFinish(mobile);
+          }}
         >
           <Text
             style={{ color: "#FFF", fontSize: RFValue(16), fontWeight: "700" }}
