@@ -1717,14 +1717,6 @@ export function MedicalRecordsScreen({
     }
   };
 
-  const promptUploadSource = () => {
-    Alert.alert("Upload file", "Choose a source", [
-      { text: "Photos & screenshots", onPress: () => void pickImageAndUpload() },
-      { text: "PDF or document", onPress: () => void pickDocumentAndUpload() },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
-
   const openRecord = async (record) => {
     const url = getMedicalRecordFileDownloadUrl(record);
     if (!url) {
@@ -1817,8 +1809,29 @@ export function MedicalRecordsScreen({
 
   const shareDoctorHint =
     effectiveCareMode === CARE_MODE.PACKAGE
-      ? "Package mode: only doctors from your active packages."
-      : "Casual / other modes: only RMP / quick-consult doctors.";
+      ? "Only doctors linked to your active care packages appear here."
+      : "Only RMP / quick-consult doctors you can message from this care mode.";
+
+  const formatRecordDate = (iso) => {
+    if (!iso) return "";
+    try {
+      return new Date(iso).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    } catch {
+      return String(iso).slice(0, 10);
+    }
+  };
+
+  const cardShadow = {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 10,
+    elevation: 3,
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -1827,181 +1840,513 @@ export function MedicalRecordsScreen({
           flexDirection: "row",
           alignItems: "center",
           paddingHorizontal: S.pad,
-          paddingBottom: S.pad,
-          paddingTop: (insets.top || 0) + 12,
+          paddingBottom: 14,
+          paddingTop: (insets.top || 0) + 10,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: theme.cardBorder,
+          backgroundColor: theme.bg,
         }}
       >
-        <TouchableOpacity onPress={onBack} style={{ marginRight: 12 }}>
-          <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
-        </TouchableOpacity>
-        <Text
+        <TouchableOpacity
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
           style={{
-            color: theme.textPrimary,
-            fontSize: S.title,
-            fontWeight: "800",
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            backgroundColor: theme.card,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+            alignItems: "center",
+            justifyContent: "center",
+            marginRight: 12,
           }}
         >
-          Medical records
-        </Text>
+          <Ionicons name="arrow-back" size={22} color={theme.textPrimary} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 20,
+              fontWeight: "800",
+              letterSpacing: -0.3,
+            }}
+          >
+            Medical records
+          </Text>
+          <Text
+            style={{
+              color: theme.textTertiary,
+              fontSize: 12,
+              marginTop: 2,
+              fontWeight: "500",
+            }}
+          >
+            Private to your profile
+          </Text>
+        </View>
       </View>
+
       <ScrollView
         ref={scrollRef}
         style={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           padding: S.pad,
           paddingBottom: scrollBottomPad,
         }}
       >
-        <Text
-          style={{
-            color: theme.textSecondary,
-            fontSize: S.small,
-            marginBottom: 12,
-          }}
-        >
-          Upload prescriptions, lab reports (PDF), or images. Open anytime,
-          delete if you like, or send a copy into your chat with a doctor (you
-          pick the doctor — package doctors in package mode, RMP doctors in
-          casual mode).
-        </Text>
-        <TextInput
-          placeholder="Title (e.g. Lab report Dec 2025)"
-          placeholderTextColor={theme.textTertiary}
-          value={title}
-          onChangeText={setTitle}
-          onFocus={() => {
-            requestAnimationFrame(() =>
-              scrollRef.current?.scrollTo({ y: 0, animated: true }),
-            );
-          }}
+        <View
           style={{
             backgroundColor: theme.card,
-            borderRadius: 14,
-            padding: 14,
-            color: theme.textPrimary,
-            borderWidth: 1,
-            borderColor: theme.cardBorder,
-            marginBottom: 12,
-          }}
-        />
-        <TouchableOpacity
-          onPress={promptUploadSource}
-          disabled={busy}
-          style={{
-            backgroundColor: theme.accent,
-            padding: 16,
             borderRadius: 16,
-            alignItems: "center",
-            opacity: busy ? 0.7 : 1,
+            padding: 16,
+            marginBottom: 20,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+            ...cardShadow,
           }}
         >
-          {busy ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Upload file
-            </Text>
-          )}
-        </TouchableOpacity>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginBottom: 14,
+            }}
+          >
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                backgroundColor: theme.accentLight,
+                alignItems: "center",
+                justifyContent: "center",
+                marginRight: 12,
+              }}
+            >
+              <Ionicons name="cloud-upload-outline" size={22} color={theme.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontSize: 16,
+                  fontWeight: "800",
+                }}
+              >
+                New upload
+              </Text>
+              <Text
+                style={{
+                  color: theme.textSecondary,
+                  fontSize: 12,
+                  marginTop: 2,
+                  lineHeight: 17,
+                }}
+              >
+                Add a title, then choose photos or a PDF. You can open, delete,
+                or share with a doctor anytime.
+              </Text>
+            </View>
+          </View>
 
-        <Text
+          <Text
+            style={{
+              color: theme.textSecondary,
+              fontSize: 12,
+              fontWeight: "700",
+              marginBottom: 6,
+            }}
+          >
+            Record title
+          </Text>
+          <TextInput
+            placeholder="e.g. Lab report — December 2025"
+            placeholderTextColor={theme.textTertiary}
+            value={title}
+            onChangeText={setTitle}
+            onFocus={() => {
+              requestAnimationFrame(() =>
+                scrollRef.current?.scrollTo({ y: 0, animated: true }),
+              );
+            }}
+            style={{
+              backgroundColor: theme.inputBg,
+              borderRadius: 12,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              color: theme.textPrimary,
+              borderWidth: 1,
+              borderColor: theme.inputBorder,
+              fontSize: 15,
+            }}
+          />
+
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 10,
+              marginTop: 14,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => void pickImageAndUpload()}
+              disabled={busy}
+              style={{
+                flex: 1,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                paddingVertical: 13,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: theme.cardBorder,
+                backgroundColor: theme.inputBg,
+                opacity: busy ? 0.55 : 1,
+              }}
+            >
+              <Ionicons name="images-outline" size={20} color={theme.accent} />
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontWeight: "700",
+                  fontSize: 14,
+                }}
+              >
+                Photos
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => void pickDocumentAndUpload()}
+              disabled={busy}
+              style={{
+                flex: 1,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                paddingVertical: 13,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: theme.cardBorder,
+                backgroundColor: theme.inputBg,
+                opacity: busy ? 0.55 : 1,
+              }}
+            >
+              <Ionicons name="document-text-outline" size={20} color={theme.accent} />
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontWeight: "700",
+                  fontSize: 14,
+                }}
+              >
+                PDF / file
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {busy ? (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                marginTop: 14,
+                gap: 10,
+              }}
+            >
+              <ActivityIndicator color={theme.accent} />
+              <Text style={{ color: theme.textSecondary, fontSize: 13 }}>
+                Uploading…
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View
           style={{
-            marginTop: 24,
-            marginBottom: 8,
-            color: theme.textTertiary,
-            fontWeight: "700",
-            fontSize: 11,
-            letterSpacing: 0.6,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 12,
+            paddingHorizontal: 2,
           }}
         >
-          YOUR FILES
-        </Text>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: 15,
+              fontWeight: "800",
+              letterSpacing: -0.2,
+            }}
+          >
+            Your library
+          </Text>
+          {!loading ? (
+            <View
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 999,
+                backgroundColor: theme.accentLight,
+              }}
+            >
+              <Text
+                style={{
+                  color: theme.accent,
+                  fontSize: 12,
+                  fontWeight: "800",
+                }}
+              >
+                {rows.length} {rows.length === 1 ? "file" : "files"}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
         {loading ? (
-          <ActivityIndicator color={theme.accent} />
+          <View
+            style={{
+              paddingVertical: 40,
+              alignItems: "center",
+            }}
+          >
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: 13,
+                marginTop: 12,
+              }}
+            >
+              Loading your records…
+            </Text>
+          </View>
         ) : rows.length === 0 ? (
-          <Text style={{ color: theme.textSecondary }}>No records yet.</Text>
+          <View
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: 16,
+              padding: 28,
+              alignItems: "center",
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
+              ...cardShadow,
+            }}
+          >
+            <View
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 20,
+                backgroundColor: theme.accentLight,
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: 16,
+              }}
+            >
+              <Ionicons name="folder-open-outline" size={32} color={theme.accent} />
+            </View>
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontSize: 16,
+                fontWeight: "800",
+                textAlign: "center",
+              }}
+            >
+              No files yet
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: 13,
+                textAlign: "center",
+                marginTop: 8,
+                lineHeight: 20,
+                maxWidth: 280,
+              }}
+            >
+              Upload prescriptions, lab PDFs, or photos. They stay on your
+              profile until you remove them.
+            </Text>
+          </View>
         ) : (
           rows.map((r) => (
             <View
               key={r.id}
               style={{
                 backgroundColor: theme.card,
-                padding: 12,
-                borderRadius: 12,
-                marginBottom: 8,
+                borderRadius: 16,
+                marginBottom: 12,
                 borderWidth: StyleSheet.hairlineWidth,
                 borderColor: theme.cardBorder,
+                overflow: "hidden",
+                ...cardShadow,
               }}
             >
-              <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                {r.title || "Record"}
-              </Text>
-              <Text
-                style={{
-                  color: theme.textTertiary,
-                  fontSize: 11,
-                  marginTop: 4,
-                }}
-              >
-                {r.created ? String(r.created).slice(0, 10) : ""}
-              </Text>
               <View
                 style={{
                   flexDirection: "row",
-                  flexWrap: "wrap",
-                  gap: 8,
-                  marginTop: 10,
+                  padding: 16,
+                  paddingBottom: 12,
+                }}
+              >
+                <View
+                  style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: 14,
+                    backgroundColor: theme.accentLight,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginRight: 14,
+                  }}
+                >
+                  <Ionicons name="document-attach-outline" size={24} color={theme.accent} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text
+                    numberOfLines={2}
+                    style={{
+                      color: theme.textPrimary,
+                      fontWeight: "800",
+                      fontSize: 16,
+                      lineHeight: 22,
+                    }}
+                  >
+                    {r.title || "Untitled record"}
+                  </Text>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      marginTop: 6,
+                      gap: 6,
+                    }}
+                  >
+                    <Ionicons
+                      name="calendar-outline"
+                      size={14}
+                      color={theme.textTertiary}
+                    />
+                    <Text
+                      style={{
+                        color: theme.textTertiary,
+                        fontSize: 12,
+                        fontWeight: "600",
+                      }}
+                    >
+                      {formatRecordDate(r.created)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: theme.cardBorder,
+                  paddingTop: 2,
                 }}
               >
                 <TouchableOpacity
                   onPress={() => void openRecord(r)}
+                  activeOpacity={0.75}
                   style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 10,
-                    backgroundColor: theme.accentLight,
+                    flex: 1,
+                    alignItems: "center",
+                    paddingVertical: 14,
                   }}
                 >
-                  <Text style={{ color: theme.accent, fontWeight: "700" }}>
-                    Open
+                  <Ionicons name="eye-outline" size={22} color={theme.accent} />
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "700",
+                      color: theme.accent,
+                      marginTop: 6,
+                    }}
+                  >
+                    View
                   </Text>
                 </TouchableOpacity>
+                <View
+                  style={{
+                    width: StyleSheet.hairlineWidth,
+                    backgroundColor: theme.cardBorder,
+                    marginVertical: 10,
+                  }}
+                />
                 <TouchableOpacity
                   onPress={() => confirmDeleteRecord(r)}
+                  activeOpacity={0.75}
                   style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 10,
-                    backgroundColor: theme.inputBg,
-                    borderWidth: 1,
-                    borderColor: theme.cardBorder,
+                    flex: 1,
+                    alignItems: "center",
+                    paddingVertical: 14,
                   }}
                 >
-                  <Text style={{ color: theme.danger, fontWeight: "700" }}>
-                    Delete
+                  <Ionicons
+                    name="trash-outline"
+                    size={22}
+                    color={theme.danger || "#DC2626"}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "700",
+                      color: theme.danger || "#DC2626",
+                      marginTop: 6,
+                    }}
+                  >
+                    Remove
                   </Text>
                 </TouchableOpacity>
                 {onShareMedicalRecordToDoctor ? (
-                  <TouchableOpacity
-                    onPress={() => void beginShareToDoctor(r)}
-                    style={{
-                      paddingVertical: 8,
-                      paddingHorizontal: 12,
-                      borderRadius: 10,
-                      backgroundColor: theme.inputBg,
-                      borderWidth: 1,
-                      borderColor: theme.accent,
-                    }}
-                  >
-                    <Text style={{ color: theme.accent, fontWeight: "700" }}>
-                      Send to doctor
-                    </Text>
-                  </TouchableOpacity>
+                  <>
+                    <View
+                      style={{
+                        width: StyleSheet.hairlineWidth,
+                        backgroundColor: theme.cardBorder,
+                        marginVertical: 10,
+                      }}
+                    />
+                    <TouchableOpacity
+                      onPress={() => void beginShareToDoctor(r)}
+                      activeOpacity={0.75}
+                      style={{
+                        flex: 1,
+                        alignItems: "center",
+                        paddingVertical: 14,
+                      }}
+                    >
+                      <Ionicons
+                        name="paper-plane-outline"
+                        size={22}
+                        color={theme.accent}
+                      />
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: "700",
+                          color: theme.accent,
+                          marginTop: 6,
+                        }}
+                      >
+                        Share
+                      </Text>
+                    </TouchableOpacity>
+                  </>
                 ) : null}
               </View>
             </View>
@@ -2018,126 +2363,198 @@ export function MedicalRecordsScreen({
           setShareRecord(null);
         }}
       >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            justifyContent: "flex-end",
-          }}
-        >
+        <View style={{ flex: 1, justifyContent: "flex-end" }}>
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => {
+              setShareModalVisible(false);
+              setShareRecord(null);
+              setShareDoctors([]);
+            }}
+            style={{
+              ...StyleSheet.absoluteFillObject,
+              backgroundColor: "rgba(15, 23, 42, 0.55)",
+            }}
+          />
           <View
             style={{
               backgroundColor: theme.card,
-              borderTopLeftRadius: 18,
-              borderTopRightRadius: 18,
-              padding: S.pad,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              paddingHorizontal: S.pad,
+              paddingTop: 10,
               paddingBottom: (insets.bottom || 0) + S.pad,
-              maxHeight: "72%",
+              maxHeight: "78%",
             }}
           >
-            <Text
-              style={{
-                color: theme.textPrimary,
-                fontSize: S.title,
-                fontWeight: "800",
-              }}
-            >
-              Send to doctor
-            </Text>
-            <Text
-              style={{
-                color: theme.textSecondary,
-                fontSize: S.small,
-                marginTop: 6,
-                marginBottom: 8,
-              }}
-            >
-              {shareDoctorHint}
-            </Text>
-            {shareRecord ? (
+              <View
+                style={{
+                  alignSelf: "center",
+                  width: 40,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: theme.cardBorder,
+                  marginBottom: 16,
+                }}
+              />
               <Text
                 style={{
-                  color: theme.textTertiary,
-                  fontSize: 12,
-                  marginBottom: 12,
+                  color: theme.textPrimary,
+                  fontSize: 18,
+                  fontWeight: "800",
                 }}
-                numberOfLines={2}
               >
-                Record: {shareRecord.title || "Untitled"}
+                Share with a doctor
               </Text>
-            ) : null}
-            {shareDoctorsLoading ? (
-              <ActivityIndicator color={theme.accent} style={{ marginVertical: 16 }} />
-            ) : (
-              <ScrollView keyboardShouldPersistTaps="handled">
-                {shareDoctors.map((d) => (
-                  <TouchableOpacity
-                    key={d.doctorUserId}
-                    disabled={!!shareSendingId}
-                    onPress={() => void sendShareToDoctor(d.doctorUserId)}
+              <Text
+                style={{
+                  color: theme.textSecondary,
+                  fontSize: 13,
+                  marginTop: 6,
+                  lineHeight: 19,
+                }}
+              >
+                {shareDoctorHint}
+              </Text>
+              {shareRecord ? (
+                <View
+                  style={{
+                    marginTop: 14,
+                    padding: 12,
+                    borderRadius: 12,
+                    backgroundColor: theme.inputBg,
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.cardBorder,
+                  }}
+                >
+                  <Text
                     style={{
-                      paddingVertical: 12,
-                      borderBottomWidth: StyleSheet.hairlineWidth,
-                      borderBottomColor: theme.cardBorder,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
+                      color: theme.textTertiary,
+                      fontSize: 11,
+                      fontWeight: "700",
+                      textTransform: "uppercase",
+                      letterSpacing: 0.5,
                     }}
                   >
-                    <View style={{ flex: 1, paddingRight: 8 }}>
-                      <Text
+                    Selected file
+                  </Text>
+                  <Text
+                    style={{
+                      color: theme.textPrimary,
+                      fontSize: 14,
+                      fontWeight: "700",
+                      marginTop: 4,
+                    }}
+                    numberOfLines={2}
+                  >
+                    {shareRecord.title || "Untitled"}
+                  </Text>
+                </View>
+              ) : null}
+              {shareDoctorsLoading ? (
+                <View style={{ paddingVertical: 28, alignItems: "center" }}>
+                  <ActivityIndicator color={theme.accent} />
+                  <Text
+                    style={{
+                      color: theme.textSecondary,
+                      fontSize: 13,
+                      marginTop: 12,
+                    }}
+                  >
+                    Finding your doctors…
+                  </Text>
+                </View>
+              ) : (
+                <ScrollView
+                  keyboardShouldPersistTaps="handled"
+                  style={{ marginTop: 12 }}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {shareDoctors.map((d) => (
+                    <TouchableOpacity
+                      key={d.doctorUserId}
+                      disabled={!!shareSendingId}
+                      onPress={() => void sendShareToDoctor(d.doctorUserId)}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingVertical: 14,
+                        paddingHorizontal: 4,
+                        borderBottomWidth: StyleSheet.hairlineWidth,
+                        borderBottomColor: theme.cardBorder,
+                      }}
+                    >
+                      <View
                         style={{
-                          color: theme.textPrimary,
-                          fontWeight: "700",
-                          fontSize: S.body,
+                          width: 44,
+                          height: 44,
+                          borderRadius: 14,
+                          backgroundColor: theme.accentLight,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          marginRight: 12,
                         }}
                       >
-                        {d.label}
-                      </Text>
-                      <Text
-                        style={{
-                          color: theme.textTertiary,
-                          fontSize: 11,
-                          marginTop: 2,
-                        }}
-                        numberOfLines={2}
-                      >
-                        {d.subtitle}
-                      </Text>
-                    </View>
-                    {shareSendingId === d.doctorUserId ? (
-                      <ActivityIndicator color={theme.accent} />
-                    ) : (
-                      <Ionicons
-                        name="chevron-forward"
-                        size={20}
-                        color={theme.textTertiary}
-                      />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-            <TouchableOpacity
-              onPress={() => {
-                setShareModalVisible(false);
-                setShareRecord(null);
-                setShareDoctors([]);
-              }}
-              style={{
-                marginTop: 12,
-                padding: 14,
-                alignItems: "center",
-                borderRadius: 12,
-                backgroundColor: theme.inputBg,
-              }}
-            >
-              <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-                Cancel
-              </Text>
-            </TouchableOpacity>
+                        <Ionicons name="person" size={22} color={theme.accent} />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text
+                          style={{
+                            color: theme.textPrimary,
+                            fontWeight: "800",
+                            fontSize: 15,
+                          }}
+                          numberOfLines={1}
+                        >
+                          {d.label}
+                        </Text>
+                        <Text
+                          style={{
+                            color: theme.textTertiary,
+                            fontSize: 12,
+                            marginTop: 3,
+                          }}
+                          numberOfLines={2}
+                        >
+                          {d.subtitle}
+                        </Text>
+                      </View>
+                      {shareSendingId === d.doctorUserId ? (
+                        <ActivityIndicator color={theme.accent} style={{ marginLeft: 8 }} />
+                      ) : (
+                        <Ionicons
+                          name="chevron-forward"
+                          size={22}
+                          color={theme.textTertiary}
+                          style={{ marginLeft: 4 }}
+                        />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+              <TouchableOpacity
+                onPress={() => {
+                  setShareModalVisible(false);
+                  setShareRecord(null);
+                  setShareDoctors([]);
+                }}
+                style={{
+                  marginTop: 8,
+                  padding: 15,
+                  alignItems: "center",
+                  borderRadius: 14,
+                  backgroundColor: theme.inputBg,
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <Text style={{ color: theme.textPrimary, fontWeight: "800", fontSize: 15 }}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
       </Modal>
     </View>
   );

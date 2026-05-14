@@ -174,6 +174,8 @@ import {
   useKeyboardBottomInset,
 } from "./keyboardScrollUtils";
 
+ExpoSplashScreen.preventAutoHideAsync().catch(() => {});
+
 /** Load WebRTC only when a call screen runs - avoids native init at cold start (common emulator crash). */
 let livekitWebRtcModule = null;
 const getLivekitWebRTC = () => {
@@ -4273,8 +4275,9 @@ const RotateView = ({ children, style, duration = 2000 }) => {
   );
 };
 
-/** Splash logo asset: `assets/logo-nvoisys.svg` (loaded via expo-image, not `uri`). */
-const NVOISYS_SPLASH_LOGO = require("./assets/logo-nvoisys.svg");
+/** Splash logo: PNG only — Android often shows a broken/wireframe SVG placeholder before decode. */
+const NVOISYS_SPLASH_LOGO_PNG = require("./assets/icons/logo_N.png");
+const BRAND_SPLASH_BG = "#1E1B4B";
 
 const COLORS = {
   primary: "#4338CA", // Indigo 700
@@ -13359,13 +13362,11 @@ const PatientProfileScreen = ({
 };
 
 const SplashScreen = ({ onNext }) => {
-  const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const splashOpacity = useRef(new Animated.Value(0)).current;
   const splashScale = useRef(new Animated.Value(0.94)).current;
 
   useEffect(() => {
-    ExpoSplashScreen.hideAsync().catch(() => {});
     const enter = Animated.parallel([
       Animated.timing(splashOpacity, {
         toValue: 1,
@@ -13394,10 +13395,10 @@ const SplashScreen = ({ onNext }) => {
     <SafeAreaView
       style={{
         flex: 1,
-        backgroundColor: theme.bg,
+        backgroundColor: BRAND_SPLASH_BG,
       }}
     >
-      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={BRAND_SPLASH_BG} />
 
       {/* Main content - flex so it does not collide with footer dots */}
       <Animated.View
@@ -13417,20 +13418,20 @@ const SplashScreen = ({ onNext }) => {
             width: RFValue(180),
             height: RFValue(180),
             borderRadius: RFValue(40),
-            backgroundColor: theme.card,
+            backgroundColor: "rgba(255,255,255,0.12)",
             justifyContent: "center",
             alignItems: "center",
-            shadowColor: theme.accent,
-            shadowOpacity: 0.22,
+            shadowColor: "#000",
+            shadowOpacity: 0.35,
             shadowOffset: { width: 0, height: 8 },
             shadowRadius: 24,
             elevation: 8,
             marginBottom: RFValue(24),
           }}
         >
-          <ExpoImage
-            source={NVOISYS_SPLASH_LOGO}
-            contentFit="contain"
+          <Image
+            source={NVOISYS_SPLASH_LOGO_PNG}
+            resizeMode="contain"
             style={{
               width: RFValue(140),
               height: RFValue(140),
@@ -13443,7 +13444,7 @@ const SplashScreen = ({ onNext }) => {
           style={{
             fontSize: RFValue(28),
             fontWeight: "800",
-            color: theme.textPrimary,
+            color: "#FFFFFF",
             letterSpacing: RFValue(1),
             marginBottom: RFValue(8),
           }}
@@ -13456,7 +13457,7 @@ const SplashScreen = ({ onNext }) => {
           style={{
             fontSize: RFValue(15),
             fontWeight: "600",
-            color: theme.textSecondary,
+            color: "#C7D2FE",
             letterSpacing: RFValue(2),
             textTransform: "uppercase",
             marginBottom: RFValue(12),
@@ -13469,7 +13470,7 @@ const SplashScreen = ({ onNext }) => {
         <Text
           style={{
             fontSize: RFValue(14),
-            color: theme.textTertiary,
+            color: "rgba(255,255,255,0.72)",
             textAlign: "center",
             marginBottom: RFValue(8),
           }}
@@ -13493,7 +13494,7 @@ const SplashScreen = ({ onNext }) => {
               width: 8,
               height: 8,
               borderRadius: 4,
-              backgroundColor: theme.accent,
+              backgroundColor: "#FFFFFF",
             }}
           />
           <View
@@ -13501,7 +13502,7 @@ const SplashScreen = ({ onNext }) => {
               width: 8,
               height: 8,
               borderRadius: 4,
-              backgroundColor: theme.cardBorder,
+              backgroundColor: "rgba(255,255,255,0.35)",
             }}
           />
           <View
@@ -13509,7 +13510,7 @@ const SplashScreen = ({ onNext }) => {
               width: 8,
               height: 8,
               borderRadius: 4,
-              backgroundColor: theme.cardBorder,
+              backgroundColor: "rgba(255,255,255,0.35)",
             }}
           />
         </View>
@@ -29887,6 +29888,12 @@ export default function App() {
 
   const theme = THEMES[resolvedPaletteKey] || THEMES.light;
 
+  useLayoutEffect(() => {
+    if (loadingAuth) {
+      ExpoSplashScreen.hideAsync().catch(() => {});
+    }
+  }, [loadingAuth]);
+
   const setFollowSystem = useCallback((next) => {
     const v = !!next;
     setFollowSystemState(v);
@@ -33471,16 +33478,23 @@ export default function App() {
           flex: 1,
           justifyContent: "center",
           alignItems: "center",
-          backgroundColor: theme.bg,
+          backgroundColor: BRAND_SPLASH_BG,
         }}
+        edges={["top", "left", "right"]}
       >
-        <ActivityIndicator size="large" color={theme.accent} />
+        <StatusBar barStyle="light-content" backgroundColor={BRAND_SPLASH_BG} />
+        <Image
+          source={NVOISYS_SPLASH_LOGO_PNG}
+          resizeMode="contain"
+          style={{ width: 120, height: 120, marginBottom: 20 }}
+        />
+        <ActivityIndicator size="large" color="#FFFFFF" />
         <Text
           style={{
-            color: theme.textPrimary,
-            fontSize: RFValue(16),
-            fontWeight: "700",
-            marginTop: 12,
+            color: "rgba(255,255,255,0.85)",
+            fontSize: RFValue(15),
+            fontWeight: "600",
+            marginTop: 14,
           }}
         >
           Loading…
