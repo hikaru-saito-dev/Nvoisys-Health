@@ -4,7 +4,7 @@
     "slug": "nvoisys-health",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icons/app_icon.png",
+    "icon": "./assets/icons/logo_N.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "splash": {
@@ -38,7 +38,7 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#1E1B4B",
-        "foregroundImage": "./assets/icons/app_icon.png"
+        "foregroundImage": "./assets/icons/logo_N.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.myapp",
