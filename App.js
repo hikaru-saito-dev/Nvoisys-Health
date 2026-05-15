@@ -126,6 +126,9 @@ import {
   getPatientPackagePoolCoinsRemaining,
   getDoctorCoinBucketBalances,
   getMedicalRecordFileDownloadUrl,
+  loadDoctorChatDirectoryUsers,
+  loadDoctorPatientsTabRows,
+  loadPharmacyChatDirectoryUsers,
   PACKAGE_MEETING_STATUS,
   normalizeDoctorPackageSlots,
   normalizePharmacyProviderKind,
@@ -736,7 +739,10 @@ const MEDICINE_PRICE_MAP = {
 const PB_APPOINTMENTS_COLLECTION = getPbAppointmentsCollection();
 const PB_APPOINTMENT_DOCTOR_IS_PROFILE = isPbAppointmentDoctorProfileRelation();
 
-const CALL_DIRECTORY_ALLOWED_ROLES = ["doctor", "pharmacy"];
+/** Roles fetched from UsersAuth when a patient opens the call directory. */
+const PATIENT_CALL_DIRECTORY_FETCH_ROLES = ["doctor", "pharmacy"];
+/** Any contact role that may appear in StartCallScreen after loading. */
+const CALL_DIRECTORY_VISIBLE_ROLES = ["doctor", "pharmacy", "patient"];
 
 const DEFAULT_WOUND_SYSTEM_MESSAGE =
   "Wound report submitted. Doctor will review shortly.";
@@ -9042,8 +9048,8 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
   const [directoryError, setDirectoryError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState(() => {
-    if (CALL_DIRECTORY_ALLOWED_ROLES.includes(userRole)) {
-      return userRole;
+    if (userRole === "doctor" || userRole === "pharmacy") {
+      return "patient";
     }
     return "doctor";
   });
@@ -9059,7 +9065,7 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
         setDirectoryLoading(true);
         setDirectoryError("");
         const records = await loadDirectoryContacts({
-          roles: CALL_DIRECTORY_ALLOWED_ROLES,
+          roles: PATIENT_CALL_DIRECTORY_FETCH_ROLES,
         });
         if (mounted) {
           setDirectoryContacts(records);
@@ -9099,7 +9105,7 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
       };
     })
     .filter((contact) => {
-      if (!CALL_DIRECTORY_ALLOWED_ROLES.includes(contact.role)) {
+      if (!CALL_DIRECTORY_VISIBLE_ROLES.includes(contact.role)) {
         return false;
       }
       if (roleFilter && roleFilter !== "all" && contact.role !== roleFilter) {
@@ -9314,11 +9320,16 @@ const StartCallScreen = ({ callType = "video", onBack }) => {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ paddingTop: RFValue(10) }}
           >
-            {[
-              filterChip("all", "All"),
-              filterChip("doctor", "Doctors"),
-              filterChip("pharmacy", "Pharmacies"),
-            ]}
+            {userRole === "doctor" || userRole === "pharmacy"
+              ? [
+                  filterChip("all", "All"),
+                  filterChip("patient", "Patients"),
+                ]
+              : [
+                  filterChip("all", "All"),
+                  filterChip("doctor", "Doctors"),
+                  filterChip("pharmacy", "Pharmacies"),
+                ]}
           </ScrollView>
         </View>
       </View>
@@ -19810,6 +19821,7 @@ const DoctorDashboard = () => {
     patientProfile: doctorProfile,
     wounds,
     patients,
+    dataLoading,
     requestOpenConversation,
     requestOpenDirectChatWithPatient,
     prescribeForQuickRequest,
@@ -20296,7 +20308,7 @@ const DoctorDashboard = () => {
                     marginBottom: RFValue(4),
                   }}
                 >
-                  {patientList.length}
+                  {dataLoading ? "…" : patientList.length}
                 </Text>
                 <Text
                   style={{
@@ -20346,13 +20358,6 @@ const DoctorDashboard = () => {
           {isPackageDoctor ? (
             <>
               <PackageMeetingDoctorPanel theme={theme} />
-              <DoctorQuickRequestsPanel
-                theme={theme}
-                doctorUserId={currentUser?.id}
-                onOpenHelpChat={handleOpenExistingHelpChat}
-                onPrescribeQuickRequest={openQuickPrescribeModal}
-                layout="split_tracks"
-              />
 
               <DoctorUpcomingAppointmentsSection />
 
@@ -20453,7 +20458,7 @@ const DoctorDashboard = () => {
 
 const DoctorPatientsScreen = () => {
   const { theme } = useTheme();
-  const { patients } = useAppData();
+  const { patients, dataLoading } = useAppData();
   const patientList = patients || [];
 
   const riskColor = (level) =>
@@ -20545,10 +20550,23 @@ const DoctorPatientsScreen = () => {
           paddingBottom: tabScrollBottomPadding(),
         }}
       >
-        {patientList.length > 0 ? (
-          patientList.map((p, idx) => (
+        {dataLoading ? (
+          <View style={{ paddingVertical: RFValue(40), alignItems: "center" }}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text
+              style={{
+                marginTop: RFValue(12),
+                color: theme.textSecondary,
+                fontSize: RFValue(14),
+              }}
+            >
+              Loading patients…
+            </Text>
+          </View>
+        ) : patientList.length > 0 ? (
+          patientList.map((p) => (
             <View
-              key={idx}
+              key={String(p.id)}
               style={{
                 backgroundColor: theme.card,
                 borderRadius: RFValue(16),
@@ -30960,41 +30978,7 @@ export default function App() {
   const [hospitalsLoading, setHospitalsLoading] = useState(false);
   const [pharmacies, setPharmacies] = useState([]);
   const [pharmaciesLoading, setPharmaciesLoading] = useState(false);
-  const [patients, setPatients] = useState([
-    {
-      id: 1,
-      name: "Rahul Sharma",
-      age: 28,
-      gender: "Male",
-      riskLevel: "Medium",
-      blood: "O+",
-      conditions: "Hypertension",
-      risk: 65,
-      lastVisit: "Today",
-    },
-    {
-      id: 2,
-      name: "Sneha Gupta",
-      age: 24,
-      gender: "Female",
-      riskLevel: "Low",
-      blood: "A-",
-      conditions: "None",
-      risk: 88,
-      lastVisit: "Yesterday",
-    },
-    {
-      id: 3,
-      name: "Amit Singh",
-      age: 45,
-      gender: "Male",
-      riskLevel: "High",
-      blood: "B+",
-      conditions: "Type 2 Diabetes",
-      risk: 42,
-      lastVisit: "3 days ago",
-    },
-  ]);
+  const [patients, setPatients] = useState([]);
   const [localCareMode, setLocalCareMode] = useState("");
   const [patientPrimaryCarePaths, setPatientPrimaryCarePaths] =
     useState(null);
@@ -31191,49 +31175,83 @@ export default function App() {
     }
   };
 
-  const loadDirectoryContacts = async (options = {}) => {
-    const requestedRoles = safeArray(options?.roles)
-      .map(normalizeUserRole)
-      .filter(Boolean);
-    const roles = requestedRoles.length
-      ? uniqueIds(requestedRoles)
-      : userRole === "patient"
-        ? ["doctor", "pharmacy"]
-        : ["doctor", "pharmacy", "patient"];
+  const loadDirectoryContacts = useCallback(
+    async (options = {}) => {
+      const requestedRoles = safeArray(options?.roles)
+        .map(normalizeUserRole)
+        .filter(Boolean);
 
-    const mode = effectiveCareMode(patientProfile, localCareMode);
-    const quickDoctorsOnly =
-      userRole === "patient" && patientCareModeUsesQuickDoctorsOnly(mode);
-    if (quickDoctorsOnly && roles.includes("doctor")) {
-      const nonDoctorRoles = roles.filter((role) => role !== "doctor");
-      const [doctorRows, nonDoctorRecordsByRole] = await Promise.all([
-        fetchApprovedDoctors({ quickServiceOnly: true }),
-        Promise.all(nonDoctorRoles.map((role) => fetchUsersByRole(role))),
-      ]);
-      const doctorUsers = (doctorRows || []).map((doctor) => ({
-        id: doctor.userId,
-        name: doctor.name,
-        email: doctor.raw?.expand?.user?.email || "",
-        role: "doctor",
-      }));
+      if (userRole === "doctor" && currentUser?.id) {
+        try {
+          return await loadDoctorChatDirectoryUsers({
+            doctorUserId: currentUser.id,
+            doctorProfile: patientProfile || currentUser,
+            appointments: Array.isArray(appointments) ? appointments : [],
+          });
+        } catch (error) {
+          console.log("loadDirectoryContacts doctor:", error?.message);
+          return [];
+        }
+      }
+
+      if (userRole === "pharmacy" && currentUser?.id) {
+        try {
+          return await loadPharmacyChatDirectoryUsers(currentUser.id);
+        } catch (error) {
+          console.log("loadDirectoryContacts pharmacy:", error?.message);
+          return [];
+        }
+      }
+
+      const roles = requestedRoles.length
+        ? uniqueIds(requestedRoles)
+        : userRole === "patient"
+          ? ["doctor", "pharmacy"]
+          : ["doctor", "pharmacy", "patient"];
+
+      const mode = effectiveCareMode(patientProfile, localCareMode);
+      const quickDoctorsOnly =
+        userRole === "patient" && patientCareModeUsesQuickDoctorsOnly(mode);
+      if (quickDoctorsOnly && roles.includes("doctor")) {
+        const nonDoctorRoles = roles.filter((role) => role !== "doctor");
+        const [doctorRows, nonDoctorRecordsByRole] = await Promise.all([
+          fetchApprovedDoctors({ quickServiceOnly: true }),
+          Promise.all(nonDoctorRoles.map((role) => fetchUsersByRole(role))),
+        ]);
+        const doctorUsers = (doctorRows || []).map((doctor) => ({
+          id: doctor.userId,
+          name: doctor.name,
+          email: doctor.raw?.expand?.user?.email || "",
+          role: "doctor",
+        }));
+        const seen = new Set();
+        return [...doctorUsers, ...nonDoctorRecordsByRole.flat()].filter(
+          (user) => {
+            if (!user?.id || seen.has(user.id)) return false;
+            seen.add(user.id);
+            return true;
+          },
+        );
+      }
+
+      const recordsByRole = await Promise.all(
+        roles.map((role) => fetchUsersByRole(role)),
+      );
       const seen = new Set();
-      return [...doctorUsers, ...nonDoctorRecordsByRole.flat()].filter((user) => {
+      return recordsByRole.flat().filter((user) => {
         if (!user?.id || seen.has(user.id)) return false;
         seen.add(user.id);
         return true;
       });
-    }
-
-    const recordsByRole = await Promise.all(
-      roles.map((role) => fetchUsersByRole(role)),
-    );
-    const seen = new Set();
-    return recordsByRole.flat().filter((user) => {
-      if (!user?.id || seen.has(user.id)) return false;
-      seen.add(user.id);
-      return true;
-    });
-  };
+    },
+    [
+      userRole,
+      patientProfile,
+      localCareMode,
+      currentUser?.id,
+      appointments,
+    ],
+  );
 
   const createEncryptedMessage = async (payload, plainText) => {
     const encrypted = await encryptChatText(String(plainText || ""));
@@ -31491,6 +31509,7 @@ export default function App() {
       setPrescriptions([]);
       setConversations([]);
       setAppointments([]);
+      setPatients([]);
       return;
     }
 
@@ -31676,6 +31695,7 @@ export default function App() {
             .filter((record) => record.patient === activeUser.id)
             .map(mapAppointmentRecord),
         );
+        setPatients([]);
       } else if (activeRole === "doctor") {
         setWounds(allWounds);
         setMedOrders(allOrders);
@@ -31689,6 +31709,18 @@ export default function App() {
             .filter(doctorMatchesAppointment)
             .map(mapAppointmentRecord),
         );
+        try {
+          const doctorPatients = await loadDoctorPatientsTabRows({
+            doctorUserId: activeUser.id,
+            doctorProfile: patientProfile || activeUser,
+          });
+          setPatients(
+            Array.isArray(doctorPatients) ? doctorPatients : [],
+          );
+        } catch (e) {
+          console.log("doctor patients tab:", e?.message);
+          setPatients([]);
+        }
       } else if (activeRole === "pharmacy") {
         setWounds(allWounds.filter((record) => record.hasPharmacy));
         // Step 6: pharmacies only see orders addressed to them, OR legacy
@@ -31706,6 +31738,7 @@ export default function App() {
         }
         setPrescriptions([]);
         setAppointments([]);
+        setPatients([]);
       }
 
       setConversations(visibleConversations);
@@ -31717,6 +31750,7 @@ export default function App() {
       setPrescriptions([]);
       setConversations([]);
       setAppointments([]);
+      setPatients([]);
     } finally {
       setDataLoading(false);
     }

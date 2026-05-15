@@ -5027,6 +5027,425 @@ export async function listQueuedQuickCounsellingRequestsForProvider() {
   }
 }
 
+function relIdForDoctorPatients(v) {
+  if (v == null || v === "") return "";
+  if (typeof v === "object" && v.id) return String(v.id).trim();
+  return String(v).trim();
+}
+
+function ageFromDobIso(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  let age = new Date().getFullYear() - d.getFullYear();
+  const md = new Date().getMonth() - d.getMonth();
+  if (md < 0 || (md === 0 && new Date().getDate() < d.getDate())) age -= 1;
+  return Math.max(0, age);
+}
+
+function patientRelIdFromQuickQueueRecord(record) {
+  if (!record) return "";
+  const direct = relIdForDoctorPatients(record.patient);
+  if (direct) return direct;
+  return relIdForDoctorPatients(record.expand?.patient);
+}
+
+function mapPatientProfileToDoctorPatientCard(
+  patientProf,
+  { conditions = "—", lastVisit = "Active", riskHint = 55 } = {},
+) {
+  const u = patientProf?.expand?.user;
+  const name =
+    resolveListingDisplayName(patientProf, u) || "Patient";
+  const gender = String(patientProf?.gender || patientProf?.sex || "—").trim() || "—";
+  const ageN = ageFromDobIso(patientProf?.date_of_birth || patientProf?.dob);
+  const blood = String(
+    patientProf?.blood_type || patientProf?.blood_group || "—",
+  ).trim() || "—";
+  const score = Math.min(98, Math.max(12, Math.round(Number(riskHint) || 55)));
+  const riskLevel =
+    score >= 70 ? "Low" : score >= 45 ? "Medium" : "High";
+  return {
+    id: String(patientProf?.id || name),
+    name,
+    gender,
+    age: ageN != null ? ageN : "—",
+    blood,
+    conditions: String(conditions || "—").slice(0, 120) || "—",
+    riskLevel,
+    risk: score,
+    lastVisit,
+  };
+}
+
+async function fetchPatientDoctorPackageRowsForDoctor(
+  doctorUserId,
+  doctorProfileRowId = "",
+) {
+  const uid = String(doctorUserId || "").trim();
+  const profId = String(doctorProfileRowId || "").trim();
+  const filters = [];
+  if (uid) {
+    filters.push(`doctor="${uid}" && status="active"`);
+    filters.push(`doctor="${uid}"`);
+  }
+  if (profId) {
+    filters.push(`doctor="${profId}" && status="active"`);
+    filters.push(`doctor="${profId}"`);
+  }
+  for (const filter of filters) {
+    try {
+      const list = await pb.collection("patient_doctor_packages").getFullList({
+        requestKey: null,
+        sort: "-updated,-created",
+        filter,
+        expand: "patient.user",
+      });
+      if (Array.isArray(list) && list.length) return list;
+    } catch (e) {
+      console.log("patient_doctor_packages list:", filter, e?.message);
+    }
+  }
+  return [];
+}
+
+async function buildPackageDoctorPatientRows(doctorUserId, doctorProfile) {
+  const rows = await fetchPatientDoctorPackageRowsForDoctor(
+    doctorUserId,
+    doctorProfile?.id,
+  );
+  const byPatient = new Map();
+  for (const row of rows || []) {
+    const pid = relIdForDoctorPatients(row.patient);
+    if (!pid) continue;
+    if (!byPatient.has(pid)) byPatient.set(pid, row);
+  }
+  const out = [];
+  for (const row of byPatient.values()) {
+    const p = row.expand?.patient;
+    if (!p || typeof p !== "object") {
+      out.push({
+        id: String(row.id),
+        name: String(row.title || "Patient").trim() || "Patient",
+        gender: "—",
+        age: "—",
+        blood: "—",
+        conditions: String(row.title || "Care package").trim(),
+        riskLevel: "Medium",
+        risk: 60,
+        lastVisit: "Active package",
+      });
+      continue;
+    }
+    const rem = Number(row?.remaining_coins ?? 0) || 0;
+    const pool =
+      Number(row?.doctor_pool_coins ?? row?.amount_inr ?? 0) || 1;
+    const score = Math.min(
+      98,
+      Math.max(
+        15,
+        Math.round((rem / Math.max(pool, 1)) * 100) || 60,
+      ),
+    );
+    const card = mapPatientProfileToDoctorPatientCard(p, {
+      conditions: String(row.title || "Care package").trim(),
+      lastVisit: "Active package",
+      riskHint: score,
+    });
+    out.push({ ...card, id: String(row.id) });
+  }
+  out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return out;
+}
+
+async function buildQuickCareDoctorPatientRows(doctorUserId) {
+  const uid = String(doctorUserId || "").trim();
+  if (!uid) return [];
+  /** @type {Map<string, { patientRecord?: object, conditions: string }>} */
+  const byPatientRel = new Map();
+
+  try {
+    const presc = await pb.collection("prescriptions").getFullList({
+      requestKey: null,
+      sort: "-created",
+      filter: `doctor="${uid}"`,
+      expand: "patient,patient.user",
+    });
+    for (const r of presc || []) {
+      if (
+        !relIdForDoctorPatients(r.quick_solution_request) &&
+        !relIdForDoctorPatients(r.quick_counselling_request)
+      ) {
+        continue;
+      }
+      const pid = relIdForDoctorPatients(r.patient);
+      if (!pid) continue;
+      const note = String(r.notes || "").trim() || "Quick care";
+      if (!byPatientRel.has(pid)) {
+        byPatientRel.set(pid, {
+          patientRecord: r.expand?.patient,
+          conditions: note,
+        });
+      }
+    }
+  } catch (e) {
+    console.log("quick care prescriptions for patients tab:", e?.message);
+  }
+
+  try {
+    const sol = await listQueuedQuickSolutionRequestsForProvider();
+    const cou = await listQueuedQuickCounsellingRequestsForProvider();
+    const merged = await hydrateRowsPatientAuthUsers([
+      ...(sol || []),
+      ...(cou || []),
+    ]);
+    for (const r of merged) {
+      const pid = patientRelIdFromQuickQueueRecord(r);
+      if (!pid) continue;
+      if (!byPatientRel.has(pid)) {
+        byPatientRel.set(pid, {
+          patientRecord: r.expand?.patient,
+          conditions: "In queue",
+        });
+      }
+    }
+  } catch (e) {
+    console.log("quick care queue for patients tab:", e?.message);
+  }
+
+  const out = [];
+  for (const [pid, meta] of byPatientRel) {
+    const p = meta.patientRecord;
+    if (p && typeof p === "object") {
+      const base = mapPatientProfileToDoctorPatientCard(p, {
+        conditions: meta.conditions,
+        lastVisit: "Active",
+        riskHint: 52 + (pid.length % 33),
+      });
+      out.push({ ...base, id: pid });
+    } else {
+      out.push({
+        id: pid,
+        name: "Patient",
+        gender: "—",
+        age: "—",
+        blood: "—",
+        conditions: meta.conditions,
+        riskLevel: "Medium",
+        risk: 55,
+        lastVisit: "Active",
+      });
+    }
+  }
+  out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return out;
+}
+
+/**
+ * Rows for the doctor **My Patients** tab and **Active patients** count on the dashboard.
+ * - **Package doctor:** distinct patients from `patient_doctor_packages` for this doctor.
+ * - **Quick-care (RMP) doctor:** distinct patients from quick-related `prescriptions` plus open quick queues.
+ */
+export async function loadDoctorPatientsTabRows({
+  doctorUserId,
+  doctorProfile = null,
+} = {}) {
+  const uid = String(doctorUserId || "").trim();
+  if (!uid) return [];
+  const prof = doctorProfile || {};
+  const isQuick = doctorTierEligibleForQuickService(prof);
+  const isPkg = !isQuick && doctorProfileIsPackageDoctor(prof);
+  if (isPkg) {
+    return await buildPackageDoctorPatientRows(uid, prof);
+  }
+  if (isQuick) {
+    return await buildQuickCareDoctorPatientRows(uid);
+  }
+  return [];
+}
+
+export async function resolvePatientPointerToAuthUserId(pointerId) {
+  const id = String(pointerId || "").trim();
+  if (!id) return "";
+  try {
+    const auth = await resolveAuthUserIdForRelationId("patient_profile", id);
+    if (auth) return String(auth).trim();
+  } catch {
+    /* ignore */
+  }
+  return id;
+}
+
+async function collectDoctorPatientRelationIdsForChat({
+  doctorUserId,
+  doctorProfile,
+  appointments = [],
+}) {
+  const uid = String(doctorUserId || "").trim();
+  const relIds = new Set();
+  if (!uid) return relIds;
+
+  const prof = doctorProfile || {};
+  const isQuick = doctorTierEligibleForQuickService(prof);
+  const isPkg = !isQuick && doctorProfileIsPackageDoctor(prof);
+
+  if (isPkg) {
+    const rows = await fetchPatientDoctorPackageRowsForDoctor(uid, prof?.id);
+    for (const row of rows || []) {
+      const p = relIdForDoctorPatients(row.patient);
+      if (p) relIds.add(p);
+    }
+  } else if (isQuick) {
+    try {
+      const presc = await pb.collection("prescriptions").getFullList({
+        requestKey: null,
+        sort: "-created",
+        filter: `doctor="${uid}"`,
+        expand: "patient,patient.user",
+      });
+      for (const r of presc || []) {
+        if (
+          !relIdForDoctorPatients(r.quick_solution_request) &&
+          !relIdForDoctorPatients(r.quick_counselling_request)
+        ) {
+          continue;
+        }
+        const pid = relIdForDoctorPatients(r.patient);
+        if (pid) relIds.add(pid);
+      }
+    } catch (e) {
+      console.log("doctor chat directory (prescriptions):", e?.message);
+    }
+    try {
+      const sol = await listQueuedQuickSolutionRequestsForProvider();
+      const cou = await listQueuedQuickCounsellingRequestsForProvider();
+      const merged = await hydrateRowsPatientAuthUsers([
+        ...(sol || []),
+        ...(cou || []),
+      ]);
+      for (const r of merged || []) {
+        const pid = patientRelIdFromQuickQueueRecord(r);
+        if (pid) relIds.add(pid);
+      }
+    } catch (e) {
+      console.log("doctor chat directory (queues):", e?.message);
+    }
+  }
+
+  for (const a of appointments || []) {
+    if (String(a?.doctorUserId || "").trim() !== uid) continue;
+    const pid = String(a?.patientId || "").trim();
+    if (pid) relIds.add(pid);
+  }
+
+  return relIds;
+}
+
+/**
+ * Users who may appear in **Chat → Directory** search for a logged-in doctor:
+ * active / quick-care patients plus appointment patients for this doctor only.
+ */
+export async function loadDoctorChatDirectoryUsers({
+  doctorUserId,
+  doctorProfile,
+  appointments = [],
+} = {}) {
+  const uid = String(doctorUserId || "").trim();
+  if (!uid) return [];
+  const relIds = await collectDoctorPatientRelationIdsForChat({
+    doctorUserId: uid,
+    doctorProfile,
+    appointments,
+  });
+  const resolved = await Promise.all(
+    [...relIds].map((rid) => resolvePatientPointerToAuthUserId(rid)),
+  );
+  const authIds = [
+    ...new Set(
+      resolved
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+        .filter((id) => id !== uid),
+    ),
+  ];
+  const byId = await fetchUsersAuthByIds(authIds);
+  const out = [];
+  for (const id of authIds) {
+    const row = byId.get(id);
+    if (!row) continue;
+    const name =
+      String(row.name || "").trim() ||
+      resolveListingDisplayName(row, row.expand?.user) ||
+      String(row.email || "").trim() ||
+      "Patient";
+    out.push({
+      id: row.id,
+      name,
+      email: row.email || "",
+      role: "patient",
+    });
+  }
+  out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return out;
+}
+
+/**
+ * Patients who may appear in **Chat → Directory** for a pharmacy: only users
+ * with at least one `orders` row pointing at this pharmacy.
+ */
+export async function loadPharmacyChatDirectoryUsers(pharmacyUserId) {
+  const uid = String(pharmacyUserId || "").trim();
+  if (!uid) return [];
+  const relIds = new Set();
+  const filters = [`pharmacy="${uid}"`];
+  for (const filter of filters) {
+    try {
+      const orders = await pb.collection("orders").getFullList({
+        requestKey: null,
+        sort: "-updated,-created",
+        filter,
+      });
+      for (const o of orders || []) {
+        const p = relIdForDoctorPatients(o.patient);
+        if (p) relIds.add(p);
+      }
+      if (relIds.size) break;
+    } catch (e) {
+      console.log("pharmacy chat directory orders:", filter, e?.message);
+    }
+  }
+  const resolved = await Promise.all(
+    [...relIds].map((rid) => resolvePatientPointerToAuthUserId(rid)),
+  );
+  const authIds = [
+    ...new Set(
+      resolved
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+        .filter((id) => id !== uid),
+    ),
+  ];
+  const byId = await fetchUsersAuthByIds(authIds);
+  const out = [];
+  for (const id of authIds) {
+    const row = byId.get(id);
+    if (!row) continue;
+    const name =
+      String(row.name || "").trim() ||
+      resolveListingDisplayName(row, row.expand?.user) ||
+      String(row.email || "").trim() ||
+      "Patient";
+    out.push({
+      id: row.id,
+      name,
+      email: row.email || "",
+      role: "patient",
+    });
+  }
+  out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return out;
+}
+
 // --- Quick Solution / Counselling tracking & doctor help offers ---
 //
 // Status lifecycle (`quick_solution_requests` & `quick_counselling_requests`):
