@@ -16074,6 +16074,7 @@ const AuthScreen = ({ onLogin }) => {
   const [pharmacySignupProviderKind, setPharmacySignupProviderKind] =
     useState("");
   const [registrationLanguage, setRegistrationLanguage] = useState("");
+  const [regTermsAccepted, setRegTermsAccepted] = useState(false);
 
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
@@ -16171,6 +16172,10 @@ const AuthScreen = ({ onLogin }) => {
     }
   }, [role]);
 
+  useEffect(() => {
+    setRegTermsAccepted(false);
+  }, [role, authMode]);
+
   const handleRequestPasswordReset = async () => {
     try {
       setForgotLoading(true);
@@ -16199,6 +16204,11 @@ const AuthScreen = ({ onLogin }) => {
       setAuthSuccess("");
 
       if (authMode === "signup") {
+        if (!regTermsAccepted) {
+          throw new Error(
+            "Please read and accept the Terms and Conditions to continue.",
+          );
+        }
         if (!name.trim()) {
           throw new Error("Please enter your name");
         }
@@ -16350,6 +16360,13 @@ const AuthScreen = ({ onLogin }) => {
       setAuthError("");
       setAuthSuccess("");
 
+      if (authMode === "signup" && !regTermsAccepted) {
+        setAuthError(
+          "Please read and accept the Terms and Conditions to continue.",
+        );
+        return;
+      }
+
       const result = await signInWithOAuth({
         providerName: "google",
         selectedRole: role,
@@ -16372,6 +16389,13 @@ const AuthScreen = ({ onLogin }) => {
       setAuthLoading(true);
       setAuthError("");
       setAuthSuccess("");
+
+      if (authMode === "signup" && !regTermsAccepted) {
+        setAuthError(
+          "Please read and accept the Terms and Conditions to continue.",
+        );
+        return;
+      }
 
       const result = await signInWithOAuth({
         providerName: "apple",
@@ -17160,6 +17184,14 @@ const AuthScreen = ({ onLogin }) => {
               </>
             )}
 
+            {authMode === "signup" && (
+              <RegistrationTermsAcceptRow
+                accepted={regTermsAccepted}
+                onAcceptedChange={setRegTermsAccepted}
+                accentColor={theme.accent}
+              />
+            )}
+
             {!!authSuccess && (
               <Text
                 style={{
@@ -17193,6 +17225,10 @@ const AuthScreen = ({ onLogin }) => {
                 paddingVertical: RFValue(16),
                 alignItems: "center",
                 marginTop: RFValue(8),
+                opacity:
+                  authLoading || (authMode === "signup" && !regTermsAccepted)
+                    ? 0.45
+                    : 1,
               }}
             >
               <Text
@@ -17221,7 +17257,10 @@ const AuthScreen = ({ onLogin }) => {
                 marginTop: RFValue(12),
                 borderWidth: 1,
                 borderColor: theme.inputBorder,
-                opacity: authLoading ? 0.7 : 1,
+                opacity:
+                  authLoading || (authMode === "signup" && !regTermsAccepted)
+                    ? 0.45
+                    : 1,
               }}
             >
               <Text
@@ -17245,7 +17284,10 @@ const AuthScreen = ({ onLogin }) => {
                   paddingVertical: RFValue(16),
                   alignItems: "center",
                   marginTop: RFValue(12),
-                  opacity: authLoading ? 0.7 : 1,
+                  opacity:
+                    authLoading || (authMode === "signup" && !regTermsAccepted)
+                      ? 0.45
+                      : 1,
                 }}
               >
                 <Text
