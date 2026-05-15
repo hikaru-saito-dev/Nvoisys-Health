@@ -2076,7 +2076,7 @@ export function MedicalRecordsScreen({
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            marginBottom: 12,
+            marginBottom: 8,
             paddingHorizontal: 2,
           }}
         >
@@ -2185,8 +2185,8 @@ export function MedicalRecordsScreen({
               key={r.id}
               style={{
                 backgroundColor: theme.card,
-                borderRadius: 16,
-                marginBottom: 12,
+                borderRadius: 12,
+                marginBottom: 8,
                 borderWidth: StyleSheet.hairlineWidth,
                 borderColor: theme.cardBorder,
                 overflow: "hidden",
@@ -2196,22 +2196,23 @@ export function MedicalRecordsScreen({
               <View
                 style={{
                   flexDirection: "row",
-                  padding: 16,
-                  paddingBottom: 12,
+                  alignItems: "center",
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  gap: 10,
                 }}
               >
                 <View
                   style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 14,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 12,
                     backgroundColor: theme.accentLight,
                     alignItems: "center",
                     justifyContent: "center",
-                    marginRight: 14,
                   }}
                 >
-                  <Ionicons name="document-attach-outline" size={24} color={theme.accent} />
+                  <Ionicons name="document-attach-outline" size={20} color={theme.accent} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text
@@ -2219,8 +2220,8 @@ export function MedicalRecordsScreen({
                     style={{
                       color: theme.textPrimary,
                       fontWeight: "800",
-                      fontSize: 16,
-                      lineHeight: 22,
+                      fontSize: 15,
+                      lineHeight: 20,
                     }}
                   >
                     {r.title || "Untitled record"}
@@ -2229,19 +2230,19 @@ export function MedicalRecordsScreen({
                     style={{
                       flexDirection: "row",
                       alignItems: "center",
-                      marginTop: 6,
-                      gap: 6,
+                      marginTop: 3,
+                      gap: 4,
                     }}
                   >
                     <Ionicons
                       name="calendar-outline"
-                      size={14}
+                      size={13}
                       color={theme.textTertiary}
                     />
                     <Text
                       style={{
                         color: theme.textTertiary,
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: "600",
                       }}
                     >
@@ -2249,85 +2250,57 @@ export function MedicalRecordsScreen({
                     </Text>
                   </View>
                 </View>
-              </View>
-
-              <View
-                style={{
-                  flexDirection: "row",
-                  borderTopWidth: StyleSheet.hairlineWidth,
-                  borderTopColor: theme.cardBorder,
-                  paddingTop: 2,
-                }}
-              >
-                <TouchableOpacity
-                  onPress={() => void openRecord(r)}
-                  activeOpacity={0.75}
-                  style={{
-                    flex: 1,
-                    alignItems: "center",
-                    paddingVertical: 14,
-                  }}
-                >
-                  <Ionicons name="eye-outline" size={22} color={theme.accent} />
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      fontWeight: "700",
-                      color: theme.accent,
-                      marginTop: 6,
-                    }}
-                  >
-                    View
-                  </Text>
-                </TouchableOpacity>
                 <View
                   style={{
-                    width: StyleSheet.hairlineWidth,
-                    backgroundColor: theme.cardBorder,
-                    marginVertical: 10,
-                  }}
-                />
-                <TouchableOpacity
-                  onPress={() => confirmDeleteRecord(r)}
-                  activeOpacity={0.75}
-                  style={{
-                    flex: 1,
+                    flexDirection: "row",
                     alignItems: "center",
-                    paddingVertical: 14,
+                    flexShrink: 0,
+                    gap: 2,
                   }}
                 >
-                  <Ionicons
-                    name="trash-outline"
-                    size={22}
-                    color={theme.danger || "#DC2626"}
-                  />
-                  <Text
+                  <TouchableOpacity
+                    onPress={() => void openRecord(r)}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel="View record"
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                     style={{
-                      fontSize: 11,
-                      fontWeight: "700",
-                      color: theme.danger || "#DC2626",
-                      marginTop: 6,
+                      padding: 8,
+                      alignItems: "center",
+                      justifyContent: "center",
                     }}
                   >
-                    Remove
-                  </Text>
-                </TouchableOpacity>
-                {onShareMedicalRecordToDoctor ? (
-                  <>
-                    <View
-                      style={{
-                        width: StyleSheet.hairlineWidth,
-                        backgroundColor: theme.cardBorder,
-                        marginVertical: 10,
-                      }}
+                    <Ionicons name="eye-outline" size={22} color={theme.accent} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => confirmDeleteRecord(r)}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove record"
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    style={{
+                      padding: 8,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons
+                      name="trash-outline"
+                      size={22}
+                      color={theme.danger || "#DC2626"}
                     />
+                  </TouchableOpacity>
+                  {onShareMedicalRecordToDoctor ? (
                     <TouchableOpacity
                       onPress={() => void beginShareToDoctor(r)}
                       activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel="Share record with doctor"
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                       style={{
-                        flex: 1,
+                        padding: 8,
                         alignItems: "center",
-                        paddingVertical: 14,
+                        justifyContent: "center",
                       }}
                     >
                       <Ionicons
@@ -2335,19 +2308,9 @@ export function MedicalRecordsScreen({
                         size={22}
                         color={theme.accent}
                       />
-                      <Text
-                        style={{
-                          fontSize: 11,
-                          fontWeight: "700",
-                          color: theme.accent,
-                          marginTop: 6,
-                        }}
-                      >
-                        Share
-                      </Text>
                     </TouchableOpacity>
-                  </>
-                ) : null}
+                  ) : null}
+                </View>
               </View>
             </View>
           ))
