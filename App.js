@@ -11517,8 +11517,9 @@ const PatientAppointmentsScreen = ({ onBack }) => {
       <View
         style={{
           backgroundColor: theme.card,
-          padding: RFValue(20),
-          borderBottomWidth: 1,
+          paddingHorizontal: RFValue(20),
+          paddingVertical: RFValue(16),
+          borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: theme.cardBorder,
           flexDirection: "row",
           alignItems: "center",
@@ -11528,60 +11529,122 @@ const PatientAppointmentsScreen = ({ onBack }) => {
           <TouchableOpacity
             onPress={onBack}
             style={{
-              width: RFValue(36),
-              height: RFValue(36),
-              borderRadius: RFValue(10),
+              width: RFValue(40),
+              height: RFValue(40),
+              borderRadius: RFValue(12),
               backgroundColor: theme.bg,
               justifyContent: "center",
               alignItems: "center",
-              marginRight: RFValue(14),
+              marginRight: RFValue(12),
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.cardBorder,
             }}
           >
             <Ionicons
               name="arrow-back"
-              size={RFValue(20)}
+              size={RFValue(22)}
               color={theme.textPrimary}
             />
           </TouchableOpacity>
         ) : null}
-        <Text
-          style={{
-            fontSize: RFValue(20),
-            fontWeight: "800",
-            color: theme.textPrimary,
-          }}
-        >
-          Appointments
-        </Text>
+        <View style={{ flex: 1 }}>
+          <Text
+            style={{
+              fontSize: RFValue(20),
+              fontWeight: "800",
+              color: theme.textPrimary,
+              letterSpacing: -0.3,
+            }}
+          >
+            Appointments
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(12),
+              color: theme.textTertiary,
+              marginTop: 2,
+              fontWeight: "600",
+            }}
+          >
+            Bookings and package visits
+          </Text>
+        </View>
       </View>
       <View style={{ flex: 1 }}>
         <View
           style={{
             backgroundColor: theme.card,
-            borderRadius: RFValue(18),
-            padding: RFValue(16),
-            margin: RFValue(16),
-            marginBottom: RFValue(10),
+            borderRadius: RFValue(14),
+            padding: RFValue(14),
+            marginHorizontal: RFValue(16),
+            marginTop: RFValue(12),
+            marginBottom: RFValue(8),
             borderWidth: StyleSheet.hairlineWidth,
             borderColor: theme.cardBorder,
+            ...(Platform.OS === "ios"
+              ? {
+                  shadowColor: "#0f172a",
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.06,
+                  shadowRadius: 6,
+                }
+              : { elevation: 2 }),
           }}
         >
-          <Text
+          <View
             style={{
-              fontSize: RFValue(16),
-              fontWeight: "800",
-              color: theme.textPrimary,
-              marginBottom: RFValue(10),
+              flexDirection: "row",
+              alignItems: "center",
+              marginBottom: RFValue(12),
             }}
           >
-            Doctor Appointments
-          </Text>
+            <View
+              style={{
+                width: RFValue(40),
+                height: RFValue(40),
+                borderRadius: RFValue(12),
+                backgroundColor: theme.accentLight,
+                alignItems: "center",
+                justifyContent: "center",
+                marginRight: RFValue(12),
+              }}
+            >
+              <Ionicons
+                name="calendar-outline"
+                size={RFValue(22)}
+                color={theme.accent}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  fontSize: RFValue(16),
+                  fontWeight: "800",
+                  color: theme.textPrimary,
+                  letterSpacing: -0.2,
+                }}
+              >
+                Doctor Appointments
+              </Text>
+              <Text
+                style={{
+                  fontSize: RFValue(11),
+                  color: theme.textTertiary,
+                  marginTop: 2,
+                  fontWeight: "600",
+                }}
+              >
+                Pay after approval
+              </Text>
+            </View>
+          </View>
           {regularAppointments.length === 0 ? (
             <Text
               style={{
                 fontSize: RFValue(12),
                 color: theme.textSecondary,
                 lineHeight: RFValue(18),
+                fontWeight: "500",
               }}
             >
               No regular appointments yet. Book an appointment and wait for
@@ -11601,8 +11664,8 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                   style={{
                     borderTopWidth: StyleSheet.hairlineWidth,
                     borderTopColor: theme.cardBorder,
-                    paddingTop: RFValue(12),
-                    marginTop: RFValue(10),
+                    paddingTop: RFValue(10),
+                    marginTop: RFValue(8),
                   }}
                 >
                   <View
@@ -11610,15 +11673,16 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                       flexDirection: "row",
                       alignItems: "center",
                       justifyContent: "space-between",
+                      gap: RFValue(8),
                     }}
                   >
                     <Text
                       style={{
                         flex: 1,
-                        marginRight: RFValue(8),
-                        fontSize: RFValue(14),
+                        fontSize: RFValue(15),
                         fontWeight: "800",
                         color: theme.textPrimary,
+                        letterSpacing: -0.2,
                       }}
                       numberOfLines={1}
                     >
@@ -11627,9 +11691,10 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                     <View
                       style={{
                         backgroundColor: statusColors.bg,
-                        borderRadius: RFValue(8),
-                        paddingHorizontal: RFValue(8),
+                        borderRadius: 999,
+                        paddingHorizontal: RFValue(9),
                         paddingVertical: RFValue(3),
+                        flexShrink: 0,
                       }}
                     >
                       <Text
@@ -11637,6 +11702,8 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                           color: statusColors.fg,
                           fontSize: RFValue(10),
                           fontWeight: "800",
+                          letterSpacing: 0.35,
+                          textTransform: "uppercase",
                         }}
                       >
                         {humanizeAppointmentStatus(statusKey)}
@@ -11648,6 +11715,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                       fontSize: RFValue(12),
                       color: theme.textSecondary,
                       marginTop: RFValue(4),
+                      fontWeight: "600",
                     }}
                   >
                     {formatAppointmentSummaryDate(appointment.scheduledAt)} ·{" "}
@@ -11659,26 +11727,39 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                       disabled={isPaying}
                       style={{
                         alignSelf: "flex-start",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: RFValue(6),
                         backgroundColor: theme.success,
-                        borderRadius: RFValue(10),
+                        borderRadius: 999,
                         paddingHorizontal: RFValue(14),
-                        paddingVertical: RFValue(8),
+                        paddingVertical: RFValue(9),
                         marginTop: RFValue(10),
                         opacity: isPaying ? 0.65 : 1,
+                        minHeight: RFValue(40),
+                        minWidth: isPaying ? RFValue(160) : undefined,
                       }}
                     >
                       {isPaying ? (
                         <ActivityIndicator color="#fff" />
                       ) : (
-                        <Text
-                          style={{
-                            color: "#fff",
-                            fontSize: RFValue(12),
-                            fontWeight: "800",
-                          }}
-                        >
-                          Use package coins
-                        </Text>
+                        <>
+                          <Ionicons
+                            name="wallet-outline"
+                            size={RFValue(17)}
+                            color="#fff"
+                          />
+                          <Text
+                            style={{
+                              color: "#fff",
+                              fontSize: RFValue(13),
+                              fontWeight: "800",
+                            }}
+                          >
+                            Use package coins
+                          </Text>
+                        </>
                       )}
                     </TouchableOpacity>
                   ) : null}

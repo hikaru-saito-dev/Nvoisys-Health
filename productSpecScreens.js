@@ -3773,7 +3773,7 @@ export function PatientPackageMeetingsPanel({
       }
       Alert.alert(
         "Paid - deal started",
-        "Payment recorded and a chat with this doctor is now open in the Chat tab. Tap Go to chat from your appointment card to continue the conversation.",
+        "Payment recorded and a chat with this doctor is now open in the Chat tab. Open the Chat tab or tap Chat on the appointment card to continue.",
       );
     } catch (e) {
       Alert.alert("Payment", e?.message || "Failed");
@@ -3874,7 +3874,13 @@ export function PatientPackageMeetingsPanel({
       ) : null}
       {meetings.length === 0 ? (
         <Text
-          style={{ color: theme.textTertiary, marginTop: sectionTitle ? 8 : 0 }}
+          style={{
+            color: theme.textTertiary,
+            marginTop: sectionTitle ? 8 : 0,
+            fontSize: 13,
+            lineHeight: 20,
+            fontWeight: "500",
+          }}
         >
           {emptyHint}
         </Text>
@@ -3950,27 +3956,48 @@ export function PatientPackageMeetingsPanel({
             : !linkedOffer
               ? "The doctor has not suggested a package option yet."
               : `Doctor suggested ${String(x.package_request_label || linkedOffer.title || "a package").trim()}. Payment: ${formatCurrencyFromInr(linkedOffer.amount_inr ?? 0, currencyInfo)}.`;
+          const doctorDisplayName = doctorName(x.doctor_user_id);
+          const doctorInitial = String(doctorDisplayName || "?")
+            .trim()
+            .charAt(0)
+            .toUpperCase();
+          const payAmountLabel = formatCurrencyFromInr(
+            linkedOffer?.amount_inr ?? x.consultation_fee ?? x.fee ?? 500,
+            currencyInfo,
+          );
+          const meetingCardShadow =
+            Platform.OS === "ios"
+              ? {
+                  shadowColor: "#0f172a",
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.06,
+                  shadowRadius: 6,
+                }
+              : { elevation: 2 };
           return (
             <View
               key={x.id}
               style={{
-                marginTop: 10,
-                padding: 14,
+                marginTop: 8,
+                padding: 12,
+                paddingBottom: 12,
                 borderRadius: 14,
                 backgroundColor: theme.card,
-                borderWidth: 1,
+                borderWidth: StyleSheet.hairlineWidth,
                 borderColor: theme.cardBorder,
+                ...meetingCardShadow,
               }}
             >
               {x.localOnly ? (
                 <View
                   style={{
-                    backgroundColor: theme.warning + "22",
+                    backgroundColor: (theme.warning || "#f59e0b") + "18",
                     borderRadius: 10,
-                    padding: 8,
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
                     marginBottom: 10,
-                    borderWidth: 1,
-                    borderColor: theme.warning,
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.warning || "#f59e0b",
                   }}
                 >
                   <Text
@@ -3978,6 +4005,7 @@ export function PatientPackageMeetingsPanel({
                       color: theme.warning,
                       fontSize: 11,
                       fontWeight: "700",
+                      lineHeight: 15,
                     }}
                   >
                     On this device only - could not save to PocketBase
@@ -3985,229 +4013,339 @@ export function PatientPackageMeetingsPanel({
                   </Text>
                 </View>
               ) : null}
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Text
-                  style={{
-                    color: theme.accent,
-                    fontWeight: "800",
-                    flex: 1,
-                    marginRight: 8,
-                  }}
-                  numberOfLines={1}
-                >
-                  {doctorName(x.doctor_user_id)}
-                </Text>
-                <View
-                  style={{
-                    backgroundColor: badgeBg,
-                    paddingHorizontal: 10,
-                    paddingVertical: 4,
-                    borderRadius: 999,
-                  }}
-                >
-                  <Text
-                    style={{ color: badgeFg, fontWeight: "800", fontSize: 11 }}
-                  >
-                    {badgeText}
-                  </Text>
-                </View>
-              </View>
-              {meetingTimeIso ? (
-                <Text
-                  style={{
-                    color: theme.textSecondary,
-                    fontSize: S.small,
-                    marginTop: 6,
-                  }}
-                >
-                  {meetingDateLabel} · {meetingTimeLabel} · {methodLabel}
-                </Text>
-              ) : null}
-              {x.description ? (
-                <Text
-                  style={{
-                    color: theme.textPrimary,
-                    fontSize: S.small,
-                    marginTop: 6,
-                  }}
-                >
-                  <Text style={{ fontWeight: "700" }}>Reason: </Text>
-                  {x.description}
-                </Text>
-              ) : null}
-              {isConfirmed && !isPaid ? (
-                <Text
-                  style={{
-                    color: theme.textSecondary,
-                    fontSize: S.small,
-                    marginTop: 8,
-                  }}
-                >
-                  {packageLine}
-                </Text>
-              ) : null}
-              {showRescheduleUI ? (
-                <View style={{ marginTop: 12 }}>
-                  <Text
-                    style={{
-                      color: theme.textPrimary,
-                      fontWeight: "700",
-                      marginBottom: 8,
-                    }}
-                  >
-                    Pick one of your doctor’s times
-                  </Text>
-                  {(x.doctor_alternate_slots || []).map((slot) => {
-                    const label = new Date(slot).toLocaleString(undefined, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    });
-                    const selected = pickedReschedule[x.id] === slot;
-                    return (
-                      <TouchableOpacity
-                        key={slot}
-                        onPress={() =>
-                          setPickedReschedule((p) => ({ ...p, [x.id]: slot }))
-                        }
-                        style={{
-                          padding: 10,
-                          borderRadius: 10,
-                          marginBottom: 8,
-                          borderWidth: 2,
-                          borderColor: selected
-                            ? theme.accent
-                            : theme.cardBorder,
-                          backgroundColor: selected
-                            ? theme.accentLight
-                            : theme.bg,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: theme.textPrimary,
-                            fontWeight: "700",
-                          }}
-                        >
-                          {label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                  <TouchableOpacity
-                    onPress={() => submitRescheduleChoice(x.id)}
-                    disabled={busy}
-                    style={{
-                      marginTop: 4,
-                      backgroundColor: theme.warning,
-                      padding: 12,
-                      borderRadius: 12,
-                      alignItems: "center",
-                    }}
-                  >
-                    <Text style={{ color: "#fff", fontWeight: "800" }}>
-                      Send chosen time to doctor
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
               <View
                 style={{
                   flexDirection: "row",
-                  flexWrap: "wrap",
-                  marginTop: 12,
+                  alignItems: "flex-start",
                 }}
               >
-                {isConfirmed && !isPaid ? (
-                  <TouchableOpacity
-                    onPress={() => {
-                      if (linkedOffer) payOffer(linkedOffer);
-                      else payAppointment(x);
-                    }}
-                    disabled={busy || !payEnabled}
+                <View
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 12,
+                    backgroundColor: theme.accentLight,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginRight: 12,
+                  }}
+                >
+                  <Text
                     style={{
-                      backgroundColor: theme.success,
-                      paddingHorizontal: 14,
-                      paddingVertical: 10,
-                      borderRadius: 10,
-                      marginRight: 8,
-                      opacity: busy || !payEnabled ? 0.45 : 1,
+                      color: theme.accent,
+                      fontWeight: "800",
+                      fontSize: 17,
+                      letterSpacing: -0.5,
                     }}
                   >
-                    <Text style={{ color: "#fff", fontWeight: "800" }}>
-                      Pay {formatCurrencyFromInr(
-                        linkedOffer?.amount_inr ?? x.consultation_fee ?? x.fee ?? 500,
-                        currencyInfo,
-                      )}
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-                {showGoToChat ? (
-                  <TouchableOpacity
-                    onPress={() => goToChatWithMeetingDoctor(x)}
+                    {doctorInitial}
+                  </Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View
                     style={{
-                      backgroundColor: theme.accent,
-                      paddingHorizontal: 14,
-                      paddingVertical: 10,
-                      borderRadius: 10,
-                      marginRight: 8,
-                    }}
-                  >
-                    <Text style={{ color: "#fff", fontWeight: "800" }}>
-                      Go to chat
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-                {showCancel ? (
-                  <TouchableOpacity
-                    onPress={() => {
-                      Alert.alert(
-                        "Cancel this request?",
-                        "This removes the meeting for you and your doctor.",
-                        [
-                          { text: "Keep", style: "cancel" },
-                          {
-                            text: "Cancel meeting",
-                            style: "destructive",
-                            onPress: async () => {
-                              try {
-                                setBusy(true);
-                                await patientCancelPackageDemoMeeting(x.id);
-                                await reload();
-                                try {
-                                  await onMeetingsChanged?.();
-                                } catch {
-                                  // ignore
-                                }
-                              } catch (e) {
-                                Alert.alert("Cancel", e?.message || "Failed");
-                              } finally {
-                                setBusy(false);
-                              }
-                            },
-                          },
-                        ],
-                      );
-                    }}
-                    disabled={busy}
-                    style={{
-                      backgroundColor: theme.bg,
-                      borderWidth: 1,
-                      borderColor: theme.cardBorder,
-                      paddingHorizontal: 14,
-                      paddingVertical: 10,
-                      borderRadius: 10,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
                     }}
                   >
                     <Text
                       style={{
-                        color: theme.danger || "#b91c1c",
+                        color: theme.textPrimary,
                         fontWeight: "800",
+                        fontSize: 16,
+                        letterSpacing: -0.2,
+                        flex: 1,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {doctorDisplayName}
+                    </Text>
+                    <View
+                      style={{
+                        backgroundColor: badgeBg,
+                        paddingHorizontal: 9,
+                        paddingVertical: 3,
+                        borderRadius: 999,
+                        flexShrink: 0,
                       }}
                     >
-                      Cancel
+                      <Text
+                        style={{
+                          color: badgeFg,
+                          fontWeight: "800",
+                          fontSize: 10,
+                          letterSpacing: 0.4,
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {badgeText}
+                      </Text>
+                    </View>
+                  </View>
+                  {meetingTimeIso ? (
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        marginTop: 5,
+                        gap: 6,
+                      }}
+                    >
+                      <Ionicons
+                        name="calendar-outline"
+                        size={14}
+                        color={theme.textTertiary}
+                      />
+                      <Text
+                        style={{
+                          color: theme.textSecondary,
+                          fontSize: 12,
+                          fontWeight: "600",
+                        }}
+                      >
+                        {meetingDateLabel} · {meetingTimeLabel}
+                      </Text>
+                      <Text style={{ color: theme.textTertiary, fontSize: 12 }}>
+                        ·
+                      </Text>
+                      <Ionicons
+                        name={
+                          x.call_kind === "chat"
+                            ? "chatbubbles-outline"
+                            : "videocam-outline"
+                        }
+                        size={14}
+                        color={theme.textTertiary}
+                      />
+                      <Text
+                        style={{
+                          color: theme.textSecondary,
+                          fontSize: 12,
+                          fontWeight: "600",
+                        }}
+                      >
+                        {methodLabel}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {x.description ? (
+                    <Text
+                      numberOfLines={3}
+                      style={{
+                        color: theme.textPrimary,
+                        fontSize: 13,
+                        lineHeight: 18,
+                        marginTop: 8,
+                        fontWeight: "500",
+                      }}
+                    >
+                      <Text style={{ color: theme.textTertiary, fontWeight: "700" }}>
+                        Reason{" "}
+                      </Text>
+                      {x.description}
                     </Text>
-                  </TouchableOpacity>
-                ) : null}
+                  ) : null}
+                  {isConfirmed && !isPaid ? (
+                    <Text
+                      numberOfLines={4}
+                      style={{
+                        color: theme.textTertiary,
+                        fontSize: 12,
+                        lineHeight: 17,
+                        marginTop: 6,
+                        fontWeight: "500",
+                      }}
+                    >
+                      {packageLine}
+                    </Text>
+                  ) : null}
+                  {showRescheduleUI ? (
+                    <View style={{ marginTop: 10 }}>
+                      <Text
+                        style={{
+                          color: theme.textPrimary,
+                          fontWeight: "800",
+                          marginBottom: 8,
+                          fontSize: 13,
+                        }}
+                      >
+                        Pick one of your doctor’s times
+                      </Text>
+                      {(x.doctor_alternate_slots || []).map((slot) => {
+                        const label = new Date(slot).toLocaleString(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        });
+                        const selected = pickedReschedule[x.id] === slot;
+                        return (
+                          <TouchableOpacity
+                            key={slot}
+                            onPress={() =>
+                              setPickedReschedule((p) => ({ ...p, [x.id]: slot }))
+                            }
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              borderRadius: 10,
+                              marginBottom: 6,
+                              borderWidth: StyleSheet.hairlineWidth,
+                              borderColor: selected
+                                ? theme.accent
+                                : theme.cardBorder,
+                              backgroundColor: selected
+                                ? theme.accentLight
+                                : theme.inputBg || theme.bg,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                color: theme.textPrimary,
+                                fontWeight: "700",
+                                fontSize: 13,
+                              }}
+                            >
+                              {label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      <TouchableOpacity
+                        onPress={() => submitRescheduleChoice(x.id)}
+                        disabled={busy}
+                        style={{
+                          marginTop: 4,
+                          backgroundColor: theme.warning,
+                          paddingVertical: 11,
+                          paddingHorizontal: 14,
+                          borderRadius: 12,
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                          Send chosen time to doctor
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                      marginTop: 10,
+                      gap: 8,
+                    }}
+                  >
+                    {isConfirmed && !isPaid ? (
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (linkedOffer) payOffer(linkedOffer);
+                          else payAppointment(x);
+                        }}
+                        disabled={busy || !payEnabled}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Pay ${payAmountLabel}`}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                          backgroundColor: theme.success,
+                          paddingHorizontal: 14,
+                          paddingVertical: 9,
+                          borderRadius: 999,
+                          opacity: busy || !payEnabled ? 0.45 : 1,
+                        }}
+                      >
+                        <Ionicons name="wallet-outline" size={17} color="#fff" />
+                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                          Pay {payAmountLabel}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    {showGoToChat ? (
+                      <TouchableOpacity
+                        onPress={() => goToChatWithMeetingDoctor(x)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Open chat with doctor"
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                          backgroundColor: theme.accent,
+                          paddingHorizontal: 14,
+                          paddingVertical: 9,
+                          borderRadius: 999,
+                        }}
+                      >
+                        <Ionicons
+                          name="chatbubble-ellipses-outline"
+                          size={17}
+                          color="#fff"
+                        />
+                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                          Chat
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    {showCancel ? (
+                      <TouchableOpacity
+                        onPress={() => {
+                          Alert.alert(
+                            "Cancel this request?",
+                            "This removes the meeting for you and your doctor.",
+                            [
+                              { text: "Keep", style: "cancel" },
+                              {
+                                text: "Cancel meeting",
+                                style: "destructive",
+                                onPress: async () => {
+                                  try {
+                                    setBusy(true);
+                                    await patientCancelPackageDemoMeeting(x.id);
+                                    await reload();
+                                    try {
+                                      await onMeetingsChanged?.();
+                                    } catch {
+                                      // ignore
+                                    }
+                                  } catch (e) {
+                                    Alert.alert("Cancel", e?.message || "Failed");
+                                  } finally {
+                                    setBusy(false);
+                                  }
+                                },
+                              },
+                            ],
+                          );
+                        }}
+                        disabled={busy}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel meeting request"
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 9,
+                          borderRadius: 999,
+                          borderWidth: StyleSheet.hairlineWidth,
+                          borderColor: theme.cardBorder,
+                          backgroundColor: theme.inputBg || theme.bg,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: theme.danger || "#b91c1c",
+                            fontWeight: "800",
+                            fontSize: 13,
+                          }}
+                        >
+                          Cancel
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                </View>
               </View>
             </View>
           );
@@ -4229,9 +4367,11 @@ export function PatientPackageMeetingsPanel({
           <>
             <Text
               style={{
-                marginTop: 20,
+                marginTop: 18,
                 fontWeight: "800",
                 color: theme.textPrimary,
+                fontSize: 15,
+                letterSpacing: -0.2,
               }}
             >
               Other package offers
@@ -4240,45 +4380,75 @@ export function PatientPackageMeetingsPanel({
               const isPaid = ["paid", "active", "started"].includes(
                 String(o.status || "").toLowerCase(),
               );
+              const orphanPay = formatCurrencyFromInr(
+                o.amount_inr ?? 0,
+                currencyInfo,
+              );
               return (
                 <View
                   key={o.id}
                   style={{
-                    marginTop: 10,
-                    padding: 14,
+                    marginTop: 8,
+                    padding: 12,
                     borderRadius: 14,
                     backgroundColor: theme.card,
-                    borderWidth: 1,
+                    borderWidth: StyleSheet.hairlineWidth,
                     borderColor: theme.cardBorder,
+                    ...(Platform.OS === "ios"
+                      ? {
+                          shadowColor: "#0f172a",
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.06,
+                          shadowRadius: 6,
+                        }
+                      : { elevation: 2 }),
                   }}
                 >
-                  <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                  <Text
+                    style={{
+                      color: theme.textPrimary,
+                      fontWeight: "800",
+                      fontSize: 16,
+                      letterSpacing: -0.2,
+                    }}
+                  >
                     {o.title || "Package"}
                   </Text>
                   <Text
                     style={{
                       color: theme.textSecondary,
-                      fontSize: S.small,
-                      marginTop: 6,
+                      fontSize: 12,
+                      marginTop: 4,
+                      lineHeight: 17,
+                      fontWeight: "600",
                     }}
                   >
-                    Service fee {formatCurrencyFromInr(o.amount_inr ?? 0, currencyInfo)} ·{" "}
+                    Service fee {orphanPay} ·{" "}
                     {isPaid ? "Paid" : "Awaiting payment"}
                   </Text>
                   {!isPaid ? (
                     <TouchableOpacity
                       onPress={() => payOffer(o)}
                       disabled={busy}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Pay ${orphanPay}`}
                       style={{
-                        marginTop: 12,
-                        backgroundColor: theme.success,
-                        padding: 12,
-                        borderRadius: 12,
+                        marginTop: 10,
+                        flexDirection: "row",
                         alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6,
+                        backgroundColor: theme.success,
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        borderRadius: 999,
+                        alignSelf: "flex-start",
+                        opacity: busy ? 0.45 : 1,
                       }}
                     >
-                      <Text style={{ color: "#fff", fontWeight: "800" }}>
-                        Pay {formatCurrencyFromInr(o.amount_inr ?? 0, currencyInfo)}
+                      <Ionicons name="wallet-outline" size={17} color="#fff" />
+                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                        Pay {orphanPay}
                       </Text>
                     </TouchableOpacity>
                   ) : (
@@ -4286,16 +4456,28 @@ export function PatientPackageMeetingsPanel({
                       onPress={() =>
                         onOpenChatWithDoctor?.(offerDoctorUserId(o), null, o)
                       }
+                      accessibilityRole="button"
+                      accessibilityLabel="Open chat with doctor"
                       style={{
-                        marginTop: 12,
-                        backgroundColor: theme.accent,
-                        padding: 12,
-                        borderRadius: 12,
+                        marginTop: 10,
+                        flexDirection: "row",
                         alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6,
+                        backgroundColor: theme.accent,
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        borderRadius: 999,
+                        alignSelf: "flex-start",
                       }}
                     >
-                      <Text style={{ color: "#fff", fontWeight: "800" }}>
-                        Go to chat
+                      <Ionicons
+                        name="chatbubble-ellipses-outline"
+                        size={17}
+                        color="#fff"
+                      />
+                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                        Chat
                       </Text>
                     </TouchableOpacity>
                   )}
