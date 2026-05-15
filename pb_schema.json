@@ -29,7 +29,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["patient", "doctor", "pharmacy"]
+          "values": [
+            "patient",
+            "doctor",
+            "pharmacy"
+          ]
         }
       },
       {
@@ -48,10 +52,10 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
     "createRule": "",
-    "updateRule": "",
+    "updateRule": "id = @request.auth.id",
     "deleteRule": "false = false",
     "options": {
       "allowEmailAuth": true,
@@ -212,10 +216,10 @@
       }
     ],
     "indexes": [],
-    "listRule": null,
-    "viewRule": null,
-    "createRule": null,
-    "updateRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -467,11 +471,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
     "createRule": "patient = @request.auth.id",
-    "updateRule": "",
-    "deleteRule": "",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -566,11 +570,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -621,15 +625,18 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["active", "completed"]
+          "values": [
+            "active",
+            "completed"
+          ]
         }
       }
     ],
     "indexes": [],
-    "listRule": null,
-    "viewRule": null,
-    "createRule": null,
-    "updateRule": null,
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -692,16 +699,20 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["direct", "assistant", "package_demo"]
+          "values": [
+            "direct",
+            "assistant",
+            "package_demo"
+          ]
         }
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -755,10 +766,10 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -794,7 +805,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["pending", "approved", "rejected"]
+          "values": [
+            "pending",
+            "approved",
+            "rejected"
+          ]
         }
       },
       {
@@ -855,7 +870,12 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["rmp", "clinic", "professional", "specialist"]
+          "values": [
+            "rmp",
+            "clinic",
+            "professional",
+            "specialist"
+          ]
         }
       },
       {
@@ -896,16 +916,19 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["rmp", "mbbs"]
+          "values": [
+            "rmp",
+            "mbbs"
+          ]
         }
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -954,7 +977,13 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["pending", "approved", "rejected", "paid", "done"]
+          "values": [
+            "pending",
+            "approved",
+            "rejected",
+            "paid",
+            "done"
+          ]
         }
       },
       {
@@ -988,9 +1017,9 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\" && doctor = @request.auth.id",
     "updateRule": null,
     "deleteRule": null,
     "options": {}
@@ -1076,11 +1105,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -1189,11 +1218,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": null,
+    "updateRule": null,
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -1250,11 +1279,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\" && patient = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && patient = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && patient = @request.auth.id",
     "options": {}
   },
   {
@@ -1349,7 +1378,12 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["before_meal", "after_meal", "with_meal", "no_preference"]
+          "values": [
+            "before_meal",
+            "after_meal",
+            "with_meal",
+            "no_preference"
+          ]
         }
       },
       {
@@ -1388,7 +1422,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["pending", "taken", "missed"]
+          "values": [
+            "pending",
+            "taken",
+            "missed"
+          ]
         }
       }
     ],
@@ -1396,8 +1434,8 @@
     "listRule": "@request.auth.id = patient || @request.auth.role = \"doctor\"",
     "viewRule": "@request.auth.id = patient || @request.auth.role = \"doctor\"",
     "createRule": "@request.auth.id != \"\"",
-    "updateRule": "@request.auth.id = patient",
-    "deleteRule": "",
+    "updateRule": "@request.auth.id = patient || @request.auth.role = \"doctor\"",
+    "deleteRule": "@request.auth.id != \"\"",
     "options": {}
   },
   {
@@ -1489,11 +1527,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -1621,7 +1659,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["pharmacy_order", "prescription_order", "wound_order"]
+          "values": [
+            "pharmacy_order",
+            "prescription_order",
+            "wound_order"
+          ]
         }
       },
       {
@@ -1640,11 +1682,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -1707,15 +1749,20 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["pending", "approved", "rejected", "done"]
+          "values": [
+            "pending",
+            "approved",
+            "rejected",
+            "done"
+          ]
         }
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -1921,7 +1968,10 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["sent", "paid"]
+          "values": [
+            "sent",
+            "paid"
+          ]
         }
       },
       {
@@ -1939,11 +1989,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -2026,7 +2076,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["active", "cancelled", "completed"]
+          "values": [
+            "active",
+            "cancelled",
+            "completed"
+          ]
         }
       },
       {
@@ -2072,11 +2126,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -2127,7 +2181,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["chat", "audio", "video"]
+          "values": [
+            "chat",
+            "audio",
+            "video"
+          ]
         }
       },
       {
@@ -2191,10 +2249,10 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": null,
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -2262,7 +2320,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["active", "completed", "cancelled"]
+          "values": [
+            "active",
+            "completed",
+            "cancelled"
+          ]
         }
       },
       {
@@ -2403,10 +2465,10 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -2589,7 +2651,12 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["never", "former", "occasionally", "current"]
+          "values": [
+            "never",
+            "former",
+            "occasionally",
+            "current"
+          ]
         }
       },
       {
@@ -2602,7 +2669,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["never", "occasional", "regular"]
+          "values": [
+            "never",
+            "occasional",
+            "regular"
+          ]
         }
       },
       {
@@ -2727,11 +2798,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -2795,7 +2866,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["success", "failed", "refunded"]
+          "values": [
+            "success",
+            "failed",
+            "refunded"
+          ]
         }
       },
       {
@@ -2864,7 +2939,10 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["appointment", "package_offer"]
+          "values": [
+            "appointment",
+            "package_offer"
+          ]
         }
       },
       {
@@ -2877,7 +2955,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["stub", "cashfree", "stripe"]
+          "values": [
+            "stub",
+            "cashfree",
+            "stripe"
+          ]
         }
       },
       {
@@ -3006,9 +3088,9 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
     "updateRule": null,
     "deleteRule": null,
     "options": {}
@@ -3073,7 +3155,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["pending", "accepted", "denied"]
+          "values": [
+            "pending",
+            "accepted",
+            "denied"
+          ]
         }
       }
     ],
@@ -3081,7 +3167,7 @@
     "listRule": "@request.auth.id != \"\"",
     "viewRule": "@request.auth.id != \"\"",
     "createRule": "@request.auth.id != \"\"",
-    "updateRule": null,
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -3237,7 +3323,10 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["rmp_doctor", "clinic"]
+          "values": [
+            "rmp_doctor",
+            "clinic"
+          ]
         }
       }
     ],
@@ -3246,7 +3335,7 @@
     "viewRule": "@request.auth.id != \"\"",
     "createRule": "@request.auth.id != \"\" && user = @request.auth.id",
     "updateRule": "@request.auth.id != \"\" && user = @request.auth.id",
-    "deleteRule": "@request.auth.id = user.id",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -3393,11 +3482,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -3510,11 +3599,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
+    "listRule": "patient = @request.auth.id || recipient = @request.auth.id",
+    "viewRule": "patient = @request.auth.id || recipient = @request.auth.id",
+    "createRule": "patient = @request.auth.id",
     "updateRule": "patient = @request.auth.id || recipient = @request.auth.id",
-    "deleteRule": "",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -3547,7 +3636,10 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["solution", "counselling"]
+          "values": [
+            "solution",
+            "counselling"
+          ]
         }
       },
       {
@@ -3622,15 +3714,19 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["active", "closed", "cancelled"]
+          "values": [
+            "active",
+            "closed",
+            "cancelled"
+          ]
         }
       }
     ],
     "indexes": [],
-    "listRule": null,
-    "viewRule": null,
-    "createRule": null,
-    "updateRule": null,
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -3748,7 +3844,13 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["queued", "assigned", "answered", "closed", "cancelled"]
+          "values": [
+            "queued",
+            "assigned",
+            "answered",
+            "closed",
+            "cancelled"
+          ]
         }
       },
       {
@@ -3769,11 +3871,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
+    "listRule": "patient = @request.auth.id || recipient = @request.auth.id",
+    "viewRule": "patient = @request.auth.id || recipient = @request.auth.id",
+    "createRule": "patient = @request.auth.id",
     "updateRule": "patient = @request.auth.id || recipient = @request.auth.id",
-    "deleteRule": "",
+    "deleteRule": null,
     "options": {}
   },
   {
@@ -3844,10 +3946,10 @@
       }
     ],
     "indexes": [],
-    "listRule": null,
-    "viewRule": null,
-    "createRule": null,
-    "updateRule": null,
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
     "deleteRule": null,
     "options": {}
   },
@@ -3897,7 +3999,11 @@
         "unique": false,
         "options": {
           "maxSelect": 1,
-          "values": ["low", "moderate", "high"]
+          "values": [
+            "low",
+            "moderate",
+            "high"
+          ]
         }
       },
       {
@@ -4006,11 +4112,11 @@
       }
     ],
     "indexes": [],
-    "listRule": "",
-    "viewRule": "",
-    "createRule": "",
-    "updateRule": "",
-    "deleteRule": "",
+    "listRule": "@request.auth.id != \"\"",
+    "viewRule": "@request.auth.id != \"\"",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\"",
+    "deleteRule": null,
     "options": {}
   }
 ]
