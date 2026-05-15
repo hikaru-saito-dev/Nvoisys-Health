@@ -182,6 +182,10 @@ export function CareModeOnboardingScreen({
   onBack,
   onDone,
   onCommitPackageDoctor,
+  onHasExistingPackage,
+  onUseExistingPackage,
+  onHasExistingCasualCoins,
+  onUseExistingCasualMode,
   onLoadPackageDoctors,
   onPaySelectedPackage,
   onWalletTopUp,
@@ -200,7 +204,13 @@ export function CareModeOnboardingScreen({
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [loadingDoctors, setLoadingDoctors] = useState(false);
   const [packageDoctorsLoaded, setPackageDoctorsLoaded] = useState(false);
+  const [existingPackageAvailable, setExistingPackageAvailable] =
+    useState(false);
+  const [checkingExistingPackage, setCheckingExistingPackage] = useState(false);
   const [casualStep, setCasualStep] = useState(false);
+  const [existingCasualAvailable, setExistingCasualAvailable] =
+    useState(false);
+  const [checkingExistingCasual, setCheckingExistingCasual] = useState(false);
   const [casualAmount, setCasualAmount] = useState(
     String(WALLET_TOPUP_MIN_INR),
   );
@@ -231,6 +241,52 @@ export function CareModeOnboardingScreen({
     if (!packageStep || loadingDoctors || packageDoctorsLoaded) return;
     void loadPackageDoctors();
   }, [packageStep, loadingDoctors, packageDoctorsLoaded, loadPackageDoctors]);
+
+  useEffect(() => {
+    if (!packageStep || typeof onHasExistingPackage !== "function") {
+      setExistingPackageAvailable(false);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        setCheckingExistingPackage(true);
+        const hasPackage = await onHasExistingPackage();
+        if (!cancelled) setExistingPackageAvailable(Boolean(hasPackage));
+      } catch (e) {
+        console.log("check existing package skipped:", e?.message);
+        if (!cancelled) setExistingPackageAvailable(false);
+      } finally {
+        if (!cancelled) setCheckingExistingPackage(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [packageStep, onHasExistingPackage]);
+
+  useEffect(() => {
+    if (!casualStep || typeof onHasExistingCasualCoins !== "function") {
+      setExistingCasualAvailable(false);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        setCheckingExistingCasual(true);
+        const hasCoins = await onHasExistingCasualCoins();
+        if (!cancelled) setExistingCasualAvailable(Boolean(hasCoins));
+      } catch (e) {
+        console.log("check existing casual coins skipped:", e?.message);
+        if (!cancelled) setExistingCasualAvailable(false);
+      } finally {
+        if (!cancelled) setCheckingExistingCasual(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [casualStep, onHasExistingCasualCoins]);
 
   const confirm = async () => {
     if (!selected) {
@@ -308,6 +364,25 @@ export function CareModeOnboardingScreen({
     }
   };
 
+  const useExistingPackage = async () => {
+    if (typeof onUseExistingPackage !== "function") return;
+    try {
+      setBusy(true);
+      const reused = await onUseExistingPackage();
+      if (!reused) {
+        setExistingPackageAvailable(false);
+        Alert.alert(
+          "Package",
+          "No active paid package was found. Please choose a doctor and pay for a package.",
+        );
+      }
+    } catch (e) {
+      Alert.alert("Package", e?.message || "Could not open existing package.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const filteredPackageDoctors = useMemo(() => {
     const q = doctorSearch.trim().toLowerCase();
     const base = packageDoctors || [];
@@ -346,6 +421,25 @@ export function CareModeOnboardingScreen({
       Alert.alert("Coins added", `${amount} coins were added to your wallet.`);
     } catch (e) {
       Alert.alert("Top up coins", e?.message || "Could not complete top-up.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const useExistingCasualCoins = async () => {
+    if (typeof onUseExistingCasualMode !== "function") return;
+    try {
+      setBusy(true);
+      const reused = await onUseExistingCasualMode();
+      if (!reused) {
+        setExistingCasualAvailable(false);
+        Alert.alert(
+          "Casual mode",
+          "No casual coins were found. Please top up to continue.",
+        );
+      }
+    } catch (e) {
+      Alert.alert("Casual mode", e?.message || "Could not enter casual mode.");
     } finally {
       setBusy(false);
     }
@@ -421,6 +515,38 @@ export function CareModeOnboardingScreen({
             editable={!busy}
             style={slotInput(theme)}
           />
+          {checkingExistingCasual ? (
+            <Text
+              style={{
+                color: theme.textTertiary,
+                fontSize: S.small,
+                marginBottom: 10,
+              }}
+            >
+              Checking your casual coin wallet…
+            </Text>
+          ) : existingCasualAvailable ? (
+            <TouchableOpacity
+              onPress={useExistingCasualCoins}
+              disabled={busy}
+              style={{
+                backgroundColor: theme.accent,
+                borderRadius: 16,
+                padding: 16,
+                alignItems: "center",
+                marginBottom: 12,
+                opacity: busy ? 0.65 : 1,
+              }}
+            >
+              {busy ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={{ color: "#fff", fontWeight: "900" }}>
+                  Go in with existing casual coins
+                </Text>
+              )}
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             onPress={payCasualTopup}
             disabled={busy}
@@ -449,6 +575,40 @@ export function CareModeOnboardingScreen({
     const slots = Array.isArray(selectedDoctor?.packageSlots)
       ? selectedDoctor.packageSlots
       : [];
+    const existingPackageAction = checkingExistingPackage ? (
+      <Text
+        style={{
+          color: theme.textTertiary,
+          fontSize: S.small,
+          marginTop: 12,
+          marginBottom: 10,
+          textAlign: "center",
+        }}
+      >
+        Checking your existing package wallet…
+      </Text>
+    ) : existingPackageAvailable ? (
+      <TouchableOpacity
+        onPress={useExistingPackage}
+        disabled={busy}
+        style={{
+          backgroundColor: theme.success,
+          borderRadius: 16,
+          padding: 16,
+          alignItems: "center",
+          marginTop: 14,
+          opacity: busy ? 0.65 : 1,
+        }}
+      >
+        {busy ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={{ color: "#fff", fontWeight: "900" }}>
+            Go in with existing package
+          </Text>
+        )}
+      </TouchableOpacity>
+    ) : null;
     return (
       <View
         style={{
@@ -609,6 +769,7 @@ export function CareModeOnboardingScreen({
               </TouchableOpacity>
             </View>
           ) : null}
+          {existingPackageAction}
         </ScrollView>
       </View>
     );

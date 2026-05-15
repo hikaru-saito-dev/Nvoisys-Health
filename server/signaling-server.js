@@ -83,10 +83,24 @@ const escapeHtml = (value) =>
 
 const cashfreeHeaders = () => ({
   "Content-Type": "application/json",
+  Accept: "application/json",
   "x-api-version": CASHFREE_API_VERSION,
   "x-client-id": CASHFREE_CLIENT_ID,
   "x-client-secret": CASHFREE_CLIENT_SECRET,
 });
+
+const cashfreeFetchErrorMessage = (error) => {
+  const cause = error?.cause;
+  const detail = [
+    cause?.code,
+    cause?.hostname || cause?.host,
+    cause?.message,
+    error?.message,
+  ]
+    .filter(Boolean)
+    .join(" - ");
+  return `Cashfree gateway is unreachable from the payment server${detail ? ` (${detail})` : ""}`;
+};
 
 const appendQueryParams = (url, params) => {
   const query = Object.entries(params)
@@ -182,11 +196,16 @@ const createCashfreeOrder = async (payload, origin) => {
     },
   };
 
-  const response = await fetch(`${CASHFREE_API_BASE}/orders`, {
-    method: "POST",
-    headers: cashfreeHeaders(),
-    body: JSON.stringify(orderPayload),
-  });
+  let response;
+  try {
+    response = await fetch(`${CASHFREE_API_BASE}/orders`, {
+      method: "POST",
+      headers: cashfreeHeaders(),
+      body: JSON.stringify(orderPayload),
+    });
+  } catch (error) {
+    throw new Error(cashfreeFetchErrorMessage(error));
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(
@@ -291,10 +310,15 @@ const verifyCashfreePayment = async (payload) => {
     throw new Error("Payment does not match this source");
   }
 
-  const response = await fetch(`${CASHFREE_API_BASE}/orders/${encodeURIComponent(orderId)}`, {
-    method: "GET",
-    headers: cashfreeHeaders(),
-  });
+  let response;
+  try {
+    response = await fetch(`${CASHFREE_API_BASE}/orders/${encodeURIComponent(orderId)}`, {
+      method: "GET",
+      headers: cashfreeHeaders(),
+    });
+  } catch (error) {
+    throw new Error(cashfreeFetchErrorMessage(error));
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data?.message || data?.error || "Cashfree verification failed");
