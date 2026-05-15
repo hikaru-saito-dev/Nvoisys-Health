@@ -86,9 +86,8 @@ export const pb = new PocketBase(PB_URL, authStore);
  *
  * **Coins**
  * Package Cashfree success marks the offer paid, creates the patient coin load in `coin_ledger`, and
- * keeps the doctor's share pending. Completed package appointments settle only when the completed
- * appointment's patient/doctor match an active paid package pair and a same-day chat/audio/video
- * interaction exists in `patient_doctor_interactions`.
+ * keeps the doctor's share pending. Package doctor coins settle when a chat/audio/video interaction
+ * exists in `patient_doctor_interactions` for an active paid package pair.
  *
  * **`package_referrals`**
  * Enables Doctor A → Doctor B referral for an active paid package. Fields: `package_offer`,

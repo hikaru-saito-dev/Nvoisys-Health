@@ -4427,7 +4427,7 @@ export async function recordPatientDoctorInteraction({
     return null;
   }
   try {
-    return await pb.collection("patient_doctor_interactions").create({
+    const interaction = await pb.collection("patient_doctor_interactions").create({
       patient,
       doctor,
       kind: interactionKind,
@@ -4436,61 +4436,100 @@ export async function recordPatientDoctorInteraction({
       source: String(source || "app").trim(),
       occurred_at: new Date().toISOString(),
     });
+    void settlePackageCoinsForInteraction({
+      patientUserId: patient,
+      doctorUserId: doctor,
+      interactionRow: interaction,
+    }).catch((error) => {
+      console.log("interaction package coin settlement skipped:", error?.message);
+    });
+    return interaction;
   } catch (error) {
     console.log("recordPatientDoctorInteraction:", error?.message);
     return null;
   }
 }
 
-async function hasPatientDoctorInteractionOnDay({
+async function findLatestPatientDoctorInteraction({
   patientUserId,
   doctorUserId,
-  day,
 }) {
   const patient = String(patientUserId || "").trim();
   const doctor = String(doctorUserId || "").trim();
-  if (!patient || !doctor) return false;
-  const { start, end } = dayBoundsIso(day);
+  if (!patient || !doctor) return null;
   try {
     const rows = await pb
       .collection("patient_doctor_interactions")
       .getFullList({
         requestKey: null,
-        filter: `patient="${patient}" && doctor="${doctor}" && occurred_at>="${start}" && occurred_at<"${end}"`,
+        sort: "-occurred_at,-created",
+        filter: `patient="${patient}" && doctor="${doctor}"`,
       });
-    return rows.length > 0;
+    return rows?.[0] || null;
   } catch (error) {
-    console.log("hasPatientDoctorInteractionOnDay:", error?.message);
-    return false;
+    console.log("findLatestPatientDoctorInteraction:", error?.message);
+    return null;
   }
 }
 
-export async function settlePackageCoinsForCompletedAppointment(
-  appointmentRow,
-) {
-  if (!appointmentRow?.id)
-    return { settled: false, reason: "missing_appointment" };
-  const workflow = decodeMeetingWorkflowFromAppointmentRow(appointmentRow);
-  let offerId = String(workflow.package_offer_id || "").trim();
-  let appointmentPatientUserId =
-    String(workflow.patient_auth_user_id || "").trim() ||
-    relationId(appointmentRow.patient);
-  let appointmentDoctorUserId =
-    String(workflow.doctor_auth_user_id || "").trim() ||
-    relationId(appointmentRow.doctor);
+export async function settlePackageCoinsForInteraction({
+  patientUserId,
+  doctorUserId,
+  offerId = "",
+  interactionRow = null,
+  interactionId = "",
+} = {}) {
+  let interactionPatientUserId = String(patientUserId || "").trim();
+  let interactionDoctorUserId = String(doctorUserId || "").trim();
   const patientFromProfile = await resolveAuthUserIdForRelationId(
     "patient_profile",
-    appointmentPatientUserId,
+    interactionPatientUserId,
   );
   const doctorFromProfile = await resolveAuthUserIdForRelationId(
     "doctor_profile",
-    appointmentDoctorUserId,
+    interactionDoctorUserId,
   );
-  appointmentPatientUserId = patientFromProfile || appointmentPatientUserId;
-  appointmentDoctorUserId = doctorFromProfile || appointmentDoctorUserId;
+  interactionPatientUserId = patientFromProfile || interactionPatientUserId;
+  interactionDoctorUserId = doctorFromProfile || interactionDoctorUserId;
+  let interaction = interactionRow?.id ? interactionRow : null;
+  if (!interaction) {
+    const id = String(interactionId || "").trim();
+    if (id) {
+      try {
+        interaction = await pb
+          .collection("patient_doctor_interactions")
+          .getOne(id, { requestKey: null });
+      } catch {
+        interaction = null;
+      }
+    }
+  }
+  if (!interaction) {
+    interaction = await findLatestPatientDoctorInteraction({
+      patientUserId: interactionPatientUserId,
+      doctorUserId: interactionDoctorUserId,
+    });
+  }
+  if (!interaction?.id) return { settled: false, reason: "no_interaction" };
+  interactionPatientUserId =
+    patientFromProfile ||
+    (await resolveAuthUserIdForRelationId(
+      "patient_profile",
+      relationId(interaction.patient),
+    )) ||
+    interactionPatientUserId ||
+    relationId(interaction.patient);
+  interactionDoctorUserId =
+    doctorFromProfile ||
+    (await resolveAuthUserIdForRelationId(
+      "doctor_profile",
+      relationId(interaction.doctor),
+    )) ||
+    interactionDoctorUserId ||
+    relationId(interaction.doctor);
   const activeOffer = await findActivePackageOfferForPair({
-    patientUserId: appointmentPatientUserId,
-    doctorUserId: appointmentDoctorUserId,
+    patientUserId: interactionPatientUserId,
+    doctorUserId: interactionDoctorUserId,
     offerId,
   });
   if (!activeOffer) return { settled: false, reason: "no_active_package_pair" };
@@ -4499,7 +4538,7 @@ export async function settlePackageCoinsForCompletedAppointment(
   try {
     existing = await pb.collection("coin_ledger").getFullList({
       requestKey: null,
-      filter: `ref_collection="${getPbAppointmentsCollection()}" && ref_id="${appointmentRow.id}" && reason="package_session_doctor_earned"`,
+      filter: `ref_collection="patient_doctor_interactions" && ref_id="${interaction.id}" && reason="package_session_doctor_earned"`,
     });
   } catch {
     return { settled: false, reason: "coin_ledger_missing" };
@@ -4507,23 +4546,9 @@ export async function settlePackageCoinsForCompletedAppointment(
   if (existing.length > 0) return { settled: false, reason: "already_settled" };
   const patientUserId =
     String(activeOffer.patient_user_id || "").trim() ||
-    appointmentPatientUserId;
+    interactionPatientUserId;
   const doctorUserId =
-    String(activeOffer.doctor_user_id || "").trim() || appointmentDoctorUserId;
-  if (
-    appointmentPatientUserId &&
-    patientUserId &&
-    appointmentPatientUserId !== patientUserId
-  ) {
-    return { settled: false, reason: "appointment_patient_not_in_pair" };
-  }
-  if (
-    appointmentDoctorUserId &&
-    doctorUserId &&
-    appointmentDoctorUserId !== doctorUserId
-  ) {
-    return { settled: false, reason: "appointment_doctor_not_in_pair" };
-  }
+    String(activeOffer.doctor_user_id || "").trim() || interactionDoctorUserId;
   const totalDoctorCoins = Number(activeOffer.doctor_coins ?? 0);
   const totalPatientCoins =
     Number(activeOffer.amount_inr ?? 0) || totalDoctorCoins;
@@ -4573,6 +4598,19 @@ export async function settlePackageCoinsForCompletedAppointment(
     (sum, row) => sum + Math.max(0, Math.abs(Number(row.delta) || 0)),
     0,
   );
+  const interactionDay = dayBoundsIso(
+    interaction.occurred_at || interaction.created || new Date().toISOString(),
+  );
+  const alreadySettledToday = priorDoctorRows.some((row) => {
+    const meta = parseCoinLedgerMeta(row);
+    const settledAt = String(
+      meta.interaction_occurred_at || row.created || "",
+    ).trim();
+    return settledAt >= interactionDay.start && settledAt < interactionDay.end;
+  });
+  if (alreadySettledToday) {
+    return { settled: false, reason: "already_settled_today" };
+  }
   const sessionIndex = priorDoctorRows.length + 1;
   const isFinalSession = sessionIndex >= sessions;
   const patientRemaining = Math.max(0, totalPatientCoins - patientSpentSoFar);
@@ -4590,19 +4628,6 @@ export async function settlePackageCoinsForCompletedAppointment(
     : Math.min(doctorRemaining, baseDoctorCoins);
   if (patientCoins <= 0 || doctorCoins <= 0) {
     return { settled: false, reason: "package_coins_already_depleted" };
-  }
-  const hadInteraction = await hasPatientDoctorInteractionOnDay({
-    patientUserId,
-    doctorUserId,
-    day:
-      appointmentRow.scheduled_at ||
-      workflow.confirmed_at ||
-      workflow.patient_selected_slot ||
-      workflow.proposed_at ||
-      new Date().toISOString(),
-  });
-  if (!hadInteraction) {
-    return { settled: false, reason: "no_same_day_interaction" };
   }
   try {
     const loadedRows = await pb.collection("coin_ledger").getFullList({
@@ -4643,9 +4668,11 @@ export async function settlePackageCoinsForCompletedAppointment(
     wallet: "package",
     wallet_mode: "package",
     package_offer_id: offerId,
-    appointment_id: appointmentRow.id,
+    interaction_id: interaction.id,
     patient_user_id: patientUserId,
     doctor_user_id: doctorUserId,
+    interaction_kind: interaction.kind || "",
+    interaction_occurred_at: interaction.occurred_at || interaction.created || "",
     session_index: sessionIndex,
     sessions,
     total_patient_package_coins: totalPatientCoins,
@@ -4657,16 +4684,16 @@ export async function settlePackageCoinsForCompletedAppointment(
     user: patientUserId,
     delta: -patientCoins,
     reason: "package_session_patient_spent",
-    ref_collection: getPbAppointmentsCollection(),
-    ref_id: appointmentRow.id,
+    ref_collection: "patient_doctor_interactions",
+    ref_id: interaction.id,
     meta,
   });
   await createCoinLedgerLine({
     user: doctorUserId,
     delta: doctorCoins,
     reason: "package_session_doctor_earned",
-    ref_collection: getPbAppointmentsCollection(),
-    ref_id: appointmentRow.id,
+    ref_collection: "patient_doctor_interactions",
+    ref_id: interaction.id,
     meta,
   });
   try {
@@ -4688,6 +4715,23 @@ export async function settlePackageCoinsForCompletedAppointment(
     // optional progress cache; ledger remains source of truth
   }
   return { settled: true, patientCoins, doctorCoins };
+}
+
+export async function settlePackageCoinsForCompletedAppointment(appointmentRow) {
+  if (!appointmentRow?.id)
+    return { settled: false, reason: "missing_appointment" };
+  const workflow = decodeMeetingWorkflowFromAppointmentRow(appointmentRow);
+  const patientUserId =
+    String(workflow.patient_auth_user_id || "").trim() ||
+    relationId(appointmentRow.patient);
+  const doctorUserId =
+    String(workflow.doctor_auth_user_id || "").trim() ||
+    relationId(appointmentRow.doctor);
+  return settlePackageCoinsForInteraction({
+    patientUserId,
+    doctorUserId,
+    offerId: String(workflow.package_offer_id || "").trim(),
+  });
 }
 
 export async function listCoinLedgerForUser(userId) {
