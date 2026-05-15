@@ -20440,6 +20440,24 @@ const DoctorDashboard = () => {
             <>
               <PackageMeetingDoctorPanel theme={theme} />
 
+              <View
+                style={{
+                  backgroundColor: theme.card,
+                  borderRadius: RFValue(20),
+                  padding: RFValue(18),
+                  marginBottom: RFValue(16),
+                  shadowColor: theme.shadowColor,
+                  shadowOpacity: 0.06,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowRadius: 12,
+                  elevation: 3,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <DoctorReferralPanel theme={theme} />
+              </View>
+
               <DoctorUpcomingAppointmentsSection />
 
               <View

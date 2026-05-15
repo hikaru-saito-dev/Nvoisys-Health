@@ -4217,7 +4217,8 @@ export async function referPackagePatientToDoctor({
       targetProfile?.verification_tier ||
       "";
     if (
-      !doctorTierEligibleForPackageMode(targetTier) ||
+      (!doctorTierEligibleForPackageMode(targetTier) &&
+        !doctorProfileIsPackageDoctor(targetProfile)) ||
       doctorTierEligibleForQuickService(targetProfile)
     ) {
       throw new Error(

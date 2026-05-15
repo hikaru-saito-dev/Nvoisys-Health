@@ -56,6 +56,7 @@ import {
   doctorAcceptPackageMeetingInitial,
   doctorConfirmPatientRescheduleChoice,
   doctorPackageFeeErrors,
+  doctorProfileIsPackageDoctor,
   doctorPackagesSetupComplete,
   doctorProposePackageMeetingReschedule,
   doctorSendPackageOfferFromSlot,
@@ -118,6 +119,13 @@ const S = {
   body: 14,
   small: 12,
   pad: 16,
+};
+
+const referralPatientLabel = (pair, patientNames = {}) => {
+  const uid = String(pair?.patient_user_id || pair?.patient || "").trim();
+  const name = uid ? String(patientNames[uid] || "").trim() : "";
+  if (name) return name;
+  return uid ? `Patient ${uid.slice(-6)}` : "Patient";
 };
 
 /** Extra bottom padding while the keyboard is open so ScrollView can scroll past it. */
@@ -7889,6 +7897,7 @@ export function CoinWalletDoctorPanel({
   const [balance, setBalance] = useState(0);
   const [pairs, setPairs] = useState([]);
   const [referrals, setReferrals] = useState([]);
+  const [patientNames, setPatientNames] = useState({});
   const [packageDoctors, setPackageDoctors] = useState([]);
   const [referralTargets, setReferralTargets] = useState({});
 
@@ -7921,6 +7930,38 @@ export function CoinWalletDoctorPanel({
   }, [refreshBalance]);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ids = [
+        ...new Set(
+          (pairs || [])
+            .map((pair) => String(pair.patient_user_id || pair.patient || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (!ids.length) {
+        setPatientNames({});
+        return;
+      }
+      try {
+        const byId = await fetchUsersAuthByIds(ids);
+        if (cancelled) return;
+        const next = {};
+        ids.forEach((id) => {
+          const auth = byId.get(id);
+          next[id] = resolveListingDisplayName({}, auth) || `Patient ${id.slice(-6)}`;
+        });
+        setPatientNames(next);
+      } catch {
+        if (!cancelled) setPatientNames({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pairs]);
+
+  useEffect(() => {
     if (walletChannel === "quick") {
       setPackageDoctors([]);
       return undefined;
@@ -7930,7 +7971,6 @@ export function CoinWalletDoctorPanel({
       try {
         const rows = await pb.collection("doctor_profile").getFullList({
           requestKey: null,
-          filter: `status="approved"`,
           expand: "user",
         });
         if (cancelled) return;
@@ -7994,6 +8034,7 @@ export function CoinWalletDoctorPanel({
                   "",
               ).toLowerCase(),
               clinicOrHospital: merged.clinic_or_hospital || "",
+              isPackageDoctor: doctorProfileIsPackageDoctor(merged),
               raw: merged,
             };
           })
@@ -8001,8 +8042,9 @@ export function CoinWalletDoctorPanel({
             (doctor) =>
               doctor.userId &&
               doctor.userId !== user?.id &&
-              doctorTierEligibleForPackageMode(doctor.practitionerTier) &&
-              !doctorTierEligibleForQuickService(doctor),
+              (doctor.isPackageDoctor ||
+                doctorTierEligibleForPackageMode(doctor.practitionerTier)) &&
+              !doctorTierEligibleForQuickService(doctor.raw || doctor),
           );
         setPackageDoctors(mapped);
       } catch {
@@ -8131,7 +8173,7 @@ export function CoinWalletDoctorPanel({
               {pair.title}
             </Text>
             <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 3 }}>
-              patient {String(pair.patient_user_id || "").slice(-6)} · pool {pair.doctor_coins} coins
+              {referralPatientLabel(pair, patientNames)} · pool {pair.doctor_coins} coins
             </Text>
             {alreadyReferred ? (
               <Text style={{ color: theme.success, fontSize: 11, marginTop: 6 }}>
@@ -8253,6 +8295,7 @@ export function DoctorReferralPanel({ theme }) {
   const [busy, setBusy] = useState(false);
   const [pairs, setPairs] = useState([]);
   const [referrals, setReferrals] = useState([]);
+  const [patientNames, setPatientNames] = useState({});
   const [packageDoctors, setPackageDoctors] = useState([]);
   const [referralTargets, setReferralTargets] = useState({});
 
@@ -8277,10 +8320,41 @@ export function DoctorReferralPanel({ theme }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const ids = [
+        ...new Set(
+          (pairs || [])
+            .map((pair) => String(pair.patient_user_id || pair.patient || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (!ids.length) {
+        setPatientNames({});
+        return;
+      }
+      try {
+        const byId = await fetchUsersAuthByIds(ids);
+        if (cancelled) return;
+        const next = {};
+        ids.forEach((id) => {
+          const auth = byId.get(id);
+          next[id] = resolveListingDisplayName({}, auth) || `Patient ${id.slice(-6)}`;
+        });
+        setPatientNames(next);
+      } catch {
+        if (!cancelled) setPatientNames({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pairs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
       try {
         const rows = await pb.collection("doctor_profile").getFullList({
           requestKey: null,
-          filter: `status="approved"`,
           expand: "user",
         });
         if (cancelled) return;
@@ -8319,14 +8393,17 @@ export function DoctorReferralPanel({ theme }) {
                   merged.doctor_class ||
                   "",
               ).toLowerCase(),
+              isPackageDoctor: doctorProfileIsPackageDoctor(merged),
+              raw: merged,
             };
           })
           .filter(
             (doctor) =>
               doctor.userId &&
               doctor.userId !== user?.id &&
-              doctorTierEligibleForPackageMode(doctor.practitionerTier) &&
-              !doctorTierEligibleForQuickService(doctor),
+              (doctor.isPackageDoctor ||
+                doctorTierEligibleForPackageMode(doctor.practitionerTier)) &&
+              !doctorTierEligibleForQuickService(doctor.raw || doctor),
           );
         setPackageDoctors(mapped);
       } catch {
@@ -8403,20 +8480,24 @@ export function DoctorReferralPanel({ theme }) {
                 {pair.title || "Care package"}
               </Text>
               <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 3 }}>
-                Patient {String(pair.patient_user_id || "").slice(-6)} · pool {pair.doctor_coins || 0} coins
+                {referralPatientLabel(pair, patientNames)} · pool {pair.doctor_coins || 0} coins
               </Text>
               {alreadyReferred ? (
                 <Text style={{ color: theme.success, fontSize: 11, marginTop: 6 }}>
                   Already referred. Monthly 1000-coin commission returns to you after the referred doctor earns from this patient.
                 </Text>
               ) : packageDoctors.length ? (
-                <View style={{ marginTop: 8 }}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    {packageDoctors.map((doctor) => {
+                <View style={{ marginTop: 10 }}>
+                  <Text style={{ color: theme.textSecondary, fontSize: 11, fontWeight: "800", marginBottom: 6 }}>
+                    Choose doctor to refer to
+                  </Text>
+                  <View>
+                    {packageDoctors.slice(0, 8).map((doctor) => {
                       const selected = selectedDoctorId === doctor.userId;
                       return (
                         <TouchableOpacity
                           key={`${pair.offerId}-${doctor.userId}`}
+                          activeOpacity={0.82}
                           onPress={() =>
                             setReferralTargets((prev) => ({
                               ...prev,
@@ -8424,28 +8505,48 @@ export function DoctorReferralPanel({ theme }) {
                             }))
                           }
                           style={{
-                            paddingHorizontal: 10,
-                            paddingVertical: 8,
-                            borderRadius: 999,
-                            marginRight: 8,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            borderRadius: 12,
+                            marginBottom: 8,
                             backgroundColor: selected ? theme.accent : theme.card,
                             borderWidth: 1,
                             borderColor: selected ? theme.accent : theme.cardBorder,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            justifyContent: "space-between",
                           }}
                         >
-                          <Text
-                            style={{
-                              color: selected ? "#fff" : theme.textPrimary,
-                              fontWeight: "800",
-                              fontSize: 11,
-                            }}
-                          >
-                            {doctor.name}
-                          </Text>
+                          <View style={{ flex: 1, marginRight: 8 }}>
+                            <Text
+                              style={{
+                                color: selected ? "#fff" : theme.textPrimary,
+                                fontWeight: "900",
+                                fontSize: 12,
+                              }}
+                            >
+                              {doctor.name}
+                            </Text>
+                            <Text
+                              style={{
+                                color: selected ? "rgba(255,255,255,0.82)" : theme.textTertiary,
+                                fontWeight: "600",
+                                fontSize: 10,
+                                marginTop: 2,
+                              }}
+                            >
+                              {doctor.specialty || "Package doctor"}
+                            </Text>
+                          </View>
+                          <Ionicons
+                            name={selected ? "radio-button-on" : "radio-button-off"}
+                            size={18}
+                            color={selected ? "#fff" : theme.textTertiary}
+                          />
                         </TouchableOpacity>
                       );
                     })}
-                  </ScrollView>
+                  </View>
                   <TouchableOpacity
                     onPress={() => runReferral(pair)}
                     disabled={busy || !selectedDoctorId}
