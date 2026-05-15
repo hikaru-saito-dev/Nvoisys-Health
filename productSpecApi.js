@@ -947,21 +947,40 @@ export async function getDoctorCoinBucketBalances(doctorUserId) {
   if (!uid) {
     return { quickCoins: 0, packageCoins: 0, totalCoins: 0 };
   }
+  let isQuickCareDoctor = false;
+  try {
+    const profile = await pb
+      .collection("doctor_profile")
+      .getFirstListItem(`user="${uid}"`, { requestKey: null });
+    isQuickCareDoctor = doctorTierEligibleForQuickService(profile);
+  } catch {
+    isQuickCareDoctor = false;
+  }
   const rows = await listCoinLedgerForUser(uid);
   let quick = 0;
   let pkg = 0;
   for (const row of rows) {
     const r = String(row.reason || "");
     const d = Number(row.delta) || 0;
+    const meta = parseCoinLedgerMeta(row);
+    const wallet = String(
+      meta.wallet || meta.wallet_mode || meta.coin_wallet || "",
+    )
+      .trim()
+      .toLowerCase();
     if (
       r === LEDGER_REASON_QUICK_SOLUTION_EARNED ||
-      r === LEDGER_REASON_QUICK_COUNSELLING_EARNED
+      r === LEDGER_REASON_QUICK_COUNSELLING_EARNED ||
+      wallet === "quick" ||
+      wallet === "quick_care" ||
+      wallet === "casual"
     ) {
       quick += d;
     } else if (
       r === LEDGER_REASON_PACKAGE_SESSION_EARNED ||
       r === LEDGER_REASON_REFERRAL_COMMISSION_RECEIVED ||
-      r === LEDGER_REASON_REFERRAL_COMMISSION_PAID
+      r === LEDGER_REASON_REFERRAL_COMMISSION_PAID ||
+      wallet === "package"
     ) {
       pkg += d;
     }
@@ -972,8 +991,8 @@ export async function getDoctorCoinBucketBalances(doctorUserId) {
   );
   const remainder = totalCoins - quick - pkg;
   return {
-    quickCoins: quick,
-    packageCoins: pkg + remainder,
+    quickCoins: quick + (isQuickCareDoctor ? remainder : 0),
+    packageCoins: pkg + (isQuickCareDoctor ? 0 : remainder),
     totalCoins,
   };
 }
@@ -4527,13 +4546,24 @@ export async function listCoinLedgerForUser(userId) {
   }
 }
 
-export async function doctorWithdrawCoinsStub(doctorUserId, coins) {
+export async function doctorWithdrawCoinsStub(
+  doctorUserId,
+  coins,
+  walletChannel = "combined",
+) {
   const n = Number(coins);
   if (!doctorUserId || !Number.isFinite(n) || n < 1) {
     throw new Error("Invalid withdrawal.");
   }
+  const channel = String(walletChannel || "combined").toLowerCase();
   let balanceRow = await findDoctorCoinBalanceRow(doctorUserId);
-  const balance = await getDoctorCoinBalance(doctorUserId);
+  const buckets = await getDoctorCoinBucketBalances(doctorUserId);
+  const balance =
+    channel === "quick"
+      ? Number(buckets.quickCoins) || 0
+      : channel === "package"
+        ? Number(buckets.packageCoins) || 0
+        : Number(buckets.totalCoins) || 0;
   if (n > balance) {
     throw new Error(`Withdrawal exceeds available coins (${balance}).`);
   }

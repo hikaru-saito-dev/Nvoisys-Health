@@ -8024,7 +8024,7 @@ export function CoinWalletDoctorPanel({
   const runWithdraw = async () => {
     try {
       setBusy(true);
-      await doctorWithdrawCoinsStub(user?.id, Number(withdraw));
+      await doctorWithdrawCoinsStub(user?.id, Number(withdraw), walletChannel);
       setWithdraw("");
       await refreshBalance();
       Alert.alert(
@@ -8078,7 +8078,13 @@ export function CoinWalletDoctorPanel({
         ? "Package care coins (1 coin = ₹1)"
         : "Coin wallet (1 coin = ₹1)";
   const showPackagePairUi = walletChannel !== "quick";
-  const showWithdrawBlock = !hideWithdrawSection && walletChannel !== "quick";
+  const showWithdrawBlock = !hideWithdrawSection;
+  const withdrawCopy =
+    walletChannel === "quick"
+      ? "Settled Quick Solution and Quick Counselling earnings appear here. Withdraw requests are checked against your quick-care coins before they are sent."
+      : walletChannel === "package"
+        ? "Settled package earnings appear here. Withdraw requests are checked against your package coins before they are sent."
+        : "Withdraw requests are checked against your available coins before they are sent.";
 
   return (
     <View style={{ marginTop: 0 }}>
@@ -8097,8 +8103,7 @@ export function CoinWalletDoctorPanel({
           style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}
         >
           Credited when you respond/prescribe on a Quick Solution or Quick
-          Counselling request. Withdrawals use your combined balance (see
-          package wallet if you also run care packages).
+          Counselling request.
         </Text>
       ) : (
         <Text
@@ -8202,8 +8207,7 @@ export function CoinWalletDoctorPanel({
               marginTop: 6,
             }}
           >
-            Settled package earnings appear here. Withdraw requests are checked
-            against your available coins before they are sent.
+            {withdrawCopy}
           </Text>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <TextInput

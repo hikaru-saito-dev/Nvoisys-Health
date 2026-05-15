@@ -1178,47 +1178,55 @@ const postChatCompletions = async (url, apiKey, body) => {
 // "Doctor in Your Pocket" base prompt. Mirrors the client's Python reference
 // (doctor_in_pocket.py → SYSTEM_PROMPT). Used for both chat replies and the
 // doctor-side side-effect / interaction checker so the persona is consistent.
-const DOCTOR_IN_POCKET_SYSTEM_PROMPT = `You are an AI Medical Decision Support System - Doctor in Your Pocket.
-Your knowledge is equivalent to a board-certified internal medicine physician.
+const DOCTOR_IN_POCKET_SYSTEM_PROMPT = `You are an AI Medical Decision Support System, a warm, caring, and highly knowledgeable AI health companion.
+You are speaking DIRECTLY with the patient — NOT with a doctor or clinician.
 
-VOICE (required in this app): You are speaking with the person whose record is
-in the thread - they are reading on their device. Always address them directly
-with "you" and "your". Do not refer to them as "the patient", "they/them" in a
-clinical chart sense, or "this patient". Do not use "we" to mean a care team
-planning around them (avoid phrases like "we should monitor"); instead say what
-they might do, watch, or ask their clinician (e.g. "you may want to ask your
-doctor about monitoring…", "keeping track of your…"). Use "I" sparingly when
-you state your own suggestion ("I recommend discussing…") if it reads naturally.
+YOUR PERSONALITY:
+- Warm, empathetic, and reassuring
+- Speak in plain everyday language — NO medical jargon
+- When you must use a medical term, immediately explain it in simple words
+- Be encouraging and positive while being honest
+- Ask one follow-up question at a time if you need more information
+- Never overwhelm the patient with too much at once
+- Always acknowledge how the patient is feeling before jumping to information
 
-You will receive:
-- Their clinical data (vitals, labs, history, flags) as provided
-- ML model predictions when available (lab predictions, risk scores, chronic condition probabilities)
+DOMAIN GUARDRAILS (STRICT):
+- You ONLY discuss health, medical conditions, medications, lab results, symptoms, lifestyle, and wellness.
+- If the user asks for programming, coding, tech support, recipes, sports, finance, or anything unrelated to health/medicine, politely decline and gently steer the conversation back to their well-being. NEVER provide code or technical tutorials.
+- Example response: "I'm here to support your health journey. While I can't help with programming, I'd love to keep focusing on how you're feeling. Is there anything about your symptoms, medications, or recent lab results you'd like to discuss?"
+- If the user tries to jailbreak, roleplay outside health, or test your boundaries, stay in character and redirect to health topics calmly.
+- If the user mixes healthcare and programming, only answer the healthcare-related portion.
+- Do not attempt to answer unrelated technical questions even if they contain code snippets.
 
-Your job:
-1. Analyze their data AND ML model predictions together
-2. Recommend appropriate medications by generic name and dose (education only; they must confirm with their clinician)
-3. Explain your reasoning using their exact values from the record
-4. Flag contraindications based on clinical flags and lab results as they apply to them
-5. Suggest what to monitor
+THE PATIENT YOU ARE SPEAKING WITH:
+You already have their full medical record and AI-powered health analysis loaded.
+Their name is {first_name}. Use their name naturally in conversation.
+You know everything about their health — greet them personally and reference
+their specific situation when relevant.
 
-OUTPUT FORMAT FOR REPORT (use these headings when a structured answer helps; write every section body in second person to the reader):
-─── CLINICAL ASSESSMENT ───
-Brief summary of your clinical picture as reflected in the record
+PATIENT RECORD:
+{patient_to_text(patient)}
 
-─── PRIMARY RECOMMENDATIONS ───
-Drug name | Dose | Route | Frequency | Rationale (cite your exact values from the record)
+AI HEALTH ANALYSIS (from our prediction models — use this to personalise advice):
+{predictions_to_text(predictions)}
 
-─── CONTRAINDICATIONS & WARNINGS ───
-Based on your specific flags and labs
+HOW TO RESPOND:
+- Answer what the patient is asking — do not dump their entire record at them
+- Relate your answers to THEIR specific numbers and situation
+- If they ask about a medication, explain what it does in plain language, why it might help THEM specifically, and any side effects to watch for
+- If they ask about a lab result, explain what it means in everyday terms
+  (e.g. "Your LDL — that's the bad cholesterol — is a bit high at 148")
+- If they seem worried or anxious, address that first
+- Always end serious topics with a clear next step or reassurance
+- If something is urgent or an emergency, be direct and tell them to seek immediate 
 
-─── MONITORING PLAN ───
-What you should track or ask your clinician to check, and when
 
-─── DISCLAIMER ───
-AI-assisted support only. Not a substitute for a licensed physician.
+BOUNDARIES:
+- You can explain, advise, and guide — but always remind them that final decisions should be made with their in-person doctor
+- Never diagnose a new condition definitively
+- Never tell them to stop a current medication without saying "discuss with your doctor first"
 
-For CHAT: respond conversationally, ask clarifying questions when needed.
-Always cite their specific values from the record when making recommendations.`;
+OPENING: When the conversation starts, greet {first_name} warmly by name, acknowledge their main concern, and ask how they are feeling today. Keep the opening short — 2 to 3 sentences max.`;
 
 const fmtVal = (value, fallback = "N/A") => {
   if (value === undefined || value === null) return fallback;
@@ -1327,6 +1335,128 @@ const parseListLike = (value) => {
 
 const jsonListString = (value) => JSON.stringify(parseListLike(value));
 
+const AI_PREDICT_FIELDS = [
+  "patient_id",
+  "demographics_first_name",
+  "demographics_last_name",
+  "demographics_sex",
+  "demographics_date_of_birth",
+  "demographics_age",
+  "demographics_age_group",
+  "demographics_ethnicity",
+  "demographics_blood_type",
+  "demographics_country",
+  "demographics_occupation",
+  "demographics_insurance_type",
+  "anthropometrics_height_cm",
+  "anthropometrics_weight_kg",
+  "anthropometrics_bmi",
+  "anthropometrics_bmi_category",
+  "pregnancy_currently_pregnant",
+  "pregnancy_currently_breastfeeding",
+  "allergies_no_known_allergies",
+  "allergies_drug_allergies",
+  "allergies_food_allergies",
+  "allergies_environmental_allergies",
+  "allergies_adverse_drug_reactions",
+  "lifestyle_smoking_status",
+  "lifestyle_alcohol_use",
+  "lifestyle_exercise_level",
+  "vitals_blood_pressure_systolic_mmHg",
+  "vitals_blood_pressure_diastolic_mmHg",
+  "vitals_heart_rate_bpm",
+  "vitals_temperature_C",
+  "vitals_fasting_blood_glucose_mg_dL",
+  "vitals_HbA1c_percent",
+  "vitals_respiratory_rate_breaths_per_min",
+  "vitals_SpO2_percent",
+  "lab_results_eGFR_mL_min_1_73m2",
+  "lab_results_ALT_U_L",
+  "lab_results_AST_U_L",
+  "lab_results_hemoglobin_g_dL",
+  "lab_results_total_cholesterol_mg_dL",
+  "lab_results_LDL_mg_dL",
+  "lab_results_HDL_mg_dL",
+  "lab_results_TSH_mIU_L",
+  "lab_results_serum_creatinine_mg_dL",
+  "lab_results_potassium_mEq_L",
+  "lab_results_sodium_mEq_L",
+  "clinical_flags_renal_function",
+  "clinical_flags_hepatic_function",
+  "clinical_flags_on_immunosuppressants",
+  "clinical_flags_polypharmacy",
+  "clinical_flags_high_allergy_risk",
+  "clinical_flags_pregnancy_or_lactation",
+  "clinical_flags_pediatric_patient",
+  "clinical_flags_narrow_therapeutic_index_meds",
+  "clinical_flags_high_cardiovascular_risk",
+  "clinical_flags_active_smoker",
+  "clinical_flags_cognitive_impairment_risk",
+  "chronic_conditions",
+  "current_medications",
+  "past_surgical_history",
+  "family_history",
+  "genetic_markers",
+  "chief_complaint",
+];
+
+const AI_PREDICT_STRING_FIELDS = new Set([
+  "patient_id",
+  "demographics_first_name",
+  "demographics_last_name",
+  "demographics_sex",
+  "demographics_date_of_birth",
+  "demographics_age_group",
+  "demographics_ethnicity",
+  "demographics_blood_type",
+  "demographics_country",
+  "demographics_occupation",
+  "demographics_insurance_type",
+  "anthropometrics_bmi_category",
+  "lifestyle_smoking_status",
+  "lifestyle_alcohol_use",
+  "lifestyle_exercise_level",
+  "chief_complaint",
+]);
+
+const AI_PREDICT_LIST_FIELDS = new Set([
+  "allergies_drug_allergies",
+  "allergies_food_allergies",
+  "allergies_environmental_allergies",
+  "allergies_adverse_drug_reactions",
+  "chronic_conditions",
+  "current_medications",
+  "past_surgical_history",
+  "family_history",
+  "genetic_markers",
+]);
+
+const AI_PREDICT_FLAG_STRING_FIELDS = new Set([
+  "clinical_flags_renal_function",
+  "clinical_flags_hepatic_function",
+]);
+
+const normalizePredictPayloadForMlService = (rawPayload) => {
+  const raw = rawPayload || {};
+  const payload = {};
+  for (const field of AI_PREDICT_FIELDS) {
+    let value = raw[field];
+    const missing =
+      value === undefined ||
+      value === null ||
+      (typeof value === "number" && !Number.isFinite(value));
+    if (missing) {
+      if (AI_PREDICT_STRING_FIELDS.has(field)) value = "";
+      else if (AI_PREDICT_LIST_FIELDS.has(field)) value = "[]";
+      else if (AI_PREDICT_FLAG_STRING_FIELDS.has(field)) value = "Normal";
+      else value = 0;
+    }
+    if (Array.isArray(value)) value = JSON.stringify(value);
+    payload[field] = value;
+  }
+  return payload;
+};
+
 const ageGroupFor = (age) => {
   const n = Number(age);
   if (!Number.isFinite(n) || n <= 0) return "Unknown";
@@ -1424,7 +1554,7 @@ const buildPredictPayload = ({ patient, user, question, prescriptions } = {}) =>
   const highCardioRisk =
     systolic >= 140 || diastolic >= 90 || ldl >= 160 || hba1c >= 6.5 || glucose >= 126 || hasCardioCondition;
 
-  return {
+  const payload = {
     patient_id: firstPresent(p.user, p.patient_id, p.id, user?.id) || "Unknown",
     demographics_first_name: nameParts.first,
     demographics_last_name: nameParts.last,
@@ -1529,6 +1659,7 @@ const buildPredictPayload = ({ patient, user, question, prescriptions } = {}) =>
     genetic_markers: jsonListString(p.genetic_markers),
     chief_complaint: firstPresent(p.chief_complaint, question, p.primary_condition, p.condition) || "Unknown",
   };
+  return normalizePredictPayloadForMlService(payload);
 };
 
 const callPredictEndpoint = async (payload) => {
@@ -1560,7 +1691,13 @@ const callPredictEndpoint = async (payload) => {
       console.log("AI predict endpoint error:", data?.message || text || `HTTP ${response.status}`);
       return null;
     }
-    return data;
+    if (!data || typeof data !== "object") return null;
+    return {
+      lab_predictions: data.lab_predictions || {},
+      risk_predictions: data.risk_predictions || {},
+      chronic_condition_predictions:
+        data.chronic_condition_predictions || {},
+    };
   } catch (error) {
     console.log("AI predict endpoint call failed:", error?.message || error);
     return null;
@@ -1568,56 +1705,138 @@ const callPredictEndpoint = async (payload) => {
 };
 
 const formatPredictionsForPrompt = (predictions) => {
-  if (!predictions) {
-    return `Not available for this turn. If asked, say ML predictions are unavailable.`;
+  if (!predictions || typeof predictions !== "object") {
+    return "No AI health analysis available.";
   }
-  const text =
-    typeof predictions === "string"
-      ? predictions
-      : JSON.stringify(predictions, null, 2);
-  return text.length > 5000 ? `${text.slice(0, 5000)}\n...truncated` : text;
+  const lines = [];
+  const labs = predictions.lab_predictions || {};
+  if (Object.keys(labs).length) {
+    lines.push("── AI LAB ANALYSIS ──");
+    Object.entries(labs).forEach(([key, value]) => {
+      if (!value || typeof value !== "object" || value.error) return;
+      const col = value.lab_column || key;
+      const pred = value.predicted_value ?? "?";
+      let line = `  ${col}: predicted=${pred}`;
+      if (value.actual_value !== undefined && value.actual_value !== null) {
+        line += ` | actual=${value.actual_value}`;
+      }
+      if (value.deviation_percent !== undefined && value.deviation_percent !== null) {
+        const dev = Number(value.deviation_percent);
+        if (Number.isFinite(dev)) {
+          line += ` | ${dev > 0 ? "↑" : "↓"}${Math.abs(dev).toFixed(1)}% deviation`;
+        }
+      }
+      lines.push(line);
+    });
+  }
+  const risks = predictions.risk_predictions || {};
+  if (Object.keys(risks).length) {
+    lines.push("── AI RISK ANALYSIS ──");
+    Object.entries(risks).forEach(([key, value]) => {
+      if (!value || typeof value !== "object" || value.error) return;
+      const prob =
+        value["probability%"] !== undefined && value["probability%"] !== null
+          ? ` (${value["probability%"]}% probability)`
+          : "";
+      lines.push(`  ${key}: ${value.risk_label || "?"}${prob}`);
+    });
+  }
+  const chronic = predictions.chronic_condition_predictions || {};
+  if (Object.keys(chronic).length) {
+    lines.push("── AI CHRONIC CONDITION ANALYSIS ──");
+    Object.entries(chronic).forEach(([key, value]) => {
+      if (!value || typeof value !== "object" || value.error) return;
+      const prob =
+        value["probability%"] !== undefined && value["probability%"] !== null
+          ? ` (${value["probability%"]}%)`
+          : "";
+      lines.push(`  ${key}: ${value.label || "?"}${prob}`);
+    });
+  }
+  return lines.length ? lines.join("\n") : "No AI analysis available.";
 };
 
-// Format a Nvoisys patient_profile + role record into the sectioned layout the
-// Doctor-in-Your-Pocket prompt expects. Unknown fields render as "N/A" so the
-// model still has a consistent shape to read from.
-const formatPatientForPrompt = (patient) => {
-  const p = patient || {};
-  const bmi = computeBmi(p.weight_kg, p.height_cm);
-  const bmiCat = bmiCategory(bmi);
-  const conditionLine =
-    fmtVal(p.medical_conditions) !== "N/A"
-      ? p.medical_conditions
-      : fmtVal(p.primary_condition) !== "N/A"
-        ? p.primary_condition
-        : fmtVal(p.condition);
+const promptFlag = (patient, key) =>
+  ["1", "true", "yes"].includes(String(patient?.[key] ?? "").toLowerCase())
+    ? "Yes"
+    : "No";
+
+const promptList = (patient, key) => {
+  const parsed = parseListLike(patient?.[key]);
+  return parsed.length ? parsed.join(", ") : "None";
+};
+
+const formatPatientForPrompt = (patientPayload) => {
+  const p = normalizePredictPayloadForMlService(patientPayload || {});
   return `── DEMOGRAPHICS ──
-  Age / Sex     : ${fmtVal(p.age)}yo / ${fmtVal(p.gender)}
-  Marital       : ${fmtVal(p.marital_status)}
-  Location      : ${fmtVal(p.district)}${p.state ? `, ${p.state}` : ""}
+Name                 : ${fmtVal(p.demographics_first_name)} ${fmtVal(p.demographics_last_name)}
+Age / Sex            : ${fmtVal(p.demographics_age)}yo / ${fmtVal(p.demographics_sex)}
+DOB                  : ${fmtVal(p.demographics_date_of_birth)}
+Ethnicity            : ${fmtVal(p.demographics_ethnicity)}
+Blood Type           : ${fmtVal(p.demographics_blood_type)}
+Country              : ${fmtVal(p.demographics_country)}
+Occupation           : ${fmtVal(p.demographics_occupation)}
+Insurance            : ${fmtVal(p.demographics_insurance_type)}
 
 ── ANTHROPOMETRICS ──
-  Height/Weight : ${fmtVal(p.height_cm)} cm / ${fmtVal(p.weight_kg)} kg
-  BMI           : ${bmi != null ? bmi : "N/A"} (${bmiCat})
+Height / Weight      : ${fmtVal(p.anthropometrics_height_cm)} cm / ${fmtVal(p.anthropometrics_weight_kg)} kg
+BMI                  : ${fmtVal(p.anthropometrics_bmi)} (${fmtVal(p.anthropometrics_bmi_category)})
+
+── PREGNANCY ──
+Pregnant             : ${promptFlag(p, "pregnancy_currently_pregnant")}
+Breastfeeding        : ${promptFlag(p, "pregnancy_currently_breastfeeding")}
+
+── ALLERGIES ──
+No Known Allergies   : ${promptFlag(p, "allergies_no_known_allergies")}
+Drug Allergies       : ${promptList(p, "allergies_drug_allergies")}
+Food Allergies       : ${promptList(p, "allergies_food_allergies")}
+Environmental        : ${promptList(p, "allergies_environmental_allergies")}
+Adverse Reactions    : ${promptList(p, "allergies_adverse_drug_reactions")}
 
 ── VITALS ──
-  Not collected on this device. Confirm at the visit.
+Blood Pressure       : ${fmtVal(p.vitals_blood_pressure_systolic_mmHg)}/${fmtVal(p.vitals_blood_pressure_diastolic_mmHg)} mmHg
+Heart Rate           : ${fmtVal(p.vitals_heart_rate_bpm)} bpm
+Temperature          : ${fmtVal(p.vitals_temperature_C)} °C
+SpO2                 : ${fmtVal(p.vitals_SpO2_percent)} %
+Fasting Glucose      : ${fmtVal(p.vitals_fasting_blood_glucose_mg_dL)} mg/dL
+HbA1c                : ${fmtVal(p.vitals_HbA1c_percent)} %
+Respiratory Rate     : ${fmtVal(p.vitals_respiratory_rate_breaths_per_min)} /min
 
 ── LAB RESULTS ──
-  Not available on the mobile profile. Use clinical judgement until labs are uploaded.
+eGFR                 : ${fmtVal(p.lab_results_eGFR_mL_min_1_73m2)} mL/min/1.73m²
+LDL / HDL            : ${fmtVal(p.lab_results_LDL_mg_dL)} / ${fmtVal(p.lab_results_HDL_mg_dL)} mg/dL
+Total Cholesterol    : ${fmtVal(p.lab_results_total_cholesterol_mg_dL)} mg/dL
+ALT / AST            : ${fmtVal(p.lab_results_ALT_U_L)} / ${fmtVal(p.lab_results_AST_U_L)} U/L
+Creatinine           : ${fmtVal(p.lab_results_serum_creatinine_mg_dL)} mg/dL
+Hemoglobin           : ${fmtVal(p.lab_results_hemoglobin_g_dL)} g/dL
+TSH                  : ${fmtVal(p.lab_results_TSH_mIU_L)} mIU/L
+Potassium            : ${fmtVal(p.lab_results_potassium_mEq_L)} mEq/L
+Sodium               : ${fmtVal(p.lab_results_sodium_mEq_L)} mEq/L
 
 ── LIFESTYLE ──
-  Smoking       : ${fmtVal(p.smoking)}
-  Alcohol       : ${fmtVal(p.alcohol)}
+Smoking              : ${fmtVal(p.lifestyle_smoking_status)}
+Alcohol              : ${fmtVal(p.lifestyle_alcohol_use)}
+Exercise             : ${fmtVal(p.lifestyle_exercise_level)}
 
 ── CLINICAL FLAGS ──
-  Allergies         : ${fmtVal(p.allergies)}
-  Pregnancy/Lactation: ${fmtVal(p.pregnancy_or_lactation, "Unknown")}
-  Pediatric Patient : ${Number(p.age) > 0 && Number(p.age) < 18 ? "Yes" : "No"}
+Renal Function       : ${fmtVal(p.clinical_flags_renal_function)}
+Hepatic Function     : ${fmtVal(p.clinical_flags_hepatic_function)}
+High CV Risk         : ${promptFlag(p, "clinical_flags_high_cardiovascular_risk")}
+Polypharmacy         : ${promptFlag(p, "clinical_flags_polypharmacy")}
+High Allergy Risk    : ${promptFlag(p, "clinical_flags_high_allergy_risk")}
+Pregnancy/Lactation  : ${promptFlag(p, "clinical_flags_pregnancy_or_lactation")}
+Pediatric Patient    : ${promptFlag(p, "clinical_flags_pediatric_patient")}
+Narrow Therapeutic   : ${promptFlag(p, "clinical_flags_narrow_therapeutic_index_meds")}
+Active Smoker        : ${promptFlag(p, "clinical_flags_active_smoker")}
+Cognitive Impairment : ${promptFlag(p, "clinical_flags_cognitive_impairment_risk")}
+Immunosuppressants   : ${promptFlag(p, "clinical_flags_on_immunosuppressants")}
 
 ── CLINICAL CONTEXT ──
-  Chronic Conditions / Primary: ${fmtVal(conditionLine)}
-  Chief Complaint             : ${fmtVal(p.chief_complaint)}`;
+Chronic Conditions   : ${promptList(p, "chronic_conditions")}
+Current Medications  : ${promptList(p, "current_medications")}
+Past Surgical History: ${promptList(p, "past_surgical_history")}
+Family History       : ${promptList(p, "family_history")}
+Chief Complaint      : ${fmtVal(p.chief_complaint)}`;
 };
 
 const formatPrescriptionsForPrompt = (prescriptions) => {
@@ -1643,19 +1862,20 @@ const formatPrescriptionsForPrompt = (prescriptions) => {
 // Build the full assistant system prompt: persona + patient block + Rx block +
 // server-side model predictions when the prediction API is reachable.
 const buildHealthAssistantSystemPrompt = (patient, prescriptions, predictions) => {
-  const patientBlock = formatPatientForPrompt(patient);
+  const patientPayload = buildPredictPayload({ patient, prescriptions });
+  const firstName = fmtVal(patientPayload.demographics_first_name, "there");
+  const patientBlock = formatPatientForPrompt(patientPayload);
   const rxBlock = formatPrescriptionsForPrompt(prescriptions);
   const predictionsBlock = formatPredictionsForPrompt(predictions);
-  return `${DOCTOR_IN_POCKET_SYSTEM_PROMPT}
-
-═══ PATIENT ON FILE ═══
-${patientBlock}
+  const basePrompt = DOCTOR_IN_POCKET_SYSTEM_PROMPT.replaceAll(
+    "{first_name}",
+    firstName,
+  )
+    .replace("{patient_to_text(patient)}", patientBlock)
+    .replace("{predictions_to_text(predictions)}", predictionsBlock);
+  return `${basePrompt}
 
 ${rxBlock}
-
-ML MODEL PREDICTIONS:
-${predictionsBlock}
-═══════════════════════
 
 Answer questions about THIS person and their record. Cite their exact values when you give
 recommendations. If they ask something general not specific to their
@@ -1680,8 +1900,8 @@ const callOpenAICompatibleAI = async (payload) => {
     );
     const data = await postChatCompletions(AI_BASE_URL, AI_API_KEY, {
       model: AI_MODEL,
-      temperature: 0.1,
-      max_tokens: 2048,
+      temperature: 0.4,
+      max_tokens: 1024,
       messages: [
         { role: "system", content: system },
         ...history,
@@ -19618,7 +19838,11 @@ const DoctorDashboard = () => {
   const pendingWounds = (wounds || []).filter(
     (w) => w.status === "Review Pending",
   ).length;
-  const isPackageDoctor = doctorProfileIsPackageDoctor(doctorProfile);
+  const isQuickCareDoctor = doctorTierEligibleForQuickService(
+    doctorProfile || currentUser,
+  );
+  const isPackageDoctor =
+    !isQuickCareDoctor && doctorProfileIsPackageDoctor(doctorProfile);
   const patientList = patients || [];
 
   const openQuickPrescribeModal = useCallback(({ kind, record }) => {
@@ -19756,6 +19980,8 @@ const DoctorDashboard = () => {
     .toLowerCase();
   const isSpecialistDoctor =
     practitionerTier === "specialist" || doctorTypeField === "specialist";
+  const showQuickCareWalletCard = isQuickCareDoctor;
+  const showPackageWalletCard = isPackageDoctor;
 
   return (
     <SafeAreaView
@@ -19816,7 +20042,7 @@ const DoctorDashboard = () => {
                   marginTop: RFValue(2),
                 }}
               >
-                {isPackageDoctor ? "Package care doctor" : "RMP doctor"}
+                {isPackageDoctor ? "Package care doctor" : "RMP / clinic doctor"}
               </Text>
               <Text
                 style={{
@@ -19916,6 +20142,7 @@ const DoctorDashboard = () => {
               gap: RFValue(10),
             }}
           >
+            {showQuickCareWalletCard ? (
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() => tabNav?.navigateTab?.("Profile")}
@@ -19976,6 +20203,8 @@ const DoctorDashboard = () => {
                 </View>
               </LinearGradient>
             </TouchableOpacity>
+            ) : null}
+            {showPackageWalletCard ? (
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() => tabNav?.navigateTab?.("Profile")}
@@ -20040,6 +20269,7 @@ const DoctorDashboard = () => {
                 </View>
               </LinearGradient>
             </TouchableOpacity>
+            ) : null}
           </View>
 
           <View
@@ -21420,6 +21650,12 @@ const DoctorProfileScreen = ({ onLogout }) => {
     .toLowerCase();
   const isSpecialistDashboard =
     profileTier === "specialist" || profileDoctorType === "specialist";
+  const profileForWallet = doctorRow || doctorContextProfile || currentUser;
+  const profileIsQuickCareDoctor =
+    doctorTierEligibleForQuickService(profileForWallet);
+  const profileIsPackageDoctor =
+    !profileIsQuickCareDoctor &&
+    doctorProfileIsPackageDoctor(doctorRow || doctorContextProfile);
 
   const toggleConcernChip = (chipId) => {
     const tag = normalizeConcernTag(chipId);
@@ -22180,41 +22416,45 @@ const DoctorProfileScreen = ({ onLogout }) => {
             </View>
           </View>
 
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(18),
-              padding: RFValue(16),
-              marginBottom: RFValue(16),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <CoinWalletDoctorPanel theme={theme} walletChannel="quick" />
-          </View>
+          {profileIsQuickCareDoctor ? (
+            <View
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: RFValue(18),
+                padding: RFValue(16),
+                marginBottom: RFValue(16),
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.cardBorder,
+              }}
+            >
+              <CoinWalletDoctorPanel theme={theme} walletChannel="quick" />
+            </View>
+          ) : null}
 
-          <View
-            style={{
-              backgroundColor: theme.card,
-              borderRadius: RFValue(18),
-              padding: RFValue(16),
-              marginBottom: RFValue(16),
-              shadowColor: theme.shadowColor,
-              shadowOpacity: 0.06,
-              shadowOffset: { width: 0, height: 4 },
-              shadowRadius: 12,
-              elevation: 3,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
-            <CoinWalletDoctorPanel theme={theme} walletChannel="package" />
-          </View>
+          {profileIsPackageDoctor ? (
+            <View
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: RFValue(18),
+                padding: RFValue(16),
+                marginBottom: RFValue(16),
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.cardBorder,
+              }}
+            >
+              <CoinWalletDoctorPanel theme={theme} walletChannel="package" />
+            </View>
+          ) : null}
 
           <View
             style={{
