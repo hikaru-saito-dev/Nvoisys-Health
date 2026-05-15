@@ -139,6 +139,7 @@ import {
   readLocalCareMode,
   readLocalDoctorPackageFees,
   readLocalPackageSetupSkip,
+  recordCasualAppointmentWalletPayment,
   recordQuickHelpOffer,
   recordPatientDoctorInteraction,
   QUICK_REQUEST_STATUS,
@@ -3912,6 +3913,59 @@ const mapAppointmentRecord = (record) => {
       ) || 500,
     raw: record,
   };
+};
+
+const createRegularAppointmentRequest = async ({
+  patientUserId,
+  doctorUserId,
+  doctorProfileId,
+  scheduledAtIso,
+  consultationType,
+  reason,
+  consultationFee,
+}) => {
+  const patientId = String(patientUserId || "").trim();
+  const doctorUser = String(doctorUserId || "").trim();
+  if (!patientId || !doctorUser || !scheduledAtIso) {
+    throw new Error("Missing appointment details.");
+  }
+  const doctorRecordId = PB_APPOINTMENT_DOCTOR_IS_PROFILE
+    ? String(
+        doctorProfileId || (await resolveDoctorProfileIdForUser(doctorUser)) || "",
+      ).trim()
+    : doctorUser;
+  if (!doctorRecordId) {
+    throw new Error(
+      PB_APPOINTMENT_DOCTOR_IS_PROFILE
+        ? "Doctor profile id missing - cannot book."
+        : "Doctor id missing - cannot book.",
+    );
+  }
+  const fee = Math.max(0, Math.floor(Number(consultationFee) || 0));
+  const basePayload = {
+    patient: patientId,
+    doctor: doctorRecordId,
+    scheduled_at: new Date(scheduledAtIso).toISOString(),
+    consultation_type: String(consultationType || "video").trim() || "video",
+    status: "requested",
+    reason: String(reason || "").trim(),
+    consultation_fee: fee || 500,
+  };
+  const variants = [
+    basePayload,
+    { ...basePayload, status: "pending" },
+    { ...basePayload, status: "scheduled" },
+    (({ consultation_fee, ...payload }) => payload)(basePayload),
+  ];
+  let lastError = null;
+  for (const payload of variants) {
+    try {
+      return await pb.collection(PB_APPOINTMENTS_COLLECTION).create(payload);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("Could not create appointment.");
 };
 
 const mapOrderRecord = (record) => {
@@ -11912,12 +11966,19 @@ const PatientAppointmentsScreen = ({ onBack }) => {
     if (!payForAppointment || !appointment?.id) return;
     try {
       setPayingAppointmentId(appointment.id);
-      await payForAppointment(appointment);
+      const result = await payForAppointment(appointment);
       await refreshAllData?.();
-      Alert.alert(
-        "Package wallet",
-        "Appointment confirmed against your package coins. Coins settle after the completed session.",
-      );
+      if (result?.paymentMode === "wallet") {
+        Alert.alert(
+          "Wallet payment",
+          `Appointment confirmed. ${result.amountInr || appointment.consultationFee || 500} coins were paid from your wallet.`,
+        );
+      } else {
+        Alert.alert(
+          "Package wallet",
+          "Appointment confirmed against your package. Coins settle after the completed session.",
+        );
+      }
       return true;
     } catch (error) {
       Alert.alert(
@@ -23333,6 +23394,7 @@ const AppointmentBookingScreen = ({
         scheduledAtIso: iso,
         consultationType: consultType,
         reason: trimmedReason,
+        consultationFee: activeDoctor.fee,
       });
       setBookingConfirmed(true);
     } catch (error) {
@@ -24188,7 +24250,6 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
   const [step, setStep] = useState("browse");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [doctors, setDoctors] = useState([]);
-  const [packagePairs, setPackagePairs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
@@ -24233,11 +24294,13 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
             .filter(Boolean),
         );
         const list = await fetchApprovedDoctors({ packageModeOnly: true });
-        const next = (list || []).filter((doctorItem) =>
-          allowedDoctorIds.has(String(doctorItem.userId || "").trim()),
-        );
+        const next = (list || []).map((doctorItem) => ({
+          ...doctorItem,
+          hasActivePackage: allowedDoctorIds.has(
+            String(doctorItem.userId || "").trim(),
+          ),
+        }));
         if (!cancelled) {
-          setPackagePairs(pairs || []);
           setDoctors(next);
         }
       } catch (error) {
@@ -24503,7 +24566,9 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 {doctorItem.experience != null
                   ? `${doctorItem.experience}+ yrs`
                   : "Clinician"}{" "}
-                · {doctorItem.rating} ★ · {formatCurrencyFromInr(doctorItem.fee)}
+                · {doctorItem.rating} ★ · {doctorItem.hasActivePackage
+                  ? "Covered by package"
+                  : formatCurrencyFromInr(doctorItem.fee)}
               </Text>
               {doctorItem.bio ? (
                 <Text
@@ -25006,8 +25071,8 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 textAlign: "center",
               }}
             >
-              {packagePairs.length === 0
-                ? "No active package doctor found. Buy a package from the Package wallet first."
+              {doctors.length === 0
+                ? "No package doctors are available yet."
                 : languageFilterText.trim()
                   ? "No package doctors list that language yet. Clear the language field, try different spelling, or relax other filters."
                   : selectedConcern
@@ -25142,7 +25207,9 @@ const PatientDoctorBookingFlow = ({ onBack }) => {
                 <Text
                   style={{ fontSize: RFValue(11), color: theme.textTertiary }}
                 >
-                  Package active
+                  {doctorItem.hasActivePackage
+                    ? "Package active - no wallet charge"
+                    : `Wallet: ${formatCurrencyFromInr(doctorItem.fee || 500)}`}
                 </Text>
                 {(doctorItem.languages || []).length > 0 ? (
                   <Text
@@ -32176,6 +32243,7 @@ export default function App() {
     scheduledAtIso,
     consultationType,
     reason,
+    consultationFee,
   }) => {
     if (!currentUser?.id) {
       throw new Error("Please login again");
@@ -32199,34 +32267,80 @@ export default function App() {
     const activePair = (activePairs || []).find(
       (pair) => String(pair.doctor_user_id || "") === String(doctorUserId),
     );
-    if (!activePair) {
-      throw new Error(
-        "Book appointments only with professional or specialist doctors whose package you have purchased.",
-      );
-    }
-    const cachedPackageCoins = Number(activePair.remaining_coins ?? 0) || 0;
-    const packageCoins =
-      cachedPackageCoins > 0
-        ? cachedPackageCoins
-        : activePair.offerId
-          ? await getPatientPackageCoinBalance(currentUser.id, activePair.offerId)
-          : 0;
-    if (packageCoins <= 0) {
-      throw new Error("Your package wallet has no coins left for this doctor.");
+    if (activePair) {
+      const cachedPackageCoins = Number(activePair.remaining_coins ?? 0) || 0;
+      const packageCoins =
+        cachedPackageCoins > 0
+          ? cachedPackageCoins
+          : activePair.offerId
+            ? await getPatientPackageCoinBalance(currentUser.id, activePair.offerId)
+            : 0;
+      if (packageCoins <= 0) {
+        throw new Error("Your package wallet has no coins left for this doctor.");
+      }
+
+      const created = await createPackageMeetingRequest({
+        patientUserId: currentUser.id,
+        doctorUserId,
+        doctorProfileId,
+        proposedAtIso: scheduledAtIso,
+        description: trimmedReason,
+        callKind:
+          consultationType === "audio"
+            ? "audio"
+            : consultationType === "chat"
+              ? "chat"
+              : "video",
+      });
+
+      let conversationId = null;
+      if (doctorUserId) {
+        try {
+          const conv = await ensureDirectConversation(doctorUserId);
+          conversationId = conv?.id || null;
+        } catch (convError) {
+          console.log(
+            "createAppointment conversation skipped:",
+            convError?.message,
+          );
+        }
+      }
+
+      if (conversationId && created?.id && !created.localOnly) {
+        try {
+          const whenLabel = `${formatAppointmentSummaryDate(scheduledAtIso)} · ${formatTimeValue(
+            scheduledAtIso,
+          )}`;
+          await createEncryptedMessage(
+            {
+              conversation: conversationId,
+              kind: "system",
+            },
+            `Appointment request: ${whenLabel}.\nReason: ${trimmedReason}`,
+          );
+          await pb.collection("conversations").update(conversationId, {
+            lastMessageAt: new Date().toISOString(),
+          });
+        } catch (msgError) {
+          console.log(
+            "createAppointment system message skipped:",
+            msgError?.message,
+          );
+        }
+      }
+
+      await refreshAllData();
+      return created;
     }
 
-    const created = await createPackageMeetingRequest({
+    const created = await createRegularAppointmentRequest({
       patientUserId: currentUser.id,
       doctorUserId,
       doctorProfileId,
-      proposedAtIso: scheduledAtIso,
-      description: trimmedReason,
-      callKind:
-        consultationType === "audio"
-          ? "audio"
-          : consultationType === "chat"
-            ? "chat"
-            : "video",
+      scheduledAtIso,
+      consultationType,
+      reason: trimmedReason,
+      consultationFee,
     });
 
     let conversationId = null;
@@ -33442,9 +33556,23 @@ export default function App() {
       (pair) => String(pair.doctor_user_id || "") === String(doctorUserId),
     );
     if (!activePair) {
-      throw new Error(
-        "This appointment is not covered by an active purchased package.",
+      const amount = Math.max(
+        1,
+        Math.floor(Number(appointment.consultationFee || appointment.fee || 500) || 500),
       );
+      await recordCasualAppointmentWalletPayment({
+        patientUserId,
+        doctorUserId,
+        appointmentId: appointment.id,
+        amountInr: amount,
+        consultationType: appointment.consultationType || "video",
+        description: `Appointment with ${appointment.doctor || "doctor"}`,
+      });
+      await updateAppointmentStatus({
+        appointmentId: appointment.id,
+        nextStatus: "paid",
+      });
+      return { paymentMode: "wallet", amountInr: amount };
     }
     const cachedPackageCoins = Number(activePair.remaining_coins ?? 0) || 0;
     const packageCoins =
@@ -33483,6 +33611,7 @@ export default function App() {
       appointmentId: appointment.id,
       nextStatus: "paid",
     });
+    return { paymentMode: "package", amountInr: 0 };
   };
 
   const payForPackageOffer = async (offer, doctorUserId) => {
