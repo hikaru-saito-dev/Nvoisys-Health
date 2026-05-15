@@ -1111,6 +1111,11 @@ const AI_MODEL = String(
     process.env.EXPO_PUBLIC_AI_MODEL ||
     "llama-3.3-70b-versatile",
 ).trim();
+const AI_PREDICT_URL = String(
+  Constants.expoConfig?.extra?.aiPredictUrl ||
+    process.env.EXPO_PUBLIC_AI_PREDICT_URL ||
+    "https://ai.nvoisyshealth.com/predict",
+).trim();
 
 const isOpenAICompatibleChatCompletionsUrl = (url) =>
   String(url || "")
@@ -1240,6 +1245,339 @@ const bmiCategory = (bmi) => {
   return "Obese";
 };
 
+const firstPresent = (...values) => {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const str = String(value).trim();
+    if (str) return str;
+  }
+  return "";
+};
+
+const numberOrZero = (value) => {
+  const num = Number(String(value ?? "").trim());
+  return Number.isFinite(num) ? num : 0;
+};
+
+const fieldNumber = (record, keys) => {
+  for (const key of keys) {
+    if (record?.[key] !== undefined && record?.[key] !== null) {
+      return numberOrZero(record[key]);
+    }
+  }
+  return 0;
+};
+
+const fieldText = (record, keys, fallback = "Unknown") =>
+  firstPresent(...keys.map((key) => record?.[key])) || fallback;
+
+const yesNoFlag = (value) => {
+  if (value === true) return 1;
+  if (value === false || value === undefined || value === null) return 0;
+  if (typeof value === "number") return value ? 1 : 0;
+  const text = String(value).trim().toLowerCase();
+  if (!text) return 0;
+  if (["1", "true", "yes", "y", "current", "active", "pregnant"].includes(text)) {
+    return 1;
+  }
+  if (text.includes("preg") || text.includes("lact") || text.includes("breast")) {
+    return 1;
+  }
+  return 0;
+};
+
+const splitNameParts = (...values) => {
+  const full = firstPresent(...values);
+  if (!full) return { first: "Unknown", last: "Unknown" };
+  const parts = full.split(/\s+/).filter(Boolean);
+  return {
+    first: parts[0] || "Unknown",
+    last: parts.length > 1 ? parts.slice(1).join(" ") : "Unknown",
+  };
+};
+
+const parseListLike = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((item) =>
+        typeof item === "string" ? item : firstPresent(item?.name, item?.label),
+      )
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+  }
+  if (typeof value === "object") {
+    return Object.values(value)
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+  }
+  const text = String(value || "").trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed !== value) return parseListLike(parsed);
+  } catch {
+    // fall through to comma/newline parsing
+  }
+  return text
+    .split(/[,;|\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const jsonListString = (value) => JSON.stringify(parseListLike(value));
+
+const ageGroupFor = (age) => {
+  const n = Number(age);
+  if (!Number.isFinite(n) || n <= 0) return "Unknown";
+  if (n < 13) return "Child";
+  if (n < 18) return "Adolescent";
+  if (n < 40) return "Adult";
+  if (n < 65) return "Middle-aged adult";
+  return "Older adult";
+};
+
+const buildMedicationListForAI = (patient, prescriptions) => {
+  const names = [
+    ...parseListLike(patient?.current_medications),
+    ...safeArray(prescriptions).flatMap((rx) =>
+      safeArray(rx?.medicines).map((med) => {
+        const parts = [med?.name, med?.dosage, med?.whenToTake, med?.duration]
+          .map((part) => String(part || "").trim())
+          .filter(Boolean);
+        return parts.join(" | ");
+      }),
+    ),
+  ].filter(Boolean);
+  const seen = new Set();
+  return names.filter((name) => {
+    const key = String(name).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const hasMedicationMatch = (medications, terms) => {
+  const text = medications.join(" ").toLowerCase();
+  return terms.some((term) => text.includes(term));
+};
+
+const buildPredictPayload = ({ patient, user, question, prescriptions } = {}) => {
+  const p = patient || {};
+  const nameParts = splitNameParts(
+    p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : "",
+    p.name,
+    p.full_name,
+    user?.name,
+    user?.username,
+    user?.email,
+  );
+  const age = fieldNumber(p, ["demographics_age", "age"]);
+  const height = fieldNumber(p, ["anthropometrics_height_cm", "height_cm"]);
+  const weight = fieldNumber(p, ["anthropometrics_weight_kg", "weight_kg"]);
+  const bmi = fieldNumber(p, ["anthropometrics_bmi", "bmi"]) || computeBmi(weight, height) || 0;
+  const systolic = fieldNumber(p, [
+    "vitals_blood_pressure_systolic_mmHg",
+    "blood_pressure_systolic",
+    "bp_systolic",
+    "systolic_bp",
+  ]);
+  const diastolic = fieldNumber(p, [
+    "vitals_blood_pressure_diastolic_mmHg",
+    "blood_pressure_diastolic",
+    "bp_diastolic",
+    "diastolic_bp",
+  ]);
+  const eGfr = fieldNumber(p, ["lab_results_eGFR_mL_min_1_73m2", "egfr", "eGFR"]);
+  const alt = fieldNumber(p, ["lab_results_ALT_U_L", "alt", "ALT"]);
+  const ast = fieldNumber(p, ["lab_results_AST_U_L", "ast", "AST"]);
+  const ldl = fieldNumber(p, ["lab_results_LDL_mg_dL", "ldl", "LDL"]);
+  const hba1c = fieldNumber(p, ["vitals_HbA1c_percent", "hba1c", "HbA1c"]);
+  const glucose = fieldNumber(p, [
+    "vitals_fasting_blood_glucose_mg_dL",
+    "fasting_blood_glucose",
+    "blood_glucose",
+  ]);
+  const pregnancy = yesNoFlag(
+    firstPresent(p.pregnancy_currently_pregnant, p.pregnancy_or_lactation, p.pregnancy),
+  );
+  const breastfeeding = yesNoFlag(
+    firstPresent(p.pregnancy_currently_breastfeeding, p.breastfeeding, p.lactation),
+  );
+  const allergyList = parseListLike(
+    firstPresent(p.allergies_drug_allergies, p.drug_allergies, p.allergies),
+  );
+  const conditions = parseListLike(
+    firstPresent(p.chronic_conditions, p.medical_conditions, p.primary_condition, p.condition),
+  );
+  const medications = buildMedicationListForAI(p, prescriptions);
+  const activeSmoker = ["current", "active", "daily"].includes(
+    String(fieldText(p, ["lifestyle_smoking_status", "smoking"], "")).toLowerCase(),
+  )
+    ? 1
+    : 0;
+  const pregnancyOrLactation = pregnancy || breastfeeding ? 1 : 0;
+  const hasCardioCondition = conditions.some((condition) =>
+    /hypertension|heart|cardio|stroke|diabetes/i.test(condition),
+  );
+  const highCardioRisk =
+    systolic >= 140 || diastolic >= 90 || ldl >= 160 || hba1c >= 6.5 || glucose >= 126 || hasCardioCondition;
+
+  return {
+    patient_id: firstPresent(p.user, p.patient_id, p.id, user?.id) || "Unknown",
+    demographics_first_name: nameParts.first,
+    demographics_last_name: nameParts.last,
+    demographics_sex: fieldText(p, ["demographics_sex", "sex", "gender"]),
+    demographics_date_of_birth: fieldText(p, ["demographics_date_of_birth", "date_of_birth", "dob"], "Unknown"),
+    demographics_age: age,
+    demographics_age_group: fieldText(p, ["demographics_age_group", "age_group"], ageGroupFor(age)),
+    demographics_ethnicity: fieldText(p, ["demographics_ethnicity", "ethnicity"]),
+    demographics_blood_type: fieldText(p, ["demographics_blood_type", "blood_type"]),
+    demographics_country: fieldText(p, ["demographics_country", "country"], "India"),
+    demographics_occupation: fieldText(p, ["demographics_occupation", "occupation"]),
+    demographics_insurance_type: fieldText(p, ["demographics_insurance_type", "insurance_type"]),
+    anthropometrics_height_cm: height,
+    anthropometrics_weight_kg: weight,
+    anthropometrics_bmi: bmi,
+    anthropometrics_bmi_category: fieldText(p, ["anthropometrics_bmi_category", "bmi_category"], bmiCategory(bmi)),
+    pregnancy_currently_pregnant: pregnancy,
+    pregnancy_currently_breastfeeding: breastfeeding,
+    allergies_no_known_allergies: allergyList.length ? 0 : yesNoFlag(p.allergies_no_known_allergies),
+    allergies_drug_allergies: JSON.stringify(allergyList),
+    allergies_food_allergies: jsonListString(firstPresent(p.allergies_food_allergies, p.food_allergies)),
+    allergies_environmental_allergies: jsonListString(
+      firstPresent(p.allergies_environmental_allergies, p.environmental_allergies),
+    ),
+    allergies_adverse_drug_reactions: jsonListString(
+      firstPresent(p.allergies_adverse_drug_reactions, p.adverse_drug_reactions),
+    ),
+    lifestyle_smoking_status: fieldText(p, ["lifestyle_smoking_status", "smoking"]),
+    lifestyle_alcohol_use: fieldText(p, ["lifestyle_alcohol_use", "alcohol"]),
+    lifestyle_exercise_level: fieldText(p, ["lifestyle_exercise_level", "exercise_level"]),
+    vitals_blood_pressure_systolic_mmHg: systolic,
+    vitals_blood_pressure_diastolic_mmHg: diastolic,
+    vitals_heart_rate_bpm: fieldNumber(p, ["vitals_heart_rate_bpm", "heart_rate", "pulse"]),
+    vitals_temperature_C: fieldNumber(p, ["vitals_temperature_C", "temperature_c", "temperature"]),
+    vitals_fasting_blood_glucose_mg_dL: glucose,
+    vitals_HbA1c_percent: hba1c,
+    vitals_respiratory_rate_breaths_per_min: fieldNumber(p, [
+      "vitals_respiratory_rate_breaths_per_min",
+      "respiratory_rate",
+    ]),
+    vitals_SpO2_percent: fieldNumber(p, ["vitals_SpO2_percent", "spo2", "SpO2"]),
+    lab_results_eGFR_mL_min_1_73m2: eGfr,
+    lab_results_ALT_U_L: alt,
+    lab_results_AST_U_L: ast,
+    lab_results_hemoglobin_g_dL: fieldNumber(p, ["lab_results_hemoglobin_g_dL", "hemoglobin"]),
+    lab_results_total_cholesterol_mg_dL: fieldNumber(p, [
+      "lab_results_total_cholesterol_mg_dL",
+      "total_cholesterol",
+    ]),
+    lab_results_LDL_mg_dL: ldl,
+    lab_results_HDL_mg_dL: fieldNumber(p, ["lab_results_HDL_mg_dL", "hdl", "HDL"]),
+    lab_results_TSH_mIU_L: fieldNumber(p, ["lab_results_TSH_mIU_L", "tsh", "TSH"]),
+    lab_results_serum_creatinine_mg_dL: fieldNumber(p, [
+      "lab_results_serum_creatinine_mg_dL",
+      "serum_creatinine",
+      "creatinine",
+    ]),
+    lab_results_potassium_mEq_L: fieldNumber(p, ["lab_results_potassium_mEq_L", "potassium"]),
+    lab_results_sodium_mEq_L: fieldNumber(p, ["lab_results_sodium_mEq_L", "sodium"]),
+    clinical_flags_renal_function: fieldText(
+      p,
+      ["clinical_flags_renal_function", "renal_function"],
+      eGfr > 0 && eGfr < 60 ? "Impaired" : "Normal",
+    ),
+    clinical_flags_hepatic_function: fieldText(
+      p,
+      ["clinical_flags_hepatic_function", "hepatic_function"],
+      alt > 40 || ast > 40 ? "Elevated" : "Normal",
+    ),
+    clinical_flags_on_immunosuppressants: hasMedicationMatch(medications, [
+      "prednisone",
+      "methotrexate",
+      "tacrolimus",
+      "cyclosporine",
+      "azathioprine",
+      "mycophenolate",
+    ])
+      ? 1
+      : yesNoFlag(p.clinical_flags_on_immunosuppressants),
+    clinical_flags_polypharmacy: medications.length >= 5 ? 1 : yesNoFlag(p.clinical_flags_polypharmacy),
+    clinical_flags_high_allergy_risk: allergyList.length ? 1 : yesNoFlag(p.clinical_flags_high_allergy_risk),
+    clinical_flags_pregnancy_or_lactation: pregnancyOrLactation,
+    clinical_flags_pediatric_patient: age > 0 && age < 18 ? 1 : 0,
+    clinical_flags_narrow_therapeutic_index_meds: hasMedicationMatch(medications, [
+      "warfarin",
+      "digoxin",
+      "lithium",
+      "phenytoin",
+      "theophylline",
+      "carbamazepine",
+    ])
+      ? 1
+      : yesNoFlag(p.clinical_flags_narrow_therapeutic_index_meds),
+    clinical_flags_high_cardiovascular_risk: highCardioRisk ? 1 : yesNoFlag(p.clinical_flags_high_cardiovascular_risk),
+    clinical_flags_active_smoker: activeSmoker,
+    clinical_flags_cognitive_impairment_risk:
+      age >= 75 ? 1 : yesNoFlag(p.clinical_flags_cognitive_impairment_risk),
+    chronic_conditions: JSON.stringify(conditions),
+    current_medications: JSON.stringify(medications),
+    past_surgical_history: jsonListString(firstPresent(p.past_surgical_history, p.surgical_history)),
+    family_history: jsonListString(p.family_history),
+    genetic_markers: jsonListString(p.genetic_markers),
+    chief_complaint: firstPresent(p.chief_complaint, question, p.primary_condition, p.condition) || "Unknown",
+  };
+};
+
+const callPredictEndpoint = async (payload) => {
+  if (!AI_PREDICT_URL || payload?.kind !== "chat") return null;
+  try {
+    const response = await fetch(AI_PREDICT_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        buildPredictPayload({
+          patient: payload.patient,
+          user: payload.user,
+          question: payload.question,
+          prescriptions: payload.prescriptions,
+        }),
+      ),
+    });
+    const text = await response.text().catch(() => "");
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = text || null;
+    }
+    if (!response.ok) {
+      console.log("AI predict endpoint error:", data?.message || text || `HTTP ${response.status}`);
+      return null;
+    }
+    return data;
+  } catch (error) {
+    console.log("AI predict endpoint call failed:", error?.message || error);
+    return null;
+  }
+};
+
+const formatPredictionsForPrompt = (predictions) => {
+  if (!predictions) {
+    return `Not available for this turn. If asked, say ML predictions are unavailable.`;
+  }
+  const text =
+    typeof predictions === "string"
+      ? predictions
+      : JSON.stringify(predictions, null, 2);
+  return text.length > 5000 ? `${text.slice(0, 5000)}\n...truncated` : text;
+};
+
 // Format a Nvoisys patient_profile + role record into the sectioned layout the
 // Doctor-in-Your-Pocket prompt expects. Unknown fields render as "N/A" so the
 // model still has a consistent shape to read from.
@@ -1302,13 +1640,12 @@ const formatPrescriptionsForPrompt = (prescriptions) => {
   return lines.join("\n");
 };
 
-// Build the full assistant system prompt: persona + patient block + Rx block.
-// Also tells the model that local ML predictions are unavailable so it doesn't
-// hallucinate "ML risk scores" - the Python script in the Doctor-in-Pocket
-// reference runs joblib models server-side which we do not have on mobile.
-const buildHealthAssistantSystemPrompt = (patient, prescriptions) => {
+// Build the full assistant system prompt: persona + patient block + Rx block +
+// server-side model predictions when the prediction API is reachable.
+const buildHealthAssistantSystemPrompt = (patient, prescriptions, predictions) => {
   const patientBlock = formatPatientForPrompt(patient);
   const rxBlock = formatPrescriptionsForPrompt(prescriptions);
+  const predictionsBlock = formatPredictionsForPrompt(predictions);
   return `${DOCTOR_IN_POCKET_SYSTEM_PROMPT}
 
 ═══ PATIENT ON FILE ═══
@@ -1317,9 +1654,7 @@ ${patientBlock}
 ${rxBlock}
 
 ML MODEL PREDICTIONS:
-Not available in this mobile session (lab/risk/chronic models are not deployed
-to the client). Reason from the patient data above only - do not fabricate ML
-risk scores. State "ML predictions unavailable" if asked.
+${predictionsBlock}
 ═══════════════════════
 
 Answer questions about THIS person and their record. Cite their exact values when you give
@@ -1336,6 +1671,12 @@ const callOpenAICompatibleAI = async (payload) => {
     const system = buildHealthAssistantSystemPrompt(
       payload.patient,
       payload.prescriptions,
+      payload.mlPredictions,
+    );
+    const history = safeArray(payload.history).filter(
+      (item) =>
+        (item?.role === "user" || item?.role === "assistant") &&
+        String(item?.content || "").trim(),
     );
     const data = await postChatCompletions(AI_BASE_URL, AI_API_KEY, {
       model: AI_MODEL,
@@ -1343,6 +1684,7 @@ const callOpenAICompatibleAI = async (payload) => {
       max_tokens: 2048,
       messages: [
         { role: "system", content: system },
+        ...history,
         { role: "user", content: question },
       ],
     });
@@ -1416,6 +1758,23 @@ Return the JSON safety screen now.`;
 const ASSISTANT_CONVERSATION_KIND = "assistant";
 const ASSISTANT_USER_MESSAGE_KIND = "assistant_user";
 const ASSISTANT_REPLY_MESSAGE_KIND = "assistant_reply";
+
+const buildAssistantHistoryForAI = (messages) =>
+  safeArray(messages)
+    .filter((message) => String(message?.text || "").trim())
+    .map((message) => {
+      const kind = String(message?.kind || "").toLowerCase();
+      const senderRole = String(message?.senderRole || "").toLowerCase();
+      const role =
+        kind === ASSISTANT_REPLY_MESSAGE_KIND || senderRole === "assistant"
+          ? "assistant"
+          : "user";
+      return {
+        role,
+        content: String(message.text || "").trim(),
+      };
+    })
+    .slice(-12);
 
 // All message kinds are eligible for encryption. `decryptChatText` gracefully
 // returns legacy plaintext records unchanged when they do not have the prefix.
@@ -2031,6 +2390,10 @@ const pbFilterDateTime = (value) =>
 // ---------------------------------------------------------------------------
 const callAIEndpoint = async (payload) => {
   if (!AI_BASE_URL) return null;
+  const enrichedPayload =
+    payload?.kind === "chat" && payload.mlPredictions === undefined
+      ? { ...payload, mlPredictions: await callPredictEndpoint(payload) }
+      : payload;
   if (isOpenAICompatibleChatCompletionsUrl(AI_BASE_URL)) {
     if (!AI_API_KEY) {
       console.log(
@@ -2039,7 +2402,7 @@ const callAIEndpoint = async (payload) => {
       return null;
     }
     try {
-      return await callOpenAICompatibleAI(payload);
+      return await callOpenAICompatibleAI(enrichedPayload);
     } catch (error) {
       console.log("OpenAI-compatible AI call failed:", error?.message || error);
       return null;
@@ -2052,7 +2415,7 @@ const callAIEndpoint = async (payload) => {
         "Content-Type": "application/json",
         ...(AI_API_KEY ? { Authorization: `Bearer ${AI_API_KEY}` } : {}),
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(enrichedPayload),
     });
     if (!response?.ok) {
       return null;
@@ -33441,6 +33804,12 @@ export default function App() {
     if (!conversationId || !currentUser?.id) return null;
     const trimmed = String(text || "").trim();
     if (!trimmed) return null;
+    let priorMessages = [];
+    try {
+      priorMessages = await loadConversationMessages(conversationId);
+    } catch (error) {
+      console.log("sendAssistantMessage history load skipped:", error?.message);
+    }
     // 1. Post the user's question as an encrypted assistant_user message.
     let userRecord = null;
     try {
@@ -33463,7 +33832,9 @@ export default function App() {
       kind: "chat",
       question: trimmed,
       patient: patientProfile || null,
+      user: currentUser || null,
       prescriptions: prescriptionsContext,
+      history: buildAssistantHistoryForAI(priorMessages),
     });
     const replyText =
       (aiResult && typeof aiResult.reply === "string"

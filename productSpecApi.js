@@ -3039,6 +3039,7 @@ export async function createPatientSelectedPackageOffer({
 
 /** Relation id whether PB expanded the field or stored a plain id string. */
 const relationId = (val) => {
+  if (Array.isArray(val)) return relationId(val[0]);
   if (val && typeof val === "object" && val.id) return String(val.id);
   if (val == null) return "";
   return String(val).trim();
@@ -4561,14 +4562,93 @@ export async function doctorWithdrawCoinsStub(doctorUserId, coins) {
 
 // --- Quick Solution (10 coins) / Quick Counselling (25 coins) ---
 
-function pickRandomArrayItem(items) {
-  if (!Array.isArray(items) || !items.length) return null;
-  return items[Math.floor(Math.random() * items.length)];
+async function getActiveQuickRequestLoadByRecipient(candidateUserIds) {
+  const candidateSet = new Set(
+    (candidateUserIds || [])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean),
+  );
+  const loads = new Map([...candidateSet].map((id) => [id, 0]));
+  if (!candidateSet.size) return loads;
+
+  const activeFilter = `(status="queued" || status="assigned")`;
+  const collections = ["quick_solution_requests", "quick_counselling_requests"];
+  const results = await Promise.all(
+    collections.map(async (collection) => {
+      try {
+        return await pb.collection(collection).getFullList({
+          requestKey: null,
+          filter: activeFilter,
+          fields: "id,recipient",
+        });
+      } catch (e) {
+        console.log(
+          `getActiveQuickRequestLoadByRecipient ${collection}:`,
+          e?.message,
+        );
+        return [];
+      }
+    }),
+  );
+
+  for (const rows of results) {
+    for (const row of rows || []) {
+      const recipientId = relationId(row?.recipient);
+      if (!candidateSet.has(recipientId)) continue;
+      loads.set(recipientId, (loads.get(recipientId) || 0) + 1);
+    }
+  }
+  return loads;
+}
+
+async function getMostRecentQuickRequestRecipientId() {
+  const collections = ["quick_solution_requests", "quick_counselling_requests"];
+  const latestRows = await Promise.all(
+    collections.map(async (collection) => {
+      try {
+        const page = await pb.collection(collection).getList(1, 1, {
+          requestKey: null,
+          sort: "-created",
+          fields: "id,recipient,created",
+        });
+        return page?.items?.[0] || null;
+      } catch (e) {
+        console.log(
+          `getMostRecentQuickRequestRecipientId ${collection}:`,
+          e?.message,
+        );
+        return null;
+      }
+    }),
+  );
+
+  const latest = latestRows
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0))[0];
+  return relationId(latest?.recipient);
+}
+
+function pickRoundRobinCandidate(candidates, previousRecipientId) {
+  if (!Array.isArray(candidates) || !candidates.length) return null;
+  const ordered = [...candidates].sort((a, b) => {
+    const byKind = String(a.kind || "").localeCompare(String(b.kind || ""));
+    if (byKind !== 0) return byKind;
+    return String(a.userId || "").localeCompare(String(b.userId || ""));
+  });
+  if (ordered.length === 1) return ordered[0];
+
+  const previousIndex = ordered.findIndex(
+    (candidate) => candidate.userId === previousRecipientId,
+  );
+  if (previousIndex < 0) return ordered[0];
+  return ordered[(previousIndex + 1) % ordered.length];
 }
 
 /**
  * Approved doctors whose `package_setup` is not `true` (false or unset), plus
  * every `pharmacy_profile`, for Quick Solution / Quick Counselling routing.
+ * Chooses the least-loaded recipient by active queued/assigned quick requests;
+ * ties rotate by round-robin from the most recently routed quick request.
  */
 export async function pickRandomQuickCareRecipient(excludeUserId = null) {
   const ex = String(excludeUserId || "").trim();
@@ -4619,7 +4699,26 @@ export async function pickRandomQuickCareRecipient(excludeUserId = null) {
     candidates.push({ kind: "pharmacy", userId: id });
   }
 
-  const picked = pickRandomArrayItem(candidates);
+  if (!candidates.length) {
+    throw new Error(
+      "No RMP-style doctors (without package setup) or pharmacies are available to receive this request yet.",
+    );
+  }
+
+  const loads = await getActiveQuickRequestLoadByRecipient(
+    candidates.map((candidate) => candidate.userId),
+  );
+  const minLoad = Math.min(
+    ...candidates.map((candidate) => loads.get(candidate.userId) || 0),
+  );
+  const leastLoadedCandidates = candidates.filter(
+    (candidate) => (loads.get(candidate.userId) || 0) === minLoad,
+  );
+  const previousRecipientId = await getMostRecentQuickRequestRecipientId();
+  const picked = pickRoundRobinCandidate(
+    leastLoadedCandidates,
+    previousRecipientId,
+  );
   if (!picked) {
     throw new Error(
       "No RMP-style doctors (without package setup) or pharmacies are available to receive this request yet.",
