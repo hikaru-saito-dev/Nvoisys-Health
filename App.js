@@ -20703,7 +20703,16 @@ const DoctorPatientsScreen = () => {
                     marginBottom: RFValue(2),
                   }}
                 >
-                  {p.gender}, {p.age} | {p.blood}
+                  {[
+                    p.gender && p.gender !== "—" ? p.gender : null,
+                    p.age !== "—" && p.age != null && p.age !== ""
+                      ? `${p.age} yrs`
+                      : null,
+                    p.phone && p.phone !== "—" ? p.phone : null,
+                    p.blood && p.blood !== "—" ? p.blood : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "—"}
                 </Text>
                 <Text
                   style={{ fontSize: RFValue(11), color: theme.textTertiary }}

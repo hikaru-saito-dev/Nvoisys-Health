@@ -160,6 +160,7 @@ export async function fetchPatientProfilesByIds(profileIds) {
       const rows = await pb.collection("patient_profile").getFullList({
         filter,
         requestKey: null,
+        expand: "user",
       });
       rows.forEach((row) => byId.set(row.id, row));
     } catch (error) {
@@ -168,6 +169,7 @@ export async function fetchPatientProfilesByIds(profileIds) {
         try {
           const row = await pb.collection("patient_profile").getOne(id, {
             requestKey: null,
+            expand: "user",
           });
           byId.set(id, row);
         } catch {
@@ -5122,6 +5124,32 @@ function relIdForDoctorPatients(v) {
   return String(v).trim();
 }
 
+function authUserIdFromPatientExpand(patientProf) {
+  if (!patientProf || typeof patientProf !== "object") return "";
+  const u = patientProf.expand?.user;
+  if (u && typeof u === "object" && u.id) return String(u.id).trim();
+  const rel =
+    typeof patientProf.user === "string"
+      ? patientProf.user
+      : patientProf.user?.id;
+  return String(rel || "").trim();
+}
+
+function pickPatientContactPhone(profileRecord, authUserRecord) {
+  const pick = (o) => {
+    if (!o || typeof o !== "object") return "";
+    return String(
+      o.phone ||
+        o.mobile ||
+        o.contact_phone ||
+        o.phone_number ||
+        o.telephone ||
+        "",
+    ).trim();
+  };
+  return pick(authUserRecord) || pick(profileRecord);
+}
+
 function ageFromDobIso(iso) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -5147,10 +5175,17 @@ function mapPatientProfileToDoctorPatientCard(
   const name =
     resolveListingDisplayName(patientProf, u) || "Patient";
   const gender = String(patientProf?.gender || patientProf?.sex || "—").trim() || "—";
-  const ageN = ageFromDobIso(patientProf?.date_of_birth || patientProf?.dob);
+  const ageN = ageFromDobIso(
+    patientProf?.date_of_birth ||
+      patientProf?.dob ||
+      u?.date_of_birth ||
+      u?.dob,
+  );
   const blood = String(
     patientProf?.blood_type || patientProf?.blood_group || "—",
   ).trim() || "—";
+  const phoneRaw = pickPatientContactPhone(patientProf, u);
+  const phone = phoneRaw || "—";
   const score = Math.min(98, Math.max(12, Math.round(Number(riskHint) || 55)));
   const riskLevel =
     score >= 70 ? "Low" : score >= 45 ? "Medium" : "High";
@@ -5160,11 +5195,121 @@ function mapPatientProfileToDoctorPatientCard(
     gender,
     age: ageN != null ? ageN : "—",
     blood,
+    phone,
     conditions: String(conditions || "—").slice(0, 120) || "—",
     riskLevel,
     risk: score,
     lastVisit,
   };
+}
+
+function mergeDoctorPatientCardWithAppointmentHint(card, hint, packageRow) {
+  if (!hint || !card) return card;
+  const pkgTitle = String(packageRow?.title || "").trim();
+  const next = { ...card };
+  const hName = String(hint.name || "").trim();
+  if (
+    hName &&
+    (!next.name ||
+      next.name === "Patient" ||
+      (pkgTitle && next.name === pkgTitle))
+  ) {
+    next.name = hName;
+  }
+  const hPhone = String(hint.phone || "").trim();
+  if (hPhone && (!next.phone || next.phone === "—")) {
+    next.phone = hPhone;
+  }
+  if (hint.age != null && next.age === "—") {
+    next.age = hint.age;
+  }
+  return next;
+}
+
+/**
+ * Best-effort map: patient relation id (and auth user id) → name / phone / age
+ * from `appointments` for this doctor (matches names shown in PocketBase admin).
+ */
+async function loadAppointmentPatientDisplayHintsForDoctor(
+  doctorUserId,
+  doctorProfileId = "",
+) {
+  /** @type {Map<string, { name: string, phone: string, age: number | null }>} */
+  const hints = new Map();
+  const uid = String(doctorUserId || "").trim();
+  const profId = String(doctorProfileId || "").trim();
+  const filters = [];
+  if (uid && profId && uid !== profId) {
+    filters.push(`doctor="${uid}" || doctor="${profId}"`);
+  }
+  if (uid) filters.push(`doctor="${uid}"`);
+  if (profId) filters.push(`doctor="${profId}"`);
+  const uniqFilters = [...new Set(filters)];
+  const coll = appointmentsColl();
+
+  for (const filter of uniqFilters) {
+    try {
+      const list = await pb.collection(coll).getFullList({
+        requestKey: null,
+        sort: "-created",
+        filter,
+        expand: "patient,patient.user",
+      });
+      // Oldest → newest so later rows fill missing fields from earlier gaps.
+      const ordered = [...(list || [])].reverse();
+      for (const rec of ordered) {
+        const pid = relIdForDoctorPatients(rec.patient);
+        if (!pid) continue;
+        const p = rec.expand?.patient;
+        const u =
+          p?.expand?.user && typeof p.expand.user === "object"
+            ? p.expand.user
+            : null;
+        const name =
+          resolveListingDisplayName(
+            p && typeof p === "object" ? p : null,
+            u,
+          ) || "";
+        const phone = pickPatientContactPhone(
+          p && typeof p === "object" ? p : null,
+          u,
+        );
+        const ageN = ageFromDobIso(
+          (p && (p.date_of_birth || p.dob)) ||
+            (u && (u.date_of_birth || u.dob)),
+        );
+        const piece = {
+          name: String(name || "").trim(),
+          phone: String(phone || "").trim(),
+          age: ageN,
+        };
+        const mergeInto = (key) => {
+          if (!key) return;
+          const cur = hints.get(key) || {
+            name: "",
+            phone: "",
+            age: /** @type {number | null} */ (null),
+          };
+          const next = {
+            name: cur.name || piece.name,
+            phone: cur.phone || piece.phone,
+            age: cur.age != null ? cur.age : piece.age,
+          };
+          if (next.name || next.phone || next.age != null) {
+            hints.set(key, next);
+          }
+        };
+        mergeInto(pid);
+        const authId = authUserIdFromPatientExpand(
+          p && typeof p === "object" ? p : null,
+        );
+        mergeInto(authId);
+      }
+    } catch (e) {
+      console.log("appointment patient hints:", filter, e?.message);
+    }
+  }
+  return hints;
 }
 
 async function fetchPatientDoctorPackageRowsForDoctor(
@@ -5199,10 +5344,36 @@ async function fetchPatientDoctorPackageRowsForDoctor(
 }
 
 async function buildPackageDoctorPatientRows(doctorUserId, doctorProfile) {
-  const rows = await fetchPatientDoctorPackageRowsForDoctor(
+  let rows = await fetchPatientDoctorPackageRowsForDoctor(
     doctorUserId,
     doctorProfile?.id,
   );
+  rows = await hydrateRowsPatientAuthUsers(rows || []);
+
+  const missingProfileIds = [];
+  for (const row of rows || []) {
+    const pid = relIdForDoctorPatients(row.patient);
+    if (!pid) continue;
+    if (!row.expand?.patient || typeof row.expand.patient !== "object") {
+      missingProfileIds.push(pid);
+    }
+  }
+  const profileById = await fetchPatientProfilesByIds(missingProfileIds);
+  rows = (rows || []).map((row) => {
+    if (row.expand?.patient && typeof row.expand.patient === "object") {
+      return row;
+    }
+    const pid = relIdForDoctorPatients(row.patient);
+    const prof = pid ? profileById.get(pid) : null;
+    if (!prof) return row;
+    return { ...row, expand: { ...(row.expand || {}), patient: prof } };
+  });
+
+  const apptHints = await loadAppointmentPatientDisplayHintsForDoctor(
+    doctorUserId,
+    doctorProfile?.id,
+  );
+
   const byPatient = new Map();
   for (const row of rows || []) {
     const pid = relIdForDoctorPatients(row.patient);
@@ -5211,19 +5382,36 @@ async function buildPackageDoctorPatientRows(doctorUserId, doctorProfile) {
   }
   const out = [];
   for (const row of byPatient.values()) {
+    const pid = relIdForDoctorPatients(row.patient);
     const p = row.expand?.patient;
+    const authFromProf =
+      p && typeof p === "object" ? authUserIdFromPatientExpand(p) : "";
+    const hint =
+      (pid && apptHints.get(pid)) ||
+      (authFromProf && apptHints.get(authFromProf)) ||
+      null;
+
     if (!p || typeof p !== "object") {
-      out.push({
-        id: String(row.id),
-        name: String(row.title || "Patient").trim() || "Patient",
-        gender: "—",
-        age: "—",
-        blood: "—",
-        conditions: String(row.title || "Care package").trim(),
-        riskLevel: "Medium",
-        risk: 60,
-        lastVisit: "Active package",
-      });
+      const hName = String(hint?.name || "").trim();
+      const hPhone = String(hint?.phone || "").trim();
+      out.push(
+        mergeDoctorPatientCardWithAppointmentHint(
+          {
+            id: String(row.id),
+            name: hName || String(row.title || "Patient").trim() || "Patient",
+            gender: "—",
+            age: hint?.age != null ? hint.age : "—",
+            blood: "—",
+            phone: hPhone || "—",
+            conditions: String(row.title || "Care package").trim(),
+            riskLevel: "Medium",
+            risk: 60,
+            lastVisit: "Active package",
+          },
+          hint,
+          row,
+        ),
+      );
       continue;
     }
     const rem = Number(row?.remaining_coins ?? 0) || 0;
@@ -5236,11 +5424,12 @@ async function buildPackageDoctorPatientRows(doctorUserId, doctorProfile) {
         Math.round((rem / Math.max(pool, 1)) * 100) || 60,
       ),
     );
-    const card = mapPatientProfileToDoctorPatientCard(p, {
+    let card = mapPatientProfileToDoctorPatientCard(p, {
       conditions: String(row.title || "Care package").trim(),
       lastVisit: "Active package",
       riskHint: score,
     });
+    card = mergeDoctorPatientCardWithAppointmentHint(card, hint, row);
     out.push({ ...card, id: String(row.id) });
   }
   out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -5319,6 +5508,7 @@ async function buildQuickCareDoctorPatientRows(doctorUserId) {
         gender: "—",
         age: "—",
         blood: "—",
+        phone: "—",
         conditions: meta.conditions,
         riskLevel: "Medium",
         risk: 55,
