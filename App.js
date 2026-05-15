@@ -115,6 +115,7 @@ import {
   getPatientPackageCoinBalance,
   getPatientActiveQuickCareBinding,
   listPackageOffersForDoctor,
+  listActivePackagePairsForDoctor,
   listActivePackagePairsForPatient,
   recordPatientWalletDeposit,
   mergeLocalFeesOntoSlots,
@@ -159,6 +160,7 @@ import {
   AdminConsoleAppScreen,
   CareModeOnboardingScreen,
   CoinWalletDoctorPanel,
+  DoctorReferralPanel,
   DoctorCoinPaymentHistoryPanel,
   DoctorPackageSetupScreen,
   DoctorQuickRequestsPanel,
@@ -18642,6 +18644,7 @@ const DoctorUpcomingAppointmentsSection = () => {
   const [completingId, setCompletingId] = useState(null);
   const [localError, setLocalError] = useState("");
   const [packageOffers, setPackageOffers] = useState([]);
+  const [activePackagePairs, setActivePackagePairs] = useState([]);
   const [openingChatId, setOpeningChatId] = useState(null);
   const [askPackageAppointment, setAskPackageAppointment] = useState(null);
   const [askPackageBusy, setAskPackageBusy] = useState(false);
@@ -18652,14 +18655,19 @@ const DoctorUpcomingAppointmentsSection = () => {
       return;
     }
     try {
-      const offers = await listPackageOffersForDoctor(currentUser.id);
+      const [offers, pairs] = await Promise.all([
+        listPackageOffersForDoctor(currentUser.id),
+        listActivePackagePairsForDoctor(currentUser.id),
+      ]);
       setPackageOffers(offers || []);
+      setActivePackagePairs(pairs || []);
     } catch (error) {
       console.log(
         "DoctorUpcomingAppointmentsSection load offers:",
         error?.message,
       );
       setPackageOffers([]);
+      setActivePackagePairs([]);
     }
   }, [currentUser?.id]);
 
@@ -18694,6 +18702,17 @@ const DoctorUpcomingAppointmentsSection = () => {
       return paid || matches[0];
     },
     [packageOffers],
+  );
+
+  const patientAlreadyHasPackage = useCallback(
+    (appointment) => {
+      const targetUid = String(appointment?.patientId || "").trim();
+      if (!targetUid) return false;
+      return (activePackagePairs || []).some(
+        (pair) => String(pair.patient_user_id || pair.patient || "") === targetUid,
+      );
+    },
+    [activePackagePairs],
   );
 
   const upcoming = (appointments || [])
@@ -18905,6 +18924,7 @@ const DoctorUpcomingAppointmentsSection = () => {
             : null;
           const offerStatus = String(offer?.status || "").toLowerCase();
           const isPaid = offerStatus === "paid";
+          const hasActivePackagePair = patientAlreadyHasPackage(appointment);
           const badgeBg = isPackage
             ? isPaid
               ? theme.successLight
@@ -19033,7 +19053,7 @@ const DoctorUpcomingAppointmentsSection = () => {
                         </Text>
                       )}
                     </TouchableOpacity>
-                    {!isDone && !isPaid ? (
+                    {!isDone && !isPaid && !hasActivePackagePair ? (
                       <TouchableOpacity
                         onPress={() => setAskPackageAppointment(appointment)}
                         disabled={!!appointment.packageOfferId}
@@ -22503,6 +22523,26 @@ const DoctorProfileScreen = ({ onLogout }) => {
               </Text>
             </View>
           </View>
+
+          {profileIsPackageDoctor ? (
+            <View
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: RFValue(18),
+                padding: RFValue(16),
+                marginBottom: RFValue(16),
+                shadowColor: theme.shadowColor,
+                shadowOpacity: 0.06,
+                shadowOffset: { width: 0, height: 4 },
+                shadowRadius: 12,
+                elevation: 3,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.cardBorder,
+              }}
+            >
+              <DoctorReferralPanel theme={theme} />
+            </View>
+          ) : null}
 
           {profileIsQuickCareDoctor ? (
             <View
@@ -32376,6 +32416,17 @@ export default function App() {
       return created;
     }
 
+    const walletChargeAmount = Math.max(
+      1,
+      Math.floor(Number(consultationFee || 500) || 500),
+    );
+    const walletBalance = await getPatientCasualCoinBalance(currentUser.id);
+    if (walletBalance < walletChargeAmount) {
+      throw new Error(
+        `Not enough wallet coins. Available: ${walletBalance}, required: ${walletChargeAmount}.`,
+      );
+    }
+
     const created = await createRegularAppointmentRequest({
       patientUserId: currentUser.id,
       doctorUserId,
@@ -32385,6 +32436,27 @@ export default function App() {
       reason: trimmedReason,
       consultationFee,
     });
+
+    if (created?.id && !created.localOnly) {
+      await recordCasualAppointmentWalletPayment({
+        patientUserId: currentUser.id,
+        doctorUserId,
+        appointmentId: created.id,
+        amountInr: walletChargeAmount,
+        consultationType: consultationType || "video",
+        description: "Doctor appointment booked from wallet",
+      });
+      try {
+        await pb.collection(PB_APPOINTMENTS_COLLECTION).update(created.id, {
+          status: "paid",
+        });
+      } catch (statusError) {
+        console.log(
+          "createAppointment immediate payment status skipped:",
+          statusError?.message,
+        );
+      }
+    }
 
     let conversationId = null;
     if (doctorUserId) {
@@ -32409,7 +32481,7 @@ export default function App() {
             conversation: conversationId,
             kind: "system",
           },
-          `Appointment request: ${whenLabel}.\nReason: ${trimmedReason}`,
+          `Appointment request: ${whenLabel}.\nReason: ${trimmedReason}\nWallet paid: ${walletChargeAmount} coins.`,
         );
         await pb.collection("conversations").update(conversationId, {
           lastMessageAt: new Date().toISOString(),

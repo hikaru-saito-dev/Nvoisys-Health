@@ -8248,6 +8248,235 @@ export function CoinWalletDoctorPanel({
   );
 }
 
+export function DoctorReferralPanel({ theme }) {
+  const user = getAuthUser();
+  const [busy, setBusy] = useState(false);
+  const [pairs, setPairs] = useState([]);
+  const [referrals, setReferrals] = useState([]);
+  const [packageDoctors, setPackageDoctors] = useState([]);
+  const [referralTargets, setReferralTargets] = useState({});
+
+  const refresh = useCallback(async () => {
+    if (!user?.id) {
+      setPairs([]);
+      setReferrals([]);
+      return;
+    }
+    const [activePairs, referralRows] = await Promise.all([
+      listActivePackagePairsForDoctor(user.id),
+      listPackageReferralsForDoctor(user.id),
+    ]);
+    setPairs(activePairs || []);
+    setReferrals(referralRows || []);
+  }, [user?.id]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await pb.collection("doctor_profile").getFullList({
+          requestKey: null,
+          filter: `status="approved"`,
+          expand: "user",
+        });
+        if (cancelled) return;
+        const allUids = [
+          ...new Set(
+            (rows || [])
+              .map((row) =>
+                typeof row.user === "string" ? row.user : row.user?.id,
+              )
+              .filter(Boolean),
+          ),
+        ];
+        const byId =
+          allUids.length > 0 ? await fetchUsersAuthByIds(allUids) : new Map();
+        const mapped = (rows || [])
+          .map((row) => {
+            const uid = typeof row.user === "string" ? row.user : row.user?.id;
+            const expanded = Array.isArray(row.expand?.user)
+              ? row.expand.user[0]
+              : row.expand?.user;
+            const userRecord = byId.get(uid) || expanded || null;
+            const merged = {
+              ...row,
+              expand: { ...(row.expand || {}), ...(userRecord ? { user: userRecord } : {}) },
+            };
+            return {
+              profileId: merged.id,
+              userId: uid || merged.expand?.user?.id || "",
+              name:
+                resolveListingDisplayName(merged, merged.expand?.user) ||
+                "Doctor",
+              specialty: String(merged.specialty || "General Physician").trim(),
+              practitionerTier: String(
+                merged.practitioner_tier ||
+                  merged.tier ||
+                  merged.doctor_class ||
+                  "",
+              ).toLowerCase(),
+            };
+          })
+          .filter(
+            (doctor) =>
+              doctor.userId &&
+              doctor.userId !== user?.id &&
+              doctorTierEligibleForPackageMode(doctor.practitionerTier) &&
+              !doctorTierEligibleForQuickService(doctor),
+          );
+        setPackageDoctors(mapped);
+      } catch {
+        setPackageDoctors([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const runReferral = async (pair) => {
+    const targetDoctorId = referralTargets[pair.offerId];
+    if (!targetDoctorId) {
+      Alert.alert("Referral", "Choose the doctor you want to refer to.");
+      return;
+    }
+    try {
+      setBusy(true);
+      await referPackagePatientToDoctor({
+        packageOfferId: pair.offerId,
+        patientUserId: pair.patient_user_id,
+        fromDoctorUserId: user?.id,
+        toDoctorUserId: targetDoctorId,
+      });
+      setReferralTargets((prev) => ({ ...prev, [pair.offerId]: "" }));
+      await refresh();
+      Alert.alert(
+        "Referred",
+        "This patient is now fixed to the referred doctor. Future package coins settle to them, with monthly referral commission back to you.",
+      );
+    } catch (e) {
+      Alert.alert("Referral", e?.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const outgoingReferralOfferIds = new Set(
+    (referrals || [])
+      .filter((r) => String(r.from_doctor || "") === String(user?.id || ""))
+      .map((r) => String(r.package_offer || "")),
+  );
+
+  return (
+    <View>
+      <Text style={{ color: theme.textPrimary, fontWeight: "900", fontSize: S.body }}>
+        Patient referrals
+      </Text>
+      <Text style={{ color: theme.textSecondary, fontSize: S.small, marginTop: 4 }}>
+        Transfer an active package patient to another package doctor. Future package coins go to them; your monthly commission is handled automatically.
+      </Text>
+      {pairs.length === 0 ? (
+        <Text style={{ color: theme.textTertiary, fontSize: S.small, marginTop: 10 }}>
+          No active package patients available to refer.
+        </Text>
+      ) : (
+        pairs.slice(0, 8).map((pair) => {
+          const alreadyReferred = outgoingReferralOfferIds.has(String(pair.offerId));
+          const selectedDoctorId = referralTargets[pair.offerId];
+          return (
+            <View
+              key={pair.offerId || pair.id}
+              style={{
+                marginTop: 10,
+                padding: 10,
+                borderRadius: 12,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.cardBorder,
+                backgroundColor: theme.bg,
+              }}
+            >
+              <Text style={{ color: theme.textPrimary, fontWeight: "800" }}>
+                {pair.title || "Care package"}
+              </Text>
+              <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 3 }}>
+                Patient {String(pair.patient_user_id || "").slice(-6)} · pool {pair.doctor_coins || 0} coins
+              </Text>
+              {alreadyReferred ? (
+                <Text style={{ color: theme.success, fontSize: 11, marginTop: 6 }}>
+                  Already referred. Monthly 1000-coin commission returns to you after the referred doctor earns from this patient.
+                </Text>
+              ) : packageDoctors.length ? (
+                <View style={{ marginTop: 8 }}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {packageDoctors.map((doctor) => {
+                      const selected = selectedDoctorId === doctor.userId;
+                      return (
+                        <TouchableOpacity
+                          key={`${pair.offerId}-${doctor.userId}`}
+                          onPress={() =>
+                            setReferralTargets((prev) => ({
+                              ...prev,
+                              [pair.offerId]: doctor.userId,
+                            }))
+                          }
+                          style={{
+                            paddingHorizontal: 10,
+                            paddingVertical: 8,
+                            borderRadius: 999,
+                            marginRight: 8,
+                            backgroundColor: selected ? theme.accent : theme.card,
+                            borderWidth: 1,
+                            borderColor: selected ? theme.accent : theme.cardBorder,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              color: selected ? "#fff" : theme.textPrimary,
+                              fontWeight: "800",
+                              fontSize: 11,
+                            }}
+                          >
+                            {doctor.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                  <TouchableOpacity
+                    onPress={() => runReferral(pair)}
+                    disabled={busy || !selectedDoctorId}
+                    style={{
+                      marginTop: 8,
+                      alignSelf: "flex-start",
+                      backgroundColor: theme.warning,
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 10,
+                      opacity: busy || !selectedDoctorId ? 0.55 : 1,
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11 }}>
+                      Refer patient
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text style={{ color: theme.textTertiary, fontSize: 11, marginTop: 6 }}>
+                  No other package doctors are available for referral yet.
+                </Text>
+              )}
+            </View>
+          );
+        })
+      )}
+    </View>
+  );
+}
+
 export function DoctorCoinPaymentHistoryPanel({ theme }) {
   const user = getAuthUser();
   const [rows, setRows] = useState([]);

@@ -3388,11 +3388,80 @@ export async function listActivePackagePairsForPatient(
 }
 
 export async function listActivePackagePairsForDoctor(doctorUserId) {
-  const offers = await listPackageOffersForDoctor(doctorUserId);
-  return offers
+  const uid = String(doctorUserId || "").trim();
+  const offers = await listPackageOffersForDoctor(uid);
+  const fromOffers = offers
     .filter(isActivePaidPackageOffer)
     .map(normalizeActivePackagePair)
     .filter(Boolean);
+
+  const doctorProfileId = uid ? await resolveDoctorProfileIdForUser(uid) : null;
+  const doctorIds = [...new Set([uid, doctorProfileId].filter(Boolean))];
+  let pairRows = [];
+  try {
+    const partials = await Promise.all(
+      doctorIds.map(async (id) => {
+        try {
+          return await pb.collection("patient_doctor_packages").getFullList({
+            requestKey: null,
+            sort: "-started_at,-created",
+            filter: `doctor="${id}" && status="active"`,
+          });
+        } catch {
+          return [];
+        }
+      }),
+    );
+    pairRows = partials.flat();
+  } catch {
+    pairRows = [];
+  }
+
+  const fromPackageRows = await Promise.all(
+    (pairRows || []).map(async (row) => {
+      const patient = relationId(row.patient);
+      const doctor = relationId(row.doctor);
+      const offerId = relationId(row.package_offer);
+      const patientUserId =
+        (await resolveAuthUserIdForRelationId("patient_profile", patient)) ||
+        patient;
+      const doctorUserId =
+        (await resolveAuthUserIdForRelationId("doctor_profile", doctor)) ||
+        doctor;
+      return {
+        id: row.id,
+        offerId: offerId || row.id,
+        title: row.title || "Care package",
+        amount_inr: Number(row.amount_inr ?? 0) || 0,
+        platform_fee_inr: Number(row.platform_fee_inr ?? 0) || 0,
+        doctor_coins:
+          Number(row.doctor_pool_coins ?? row.doctor_coins ?? 0) || 0,
+        remaining_coins:
+          Number(row.remaining_coins ?? row.amount_inr ?? 0) || 0,
+        sessions: Number(row.sessions) || 0,
+        validity_days: Number(row.validity_days) || 0,
+        package_slot: row.package_slot ?? null,
+        patient_user_id: patientUserId,
+        doctor_user_id: doctorUserId,
+        status: row.status || "active",
+        started_at: row.started_at || row.created || "",
+        created: row.created || "",
+      };
+    }),
+  );
+
+  const byKey = new Map();
+  for (const pair of fromOffers) byKey.set(pair.offerId || pair.id, pair);
+  for (const pair of fromPackageRows) {
+    const key = pair.offerId || pair.id;
+    const existing = byKey.get(key);
+    byKey.set(key, existing ? { ...existing, ...pair } : pair);
+  }
+  return Array.from(byKey.values()).sort((a, b) =>
+    String(b.started_at || b.created || "").localeCompare(
+      String(a.started_at || a.created || ""),
+    ),
+  );
 }
 
 async function findActivePackageOfferForPair({
