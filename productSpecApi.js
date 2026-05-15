@@ -3920,6 +3920,95 @@ export async function recordPatientWalletDepositStub(patientUserId, amountInr) {
   });
 }
 
+export async function recordCasualAppointmentWalletPayment({
+  patientUserId,
+  doctorUserId,
+  appointmentId,
+  amountInr,
+  consultationType = "video",
+  description = "Doctor appointment",
+} = {}) {
+  const patient = String(patientUserId || getAuthUser()?.id || "").trim();
+  const doctor = String(doctorUserId || "").trim();
+  const apptId = String(appointmentId || "").trim();
+  const amount = Math.max(0, Math.floor(Number(amountInr) || 0));
+  if (!patient || !doctor || !apptId) {
+    throw new Error("Missing appointment payment details.");
+  }
+  if (amount <= 0) throw new Error("Appointment fee missing.");
+
+  let existingRows = [];
+  try {
+    existingRows = await pb.collection("coin_ledger").getFullList({
+      requestKey: null,
+      filter: `ref_collection="${getPbAppointmentsCollection()}" && ref_id="${apptId}" && reason="appointment_patient_spent"`,
+    });
+  } catch {
+    // The balance assertion/write below will surface schema issues.
+  }
+  if ((existingRows || []).length > 0) {
+    return { paid: true, alreadyPaid: true, amountInr: amount };
+  }
+
+  await assertPatientHasCasualCoins(patient, amount);
+
+  try {
+    await recordPaymentTransaction({
+      patientUserId: patient,
+      doctorUserId: doctor,
+      sourceCollection: getPbAppointmentsCollection(),
+      sourceId: apptId,
+      kind: "appointment",
+      provider: "wallet",
+      amountInr: amount,
+      currency: "INR",
+      status: "success",
+      description,
+      metadata: {
+        wallet: "casual",
+        wallet_mode: "casual",
+        appointment_id: apptId,
+        consultation_type: consultationType,
+      },
+    });
+  } catch (e) {
+    console.log("recordCasualAppointmentWalletPayment transaction:", e?.message);
+  }
+
+  const meta = {
+    wallet: "casual",
+    wallet_mode: "casual",
+    appointment_id: apptId,
+    patient_user_id: patient,
+    doctor_user_id: doctor,
+    consultation_type: consultationType,
+    appointment_fee_coins: amount,
+    paid_at: new Date().toISOString(),
+  };
+  await createCoinLedgerLine({
+    user: patient,
+    delta: -amount,
+    reason: "appointment_patient_spent",
+    ref_collection: getPbAppointmentsCollection(),
+    ref_id: apptId,
+    meta,
+  });
+  await createCoinLedgerLine({
+    user: doctor,
+    delta: amount,
+    reason: "appointment_doctor_earned",
+    ref_collection: getPbAppointmentsCollection(),
+    ref_id: apptId,
+    meta,
+  });
+  try {
+    await upsertDoctorCoinBalance(doctor, amount);
+  } catch {
+    // doctor_coin_balances is only a cache; the ledger remains authoritative
+  }
+  return { paid: true, alreadyPaid: false, amountInr: amount };
+}
+
 async function findDoctorCoinBalanceRow(doctorUserId) {
   if (!doctorUserId) return null;
   try {
