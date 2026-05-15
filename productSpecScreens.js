@@ -182,10 +182,6 @@ export function CareModeOnboardingScreen({
   onBack,
   onDone,
   onCommitPackageDoctor,
-  onHasExistingPackage,
-  onUseExistingPackage,
-  onHasExistingCasualCoins,
-  onUseExistingCasualMode,
   onLoadPackageDoctors,
   onPaySelectedPackage,
   onWalletTopUp,
@@ -204,13 +200,7 @@ export function CareModeOnboardingScreen({
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [loadingDoctors, setLoadingDoctors] = useState(false);
   const [packageDoctorsLoaded, setPackageDoctorsLoaded] = useState(false);
-  const [existingPackageAvailable, setExistingPackageAvailable] =
-    useState(false);
-  const [checkingExistingPackage, setCheckingExistingPackage] = useState(false);
   const [casualStep, setCasualStep] = useState(false);
-  const [existingCasualAvailable, setExistingCasualAvailable] =
-    useState(false);
-  const [checkingExistingCasual, setCheckingExistingCasual] = useState(false);
   const [casualAmount, setCasualAmount] = useState(
     String(WALLET_TOPUP_MIN_INR),
   );
@@ -241,52 +231,6 @@ export function CareModeOnboardingScreen({
     if (!packageStep || loadingDoctors || packageDoctorsLoaded) return;
     void loadPackageDoctors();
   }, [packageStep, loadingDoctors, packageDoctorsLoaded, loadPackageDoctors]);
-
-  useEffect(() => {
-    if (!packageStep || typeof onHasExistingPackage !== "function") {
-      setExistingPackageAvailable(false);
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        setCheckingExistingPackage(true);
-        const hasPackage = await onHasExistingPackage();
-        if (!cancelled) setExistingPackageAvailable(Boolean(hasPackage));
-      } catch (e) {
-        console.log("check existing package skipped:", e?.message);
-        if (!cancelled) setExistingPackageAvailable(false);
-      } finally {
-        if (!cancelled) setCheckingExistingPackage(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [packageStep, onHasExistingPackage]);
-
-  useEffect(() => {
-    if (!casualStep || typeof onHasExistingCasualCoins !== "function") {
-      setExistingCasualAvailable(false);
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        setCheckingExistingCasual(true);
-        const hasCoins = await onHasExistingCasualCoins();
-        if (!cancelled) setExistingCasualAvailable(Boolean(hasCoins));
-      } catch (e) {
-        console.log("check existing casual coins skipped:", e?.message);
-        if (!cancelled) setExistingCasualAvailable(false);
-      } finally {
-        if (!cancelled) setCheckingExistingCasual(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [casualStep, onHasExistingCasualCoins]);
 
   const confirm = async () => {
     if (!selected) {
@@ -364,25 +308,6 @@ export function CareModeOnboardingScreen({
     }
   };
 
-  const useExistingPackage = async () => {
-    if (typeof onUseExistingPackage !== "function") return;
-    try {
-      setBusy(true);
-      const reused = await onUseExistingPackage();
-      if (!reused) {
-        setExistingPackageAvailable(false);
-        Alert.alert(
-          "Package",
-          "No active paid package was found. Please choose a doctor and pay for a package.",
-        );
-      }
-    } catch (e) {
-      Alert.alert("Package", e?.message || "Could not open existing package.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const filteredPackageDoctors = useMemo(() => {
     const q = doctorSearch.trim().toLowerCase();
     const base = packageDoctors || [];
@@ -421,25 +346,6 @@ export function CareModeOnboardingScreen({
       Alert.alert("Coins added", `${amount} coins were added to your wallet.`);
     } catch (e) {
       Alert.alert("Top up coins", e?.message || "Could not complete top-up.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const useExistingCasualCoins = async () => {
-    if (typeof onUseExistingCasualMode !== "function") return;
-    try {
-      setBusy(true);
-      const reused = await onUseExistingCasualMode();
-      if (!reused) {
-        setExistingCasualAvailable(false);
-        Alert.alert(
-          "Casual mode",
-          "No casual coins were found. Please top up to continue.",
-        );
-      }
-    } catch (e) {
-      Alert.alert("Casual mode", e?.message || "Could not enter casual mode.");
     } finally {
       setBusy(false);
     }
@@ -515,38 +421,6 @@ export function CareModeOnboardingScreen({
             editable={!busy}
             style={slotInput(theme)}
           />
-          {checkingExistingCasual ? (
-            <Text
-              style={{
-                color: theme.textTertiary,
-                fontSize: S.small,
-                marginBottom: 10,
-              }}
-            >
-              Checking your casual coin wallet…
-            </Text>
-          ) : existingCasualAvailable ? (
-            <TouchableOpacity
-              onPress={useExistingCasualCoins}
-              disabled={busy}
-              style={{
-                backgroundColor: theme.accent,
-                borderRadius: 16,
-                padding: 16,
-                alignItems: "center",
-                marginBottom: 12,
-                opacity: busy ? 0.65 : 1,
-              }}
-            >
-              {busy ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={{ color: "#fff", fontWeight: "900" }}>
-                  Go in with existing casual coins
-                </Text>
-              )}
-            </TouchableOpacity>
-          ) : null}
           <TouchableOpacity
             onPress={payCasualTopup}
             disabled={busy}
@@ -575,40 +449,6 @@ export function CareModeOnboardingScreen({
     const slots = Array.isArray(selectedDoctor?.packageSlots)
       ? selectedDoctor.packageSlots
       : [];
-    const existingPackageAction = checkingExistingPackage ? (
-      <Text
-        style={{
-          color: theme.textTertiary,
-          fontSize: S.small,
-          marginTop: 12,
-          marginBottom: 10,
-          textAlign: "center",
-        }}
-      >
-        Checking your existing package wallet…
-      </Text>
-    ) : existingPackageAvailable ? (
-      <TouchableOpacity
-        onPress={useExistingPackage}
-        disabled={busy}
-        style={{
-          backgroundColor: theme.success,
-          borderRadius: 16,
-          padding: 16,
-          alignItems: "center",
-          marginTop: 14,
-          opacity: busy ? 0.65 : 1,
-        }}
-      >
-        {busy ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={{ color: "#fff", fontWeight: "900" }}>
-            Go in with existing package
-          </Text>
-        )}
-      </TouchableOpacity>
-    ) : null;
     return (
       <View
         style={{
@@ -769,7 +609,6 @@ export function CareModeOnboardingScreen({
               </TouchableOpacity>
             </View>
           ) : null}
-          {existingPackageAction}
         </ScrollView>
       </View>
     );
@@ -6543,6 +6382,30 @@ function truncateOneLine(s, max) {
   return `${t.slice(0, max - 1)}…`;
 }
 
+/** Fingerprint queued rows by id/status/updated only — avoids silent refresh loops when hydrate() fills `expand` without the queue actually changing. */
+function buildQueueIdentitySnapshot(sol, cou) {
+  const solPart = (sol || [])
+    .map((r) => {
+      const st = String(r?.status || "queued").toLowerCase();
+      const ver = String(r?.updated || r?.created || "");
+      return `s:${r?.id}:${st}:${ver}`;
+    })
+    .sort()
+    .join("|");
+  const couPart = (cou || [])
+    .map((r) => {
+      const st = String(r?.status || "queued").toLowerCase();
+      const ver = String(r?.updated || r?.created || "");
+      return `c:${r?.id}:${st}:${ver}`;
+    })
+    .sort()
+    .join("|");
+  return `${solPart}~${couPart}`;
+}
+
+/** Survives ScrollView remounts so queue cards do not flash empty while a background fetch runs. */
+const quickQueuePanelCache = new Map();
+
 /**
  * Primary action per card: **Prescribe** until PocketBase `status` is no longer
  * `queued`, then **Open chat** (opens the direct thread by patient id).
@@ -6570,79 +6433,103 @@ export function DoctorQuickRequestsPanel({
 }) {
   const user = getAuthUser();
   const effectiveDoctorId = doctorUserId || user?.id || "";
-  const [solutionRows, setSolutionRows] = useState([]);
-  const [counsellingRows, setCounsellingRows] = useState([]);
+  const cacheSeed = effectiveDoctorId
+    ? quickQueuePanelCache.get(effectiveDoctorId)
+    : null;
+  const [solutionRows, setSolutionRows] = useState(() => cacheSeed?.sol || []);
+  const [counsellingRows, setCounsellingRows] = useState(() => cacheSeed?.cou || []);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const lastQueueSnapshotRef = useRef("");
+  const [err, setErr] = useState(() => cacheSeed?.err || "");
+  const lastQueueSnapshotRef = useRef(cacheSeed?.snapshot || "");
   const bumpTimerRef = useRef(null);
+  const loadGenerationRef = useRef(0);
   const [expandedQueueKeys, setExpandedQueueKeys] = useState({});
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
     if (!effectiveDoctorId) return;
+    const myGeneration = ++loadGenerationRef.current;
     if (!silent) {
       setErr("");
       setLoading(true);
     }
-    const parts = [];
-    let sol = [];
-    let cou = [];
     try {
-      sol = await listQueuedQuickSolutionRequestsForProvider();
-    } catch (e) {
-      parts.push(`Quick Solution: ${e?.message || "list failed"}`);
-    }
-    try {
-      cou = await listQueuedQuickCounsellingRequestsForProvider();
-    } catch (e) {
-      parts.push(`Quick Counselling: ${e?.message || "list failed"}`);
-    }
-    try {
-      sol = await hydrateRowsPatientAuthUsers(sol || []);
-    } catch (e) {
-      console.log("hydrateRowsPatientAuthUsers (solution) skipped:", e?.message);
-    }
-    try {
-      cou = await hydrateRowsPatientAuthUsers(cou || []);
-    } catch (e) {
-      console.log("hydrateRowsPatientAuthUsers (counselling) skipped:", e?.message);
-    }
+      const parts = [];
+      let sol = [];
+      let cou = [];
+      try {
+        sol = await listQueuedQuickSolutionRequestsForProvider();
+      } catch (e) {
+        parts.push(`Quick Solution: ${e?.message || "list failed"}`);
+      }
+      try {
+        cou = await listQueuedQuickCounsellingRequestsForProvider();
+      } catch (e) {
+        parts.push(`Quick Counselling: ${e?.message || "list failed"}`);
+      }
+      try {
+        sol = await hydrateRowsPatientAuthUsers(sol || []);
+      } catch (e) {
+        console.log("hydrateRowsPatientAuthUsers (solution) skipped:", e?.message);
+      }
+      try {
+        cou = await hydrateRowsPatientAuthUsers(cou || []);
+      } catch (e) {
+        console.log("hydrateRowsPatientAuthUsers (counselling) skipped:", e?.message);
+      }
 
-    const queueSnapshot = `${(sol || [])
-      .map((r) => {
-        const st = String(r?.status || "queued").toLowerCase();
-        return `s:${r?.id}:${st}:${quickRequestPatientUserId(r) || ""}`;
-      })
-      .sort()
-      .join("|")}~${(cou || [])
-      .map((r) => {
-        const st = String(r?.status || "queued").toLowerCase();
-        return `c:${r?.id}:${st}:${quickRequestPatientUserId(r) || ""}`;
-      })
-      .sort()
-      .join("|")}`;
+      if (myGeneration !== loadGenerationRef.current) {
+        return;
+      }
 
-    if (silent && queueSnapshot === lastQueueSnapshotRef.current) {
-      return;
+      const queueSnapshot = buildQueueIdentitySnapshot(sol, cou);
+      const errText = parts.length ? parts.join("\n") : "";
+
+      if (queueSnapshot === lastQueueSnapshotRef.current) {
+        if (errText) setErr(errText);
+        return;
+      }
+      lastQueueSnapshotRef.current = queueSnapshot;
+
+      if (myGeneration !== loadGenerationRef.current) {
+        return;
+      }
+
+      quickQueuePanelCache.set(effectiveDoctorId, {
+        sol: sol || [],
+        cou: cou || [],
+        snapshot: queueSnapshot,
+        err: errText,
+      });
+
+      setSolutionRows(sol || []);
+      setCounsellingRows(cou || []);
+      setErr(errText);
+    } finally {
+      if (!silent) setLoading(false);
     }
-    lastQueueSnapshotRef.current = queueSnapshot;
-
-    setSolutionRows(sol || []);
-    setCounsellingRows(cou || []);
-
-    if (parts.length) setErr(parts.join("\n"));
-    if (!silent) setLoading(false);
   }, [effectiveDoctorId]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!effectiveDoctorId) return;
+    const hasCache = quickQueuePanelCache.has(effectiveDoctorId);
+    void load({ silent: autoRefreshQuickQueues || hasCache });
+  }, [effectiveDoctorId, load, autoRefreshQuickQueues]);
+
+  useEffect(() => {
+    if (!effectiveDoctorId) return;
+    const cached = quickQueuePanelCache.get(effectiveDoctorId);
+    if (!cached || cached.snapshot === lastQueueSnapshotRef.current) return;
+    lastQueueSnapshotRef.current = cached.snapshot;
+    setSolutionRows(cached.sol || []);
+    setCounsellingRows(cached.cou || []);
+    setErr(cached.err || "");
+  }, [effectiveDoctorId]);
 
   useEffect(() => {
     if (!autoRefreshQuickQueues) return undefined;
     let cancelled = false;
-    const debounceMs = 500;
+    const debounceMs = 1400;
     const scheduleSilentReload = () => {
       if (bumpTimerRef.current) clearTimeout(bumpTimerRef.current);
       bumpTimerRef.current = setTimeout(() => {
@@ -6926,6 +6813,8 @@ export function DoctorQuickRequestsPanel({
   const trackCardShell = (children, { icon, title, testId } = {}) => (
     <View
       key={title}
+      collapsable={false}
+      renderToHardwareTextureAndroid={Platform.OS === "android"}
       style={{
         marginBottom: 16,
         backgroundColor: theme.card,
@@ -6933,11 +6822,7 @@ export function DoctorQuickRequestsPanel({
         padding: 14,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.cardBorder,
-        shadowColor: theme.shadowColor,
-        shadowOpacity: 0.05,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 8,
-        elevation: 2,
+        overflow: "hidden",
       }}
     >
       <View
@@ -6993,7 +6878,11 @@ export function DoctorQuickRequestsPanel({
 
   if (layout === "split_tracks") {
     return (
-      <View style={{ marginTop: 0 }}>
+      <View
+        style={{ marginTop: 0 }}
+        collapsable={false}
+        renderToHardwareTextureAndroid={Platform.OS === "android"}
+      >
         {err ? (
           <Text
             style={{
@@ -7075,6 +6964,8 @@ export function DoctorQuickRequestsPanel({
 
   return (
     <View
+      collapsable={false}
+      renderToHardwareTextureAndroid={Platform.OS === "android"}
       style={{
         marginTop: 0,
         marginBottom: 16,
@@ -7083,11 +6974,7 @@ export function DoctorQuickRequestsPanel({
         padding: 14,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.cardBorder,
-        shadowColor: theme.shadowColor,
-        shadowOpacity: 0.05,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 8,
-        elevation: 2,
+        overflow: "hidden",
       }}
     >
       <View
