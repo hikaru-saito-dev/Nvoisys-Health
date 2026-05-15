@@ -34828,6 +34828,120 @@ const AppContent = ({
     }
   }, [setCurrentUser, setPatientProfile]);
 
+  const activateExistingPaidPackage = useCallback(
+    async ({ showAlert = true } = {}) => {
+      if (!currentUser?.id || userRole !== "patient") return false;
+      const pairs = await listActivePackagePairsForPatient(
+        currentUser.id,
+        patientProfile?.id,
+      );
+      const activePair = Array.isArray(pairs) && pairs.length ? pairs[0] : null;
+      if (!activePair?.doctor_user_id) return false;
+
+      await persistPatientCareMode({
+        profileId: patientProfile?.id,
+        userId: currentUser.id,
+        mode: CARE_MODE.PACKAGE,
+      });
+      setLocalCareMode(CARE_MODE.PACKAGE);
+      try {
+        const prev = await readPatientPrimaryCarePaths(currentUser.id);
+        await writePatientPrimaryCarePaths(currentUser.id, {
+          ...(prev && typeof prev === "object" ? prev : {}),
+          completed: true,
+          wantsGeneral: false,
+          wantsSpecialist: true,
+          generalDoctorUserId: null,
+          specialistDoctorUserId: activePair.doctor_user_id,
+          specialistPackageSlot: activePair.package_slot || null,
+          specialistOfferId: activePair.offerId || activePair.id || null,
+          casualDashboard: false,
+        });
+      } catch (_) {
+        // Mode switch still succeeds; setup can be repaired by the next refresh.
+      }
+      try {
+        const refreshed = await ensureRoleProfile("patient");
+        setPatientProfile(refreshed);
+      } catch (_) {
+        /* ignore */
+      }
+      await reloadPatientPrimaryCarePaths();
+      await refreshAllData?.();
+      if (showAlert) {
+        Alert.alert(
+          "Package restored",
+          "Your existing paid package is active. You do not need to pay again.",
+        );
+      }
+      return true;
+    },
+    [
+      currentUser?.id,
+      patientProfile?.id,
+      refreshAllData,
+      reloadPatientPrimaryCarePaths,
+      setLocalCareMode,
+      setPatientProfile,
+      userRole,
+    ],
+  );
+
+  const activateExistingCasualMode = useCallback(
+    async ({ showAlert = true } = {}) => {
+      if (!currentUser?.id || userRole !== "patient") return false;
+      const balance = await getPatientCasualCoinBalance(currentUser.id);
+      if ((Number(balance) || 0) <= 0) return false;
+
+      await persistPatientCareMode({
+        profileId: patientProfile?.id,
+        userId: currentUser.id,
+        mode: CARE_MODE.CASUAL,
+      });
+      setLocalCareMode(CARE_MODE.CASUAL);
+      try {
+        await writePatientPrimaryCarePaths(currentUser.id, {
+          completed: true,
+          wantsGeneral: false,
+          wantsSpecialist: false,
+          generalDoctorUserId: null,
+          specialistDoctorUserId: null,
+          specialistPackageSlot: null,
+          specialistOfferId: null,
+          pharmacyUserId: null,
+          pharmacyName: null,
+          casualDashboard: true,
+        });
+      } catch (_) {
+        // Mode switch still succeeds; setup can be repaired by the next refresh.
+      }
+      try {
+        const refreshed = await ensureRoleProfile("patient");
+        setPatientProfile(refreshed);
+      } catch (_) {
+        /* ignore */
+      }
+      await reloadPatientPrimaryCarePaths();
+      await refreshAllData?.();
+      if (showAlert) {
+        Alert.alert(
+          "Casual mode restored",
+          "Your existing casual coins are available. You do not need to top up again.",
+        );
+      }
+      return true;
+    },
+    [
+      currentUser?.id,
+      patientProfile?.id,
+      refreshAllData,
+      reloadPatientPrimaryCarePaths,
+      setLocalCareMode,
+      setPatientProfile,
+      userRole,
+    ],
+  );
+
   const renderDoctorProfileTab = useCallback(
     (props) => <DoctorProfileScreen {...props} onLogout={handleLogout} />,
     [handleLogout],
@@ -35210,9 +35324,24 @@ const AppContent = ({
         currentUser={currentUser}
         onWalletTopUp={topUpPatientWallet}
         paymentMode={PAYMENT_MODE}
+        onHasExistingCasualCoins={async () => {
+          if (!currentUser?.id) return false;
+          const balance = await getPatientCasualCoinBalance(currentUser.id);
+          return (Number(balance) || 0) > 0;
+        }}
+        onUseExistingCasualMode={() => activateExistingCasualMode()}
         onLoadPackageDoctors={() =>
           fetchApprovedDoctors?.({ packageModeOnly: true })
         }
+        onHasExistingPackage={async () => {
+          if (!currentUser?.id) return false;
+          const pairs = await listActivePackagePairsForPatient(
+            currentUser.id,
+            patientProfile?.id,
+          );
+          return Array.isArray(pairs) && pairs.some((p) => p?.doctor_user_id);
+        }}
+        onUseExistingPackage={() => activateExistingPaidPackage()}
         onPaySelectedPackage={payForPackageOffer}
         onCommitPackageDoctor={async () => {
           if (!currentUser?.id) return;
@@ -35348,6 +35477,21 @@ const AppContent = ({
         onLoadPackageDoctors={() =>
           fetchApprovedDoctors?.({ packageModeOnly: true })
         }
+        onHasExistingCasualCoins={async () => {
+          if (!currentUser?.id) return false;
+          const balance = await getPatientCasualCoinBalance(currentUser.id);
+          return (Number(balance) || 0) > 0;
+        }}
+        onUseExistingCasualMode={() => activateExistingCasualMode()}
+        onHasExistingPackage={async () => {
+          if (!currentUser?.id) return false;
+          const pairs = await listActivePackagePairsForPatient(
+            currentUser.id,
+            patientProfile?.id,
+          );
+          return Array.isArray(pairs) && pairs.some((p) => p?.doctor_user_id);
+        }}
+        onUseExistingPackage={() => activateExistingPaidPackage()}
         onPaySelectedPackage={payForPackageOffer}
         onWalletTopUp={topUpPatientWallet}
         onDone={finishPackageUpgrade}
