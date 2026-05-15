@@ -4544,18 +4544,18 @@ export async function settlePackageCoinsForInteraction({
     return { settled: false, reason: "coin_ledger_missing" };
   }
   if (existing.length > 0) return { settled: false, reason: "already_settled" };
-  const patientUserId =
+  const settledPatientUserId =
     String(activeOffer.patient_user_id || "").trim() ||
     interactionPatientUserId;
-  const doctorUserId =
+  const settledDoctorUserId =
     String(activeOffer.doctor_user_id || "").trim() || interactionDoctorUserId;
   const totalDoctorCoins = Number(activeOffer.doctor_coins ?? 0);
   const totalPatientCoins =
     Number(activeOffer.amount_inr ?? 0) || totalDoctorCoins;
   const sessions = Math.max(1, Number(activeOffer.sessions) || 1);
   if (
-    !patientUserId ||
-    !doctorUserId ||
+    !settledPatientUserId ||
+    !settledDoctorUserId ||
     !Number.isFinite(totalDoctorCoins) ||
     totalDoctorCoins <= 0 ||
     !Number.isFinite(totalPatientCoins) ||
@@ -4569,11 +4569,11 @@ export async function settlePackageCoinsForInteraction({
     const [doctorRows, patientRows] = await Promise.all([
       pb.collection("coin_ledger").getFullList({
         requestKey: null,
-        filter: `user="${doctorUserId}" && reason="package_session_doctor_earned"`,
+        filter: `user="${settledDoctorUserId}" && reason="package_session_doctor_earned"`,
       }),
       pb.collection("coin_ledger").getFullList({
         requestKey: null,
-        filter: `user="${patientUserId}" && reason="package_session_patient_spent"`,
+        filter: `user="${settledPatientUserId}" && reason="package_session_patient_spent"`,
       }),
     ]);
     priorDoctorRows = (doctorRows || []).filter(
@@ -4632,7 +4632,7 @@ export async function settlePackageCoinsForInteraction({
   try {
     const loadedRows = await pb.collection("coin_ledger").getFullList({
       requestKey: null,
-      filter: `user="${patientUserId}" && ref_collection="package_offers" && ref_id="${offerId}"`,
+      filter: `user="${settledPatientUserId}" && ref_collection="package_offers" && ref_id="${offerId}"`,
     });
     const loadedCoins = (loadedRows || [])
       .filter((row) =>
@@ -4645,7 +4645,7 @@ export async function settlePackageCoinsForInteraction({
     if (loadedCoins < totalPatientCoins) {
       const diff = totalPatientCoins - loadedCoins;
       await createCoinLedgerLine({
-        user: patientUserId,
+        user: settledPatientUserId,
         delta: diff,
         reason: "package_patient_coins_adjusted_to_paid_amount",
         ref_collection: "package_offers",
@@ -4663,14 +4663,18 @@ export async function settlePackageCoinsForInteraction({
   } catch {
     // If adjustment cannot be checked, the balance assertion below protects settlement.
   }
-  await assertPatientHasPackageCoins(patientUserId, patientCoins, offerId);
+  await assertPatientHasPackageCoins(
+    settledPatientUserId,
+    patientCoins,
+    offerId,
+  );
   const meta = {
     wallet: "package",
     wallet_mode: "package",
     package_offer_id: offerId,
     interaction_id: interaction.id,
-    patient_user_id: patientUserId,
-    doctor_user_id: doctorUserId,
+    patient_user_id: settledPatientUserId,
+    doctor_user_id: settledDoctorUserId,
     interaction_kind: interaction.kind || "",
     interaction_occurred_at: interaction.occurred_at || interaction.created || "",
     session_index: sessionIndex,
@@ -4681,7 +4685,7 @@ export async function settlePackageCoinsForInteraction({
     doctor_session_coins: doctorCoins,
   };
   await createCoinLedgerLine({
-    user: patientUserId,
+    user: settledPatientUserId,
     delta: -patientCoins,
     reason: "package_session_patient_spent",
     ref_collection: "patient_doctor_interactions",
@@ -4689,7 +4693,7 @@ export async function settlePackageCoinsForInteraction({
     meta,
   });
   await createCoinLedgerLine({
-    user: doctorUserId,
+    user: settledDoctorUserId,
     delta: doctorCoins,
     reason: "package_session_doctor_earned",
     ref_collection: "patient_doctor_interactions",
@@ -4697,7 +4701,7 @@ export async function settlePackageCoinsForInteraction({
     meta,
   });
   try {
-    await upsertDoctorCoinBalance(doctorUserId, doctorCoins);
+    await upsertDoctorCoinBalance(settledDoctorUserId, doctorCoins);
   } catch {
     // withdrawal can still use ledger balance if the balance collection is missing
   }
