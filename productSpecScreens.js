@@ -65,12 +65,10 @@ import {
   doctorWithdrawCoinsStub,
   fetchMedicalRecordsForPatient,
   getFixedPackageDefinitionForSlot,
-  getAiAssistantUsageToday,
   getCoinBalanceForUser,
   fetchUsersAuthByIds,
   hydrateRowsPatientAuthUsers,
   resolveListingDisplayName,
-  incrementAiAssistantUsageToday,
   getDoctorCoinBalance,
   getDoctorCoinBucketBalances,
   listActivePackagePairsForDoctor,
@@ -3266,35 +3264,17 @@ export function QuickSolutionScreen({
       Alert.alert("AI", "Assistant is not configured on this build.");
       return;
     }
-    const limit = ent?.aiChatDailyLimit;
-    if (typeof limit === "number" && limit > 0) {
-      try {
-        const used = await getAiAssistantUsageToday(patientUserId);
-        if (used >= limit) {
-          Alert.alert(
-            "Daily limit",
-            "You have reached today's AI message limit for your plan.",
-          );
-          return;
-        }
-      } catch {
-        /* ignore */
-      }
-    }
     setAiBusy(true);
     try {
       const reply = await onAskAi(q);
       const text = String(reply || "").trim();
       setAiReply(text || "(empty reply)");
-      if (typeof limit === "number" && limit > 0) {
-        try {
-          await incrementAiAssistantUsageToday(patientUserId);
-        } catch {
-          /* ignore */
-        }
-      }
     } catch (e) {
-      setAiReply(e?.message || "Could not get AI answer.");
+      const msg = e?.message || "Could not get AI answer.";
+      if (String(msg).toLowerCase().startsWith("limit reached")) {
+        Alert.alert("Limit reached", msg);
+      }
+      setAiReply(msg);
     } finally {
       setAiBusy(false);
     }

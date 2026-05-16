@@ -93,6 +93,7 @@ import {
   clearPatientPrimaryCarePaths,
   combineDateAndTimeToIso,
   CONSUMER_PLAN,
+  consumeAiAssistantMessageQuota,
   completePackageOfferPayment,
   createEmergencyAssistantRequest,
   createPackageMeetingRequest,
@@ -5935,14 +5936,20 @@ const PatientHomeScreen = () => {
       try {
         const conv = await ensureAssistantConversation();
         if (!conv?.id) return "Assistant is unavailable. Try again shortly.";
-        const result = await sendAssistantMessage(conv.id, text);
+        const result = await sendAssistantMessage(conv.id, text, {
+          consumerPlan: patientQuickCareBinding?.consumerPlan || CONSUMER_PLAN.BASIC,
+        });
         const reply = result?.replyMessage?.text;
         return reply ? String(reply) : "No reply yet.";
       } catch (e) {
-        return e?.message || "Could not get an AI answer.";
+        throw e;
       }
     },
-    [ensureAssistantConversation, sendAssistantMessage],
+    [
+      ensureAssistantConversation,
+      patientQuickCareBinding?.consumerPlan,
+      sendAssistantMessage,
+    ],
   );
 
   /** Home quick action: open pinned Health Assistant chat for symptom questions. */
@@ -9996,7 +10003,9 @@ const PatientChatScreen = () => {
       setMessage("");
       setAssistantThinking(true);
       try {
-        const result = await sendAssistantMessage(selectedContact.id, text);
+        const result = await sendAssistantMessage(selectedContact.id, text, {
+          consumerPlan: patientQuickCareBinding?.consumerPlan || CONSUMER_PLAN.BASIC,
+        });
         if (result?.userMessage || result?.replyMessage) {
           setContactMessages((prev) => {
             const next = [...prev];
@@ -10019,6 +10028,9 @@ const PatientChatScreen = () => {
         }
       } catch (error) {
         console.log("Assistant send error:", error?.message);
+        if (error?.code === "AI_DAILY_LIMIT_REACHED") {
+          Alert.alert("Limit reached", error.message);
+        }
         setMessage(text);
       } finally {
         setAssistantThinking(false);
@@ -34773,10 +34785,23 @@ export default function App() {
     }
   };
 
-  const sendAssistantMessage = async (conversationId, text) => {
+  const sendAssistantMessage = async (conversationId, text, options = {}) => {
     if (!conversationId || !currentUser?.id) return null;
     const trimmed = String(text || "").trim();
     if (!trimmed) return null;
+    if (options?.consumerPlan) {
+      const quota = await consumeAiAssistantMessageQuota(
+        currentUser.id,
+        options.consumerPlan,
+      );
+      if (!quota.ok) {
+        const error = new Error(
+          "Limit reached. You have used all 15 AI messages for today. Your limit refreshes at midnight.",
+        );
+        error.code = "AI_DAILY_LIMIT_REACHED";
+        throw error;
+      }
+    }
     let priorMessages = [];
     try {
       priorMessages = await loadConversationMessages(conversationId);

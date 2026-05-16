@@ -422,7 +422,7 @@ export function entitlementsForConsumerPlan(plan) {
   return {
     plan: p,
     /** null = unlimited daily AI assistant messages */
-    aiChatDailyLimit: isBasic ? 20 : null,
+    aiChatDailyLimit: isBasic ? 15 : null,
     /**
      * Rolling 7-day cap on doctor consultation minutes with the package doctor
      * (Basic ≈ 3h, Gold ≈ 5h; Premium ≈ open access for 24/7 tier).
@@ -557,12 +557,51 @@ export async function getPatientPackagePoolCoinsRemaining(patientUserId) {
   return 0;
 }
 
-const aiUsageDayKey = () => new Date().toISOString().slice(0, 10);
+const AI_ASSISTANT_USAGE_COLLECTION = "ai_assistant_daily_usage";
+
+const aiUsageDayKey = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const aiUsageStorageKey = (patientUserId, day = aiUsageDayKey()) =>
+  `nvhs_ai_usage_${String(patientUserId || "").trim()}_${day}`;
+
+const numberFromUsageRow = (row) =>
+  Math.max(0, Number(row?.count ?? row?.message_count ?? row?.messages ?? 0) || 0);
+
+/**
+ * PocketBase collection (recommended): `ai_assistant_daily_usage`
+ * Fields: `patient` relation -> UsersAuth, `usage_date` text (YYYY-MM-DD),
+ * `count` number, `last_used_at` datetime. Add a unique index on
+ * `patient, usage_date`. List/create/update rules should allow the logged-in
+ * patient to access only their own row.
+ */
+async function getAiAssistantUsageRows(patientUserId, day = aiUsageDayKey()) {
+  const uid = String(patientUserId || "").trim();
+  if (!uid) return null;
+  try {
+    return await pb.collection(AI_ASSISTANT_USAGE_COLLECTION).getFullList({
+      requestKey: null,
+      filter: `patient="${uid}" && usage_date="${day}"`,
+      sort: "created",
+    });
+  } catch {
+    return null;
+  }
+}
 
 export async function getAiAssistantUsageToday(patientUserId) {
   const uid = String(patientUserId || "").trim();
   if (!uid) return 0;
-  const key = `nvhs_ai_usage_${uid}_${aiUsageDayKey()}`;
+  const day = aiUsageDayKey();
+  const rows = await getAiAssistantUsageRows(uid, day);
+  if (Array.isArray(rows)) {
+    return rows.reduce((sum, row) => sum + numberFromUsageRow(row), 0);
+  }
+  const key = aiUsageStorageKey(uid, day);
   try {
     const v = await AsyncStorage.getItem(key);
     return Math.max(0, Number(v) || 0);
@@ -574,14 +613,51 @@ export async function getAiAssistantUsageToday(patientUserId) {
 export async function incrementAiAssistantUsageToday(patientUserId) {
   const uid = String(patientUserId || "").trim();
   if (!uid) return 0;
-  const key = `nvhs_ai_usage_${uid}_${aiUsageDayKey()}`;
+  const day = aiUsageDayKey();
   const next = (await getAiAssistantUsageToday(uid)) + 1;
+  const rows = await getAiAssistantUsageRows(uid, day);
+  if (Array.isArray(rows)) {
+    const primary = rows[0];
+    try {
+      if (primary?.id) {
+        await pb.collection(AI_ASSISTANT_USAGE_COLLECTION).update(primary.id, {
+          count: next,
+          last_used_at: new Date().toISOString(),
+        });
+      } else {
+        await pb.collection(AI_ASSISTANT_USAGE_COLLECTION).create({
+          patient: uid,
+          usage_date: day,
+          count: next,
+          last_used_at: new Date().toISOString(),
+        });
+      }
+      return next;
+    } catch {
+      // Fall back to device-local usage when the collection rules/schema are not ready.
+    }
+  }
+  const key = aiUsageStorageKey(uid, day);
   try {
     await AsyncStorage.setItem(key, String(next));
   } catch {
     // ignore
   }
   return next;
+}
+
+export async function consumeAiAssistantMessageQuota(patientUserId, plan) {
+  const ent = entitlementsForConsumerPlan(plan);
+  const limit = ent?.aiChatDailyLimit;
+  if (!(typeof limit === "number" && limit > 0)) {
+    return { ok: true, used: 0, limit: null };
+  }
+  const used = await getAiAssistantUsageToday(patientUserId);
+  if (used >= limit) {
+    return { ok: false, used, limit };
+  }
+  const next = await incrementAiAssistantUsageToday(patientUserId);
+  return { ok: true, used: next, limit };
 }
 
 /**
