@@ -1,14 +1,48 @@
-diff --git a/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/contracts/CropImageContract.kt b/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/contracts/CropImageContract.kt
-index 6337340..a529b36 100644
---- a/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/contracts/CropImageContract.kt
-+++ b/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/contracts/CropImageContract.kt
-@@ -48,6 +48,9 @@ internal class CropImageContract(
-             CropShape.RECTANGLE -> CropImageView.CropShape.RECTANGLE
-             CropShape.OVAL -> CropImageView.CropShape.OVAL
-           }
+diff --git a/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/ExpoCropImageActivity.kt b/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/ExpoCropImageActivity.kt
+index 9fd72c0..c29832d 100644
+--- a/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/ExpoCropImageActivity.kt
++++ b/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/ExpoCropImageActivity.kt
+@@ -2,6 +2,7 @@ package expo.modules.imagepicker
+ 
+ import android.graphics.Color
+ import android.view.Menu
++import android.view.MenuItem
+ import android.view.View
+ import android.view.ViewGroup
+ import androidx.core.view.ViewCompat
+@@ -12,6 +13,7 @@ import androidx.core.view.updateLayoutParams
+ import com.canhub.cropper.CropImageActivity
+ import com.canhub.cropper.CropImageOptions
+ import com.canhub.cropper.CropImageView
++import com.canhub.cropper.R as CropperR
+ import expo.modules.imagepicker.ExpoCropImageUtils.getColorResource
+ import expo.modules.imagepicker.ExpoCropImageUtils.getThemeColor
+ 
+@@ -51,12 +53,14 @@ class ExpoCropImageActivity : CropImageActivity() {
+ 
+   override fun onCreateOptionsMenu(menu: Menu): Boolean {
+     val result = super.onCreateOptionsMenu(menu)
++    customizeCropAction(menu)
+     tintAllMenuItems(menu)
+     return result
+   }
+ 
+   override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+     val result = super.onPrepareOptionsMenu(menu)
++    customizeCropAction(menu)
+     tintAllMenuItems(menu)
+     return result
+   }
+@@ -168,5 +172,12 @@ class ExpoCropImageActivity : CropImageActivity() {
+       menu.getItem(i)?.icon?.mutate()?.setTint(currentIconColor)
+     }
+   }
 +
-+          // Friendlier label than the library default "CROP" (patient food journal flow).
-+          cropMenuCropButtonTitle = "Done"
-         }
-       )
-     )
++  private fun customizeCropAction(menu: Menu) {
++    menu.findItem(CropperR.id.crop_image_menu_crop)?.apply {
++      title = "Done"
++      setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
++    }
++  }
+   // endregion
+ }
