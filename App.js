@@ -66,6 +66,16 @@ import {
   encryptChatText,
 } from "./chatCrypto";
 import {
+  AI_CHAT_MAX_TOKENS,
+  AI_CHAT_TEMPERATURE,
+  AI_CHAT_TIMEOUT_MS,
+  AI_CONFIG_DEFAULTS,
+  AI_OLLAMA_NUM_BATCH,
+  AI_OLLAMA_NUM_CTX,
+  AI_PREDICT_TIMEOUT_MS,
+  getAiRuntimeConfig,
+} from "./aiConfig";
+import {
   cashfreeAmountForInr,
   formatCurrencyFromInr,
   getUserCurrencyInfo,
@@ -1098,65 +1108,7 @@ const removePendingCashfreePayment = async (entryId) => {
   await writePendingCashfreePayments(rows.filter((item) => item.id !== id));
 };
 
-// ---------------------------------------------------------------------------
-// Step 9 - AI assistant configuration.
-// - OpenAI-compatible chat (e.g. Groq): set extra.aiBaseUrl to …/v1/chat/completions,
-//   extra.aiModel (e.g. llama-3.3-70b-versatile), and the API key in extra.aiApiKey
-//   or EXPO_PUBLIC_GROQ_API_KEY / EXPO_PUBLIC_AI_API_KEY. Request body uses the
-//   standard { model, messages } shape; replies are mapped to { reply } or { warnings }.
-// - Legacy custom gateway: POST the same { kind, … } payload; response { reply } or
-//   { warnings } unchanged.
-// When URL or key is missing, the app falls back to local stubs.
-// Defaults mirror speed-optimized doctor_in_pocket.py (phi3 on Ollama).
-// ---------------------------------------------------------------------------
-const AI_CONFIG_DEFAULTS = {
-  baseUrl: "http://100.90.217.109:11434/v1/chat/completions",
-  predictUrl: "https://ai.nvoisyshealth.com/predict",
-  model: "phi3:latest",
-  apiKey: "ollama",
-};
-const AI_CHAT_MAX_TOKENS = 100;
-const AI_CHAT_TEMPERATURE = 0.3;
-const AI_OLLAMA_NUM_CTX = 2048;
-const AI_OLLAMA_NUM_BATCH = 512;
-
-const getAiRuntimeConfig = () => {
-  const baseUrl =
-    String(
-      Constants.expoConfig?.extra?.aiBaseUrl ||
-        process.env.EXPO_PUBLIC_AI_BASE_URL ||
-        AI_CONFIG_DEFAULTS.baseUrl,
-    ).trim() || AI_CONFIG_DEFAULTS.baseUrl;
-  const predictUrl =
-    String(
-      Constants.expoConfig?.extra?.aiPredictUrl ||
-        process.env.EXPO_PUBLIC_AI_PREDICT_URL ||
-        AI_CONFIG_DEFAULTS.predictUrl,
-    ).trim() || AI_CONFIG_DEFAULTS.predictUrl;
-  const model =
-    String(
-      Constants.expoConfig?.extra?.aiModel ||
-        process.env.EXPO_PUBLIC_AI_MODEL ||
-        process.env.EXPO_PUBLIC_GROQ_MODEL ||
-        AI_CONFIG_DEFAULTS.model,
-    ).trim() || AI_CONFIG_DEFAULTS.model;
-  let apiKey =
-    String(
-      Constants.expoConfig?.extra?.aiApiKey ||
-        process.env.EXPO_PUBLIC_GROQ_API_KEY ||
-        process.env.EXPO_PUBLIC_AI_API_KEY ||
-        AI_CONFIG_DEFAULTS.apiKey,
-    ).trim() || AI_CONFIG_DEFAULTS.apiKey;
-  // ais.nvoisyshealth.com is an Ollama proxy — legacy Groq cloud keys fail here.
-  if (baseUrl.includes("ais.nvoisyshealth.com") && /^gsk_/i.test(apiKey)) {
-    apiKey = AI_CONFIG_DEFAULTS.apiKey;
-  }
-  const useMlPredict = Constants.expoConfig?.extra?.aiUseMlPredict === true;
-  return { baseUrl, predictUrl, model, apiKey, useMlPredict };
-};
-
-const AI_CHAT_TIMEOUT_MS = 45000;
-const AI_PREDICT_TIMEOUT_MS = 30000;
+// Step 9 - AI config imported from ./aiConfig (.env → app.config.js → expo.extra).
 
 const isDirectOllamaUrl = (url) =>
   /:11434(\/|$)/.test(String(url || "")) ||

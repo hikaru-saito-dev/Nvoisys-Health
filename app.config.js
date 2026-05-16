@@ -12,8 +12,8 @@
  * Local dev / `eas build --local`:
  *   - Values come from `.env` (loaded here via dotenv).
  * EAS cloud builds:
- *   - `.env` is not in git. Set `EXPO_PUBLIC_GROQ_API_KEY` (or
- *     `EXPO_PUBLIC_AI_API_KEY`) on the project in Expo → Environment
+ *   - `.env` is not in git. Set `EXPO_PUBLIC_AI_API_KEY` (OpenAI key) on the
+ *     project in Expo → Environment
  *     variables for the build profile, so it exists in `process.env` when
  *     this file runs and when Metro bundles the app.
  */
@@ -40,8 +40,9 @@ const aiModelFromEnv = String(
 ).trim();
 
 const aiApiKeyFromEnv = String(
-  process.env.EXPO_PUBLIC_GROQ_API_KEY ||
-    process.env.EXPO_PUBLIC_AI_API_KEY ||
+  process.env.EXPO_PUBLIC_AI_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.EXPO_PUBLIC_GROQ_API_KEY ||
     process.env.EXPO_PUBLIC_GROQ_KEY ||
     process.env.GROQ_KEY ||
     "",
