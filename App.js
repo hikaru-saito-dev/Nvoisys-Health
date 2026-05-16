@@ -1122,7 +1122,7 @@ const AI_MODEL = String(
   Constants.expoConfig?.extra?.aiModel ||
     process.env.EXPO_PUBLIC_AI_MODEL ||
     process.env.EXPO_PUBLIC_GROQ_MODEL ||
-    "gemma3:1b",
+    "phi3:latest",
 ).trim();
 const AI_PREDICT_URL = String(
   Constants.expoConfig?.extra?.aiPredictUrl ||
