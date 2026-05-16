@@ -3841,6 +3841,8 @@ export function PatientPackageMeetingsPanel({
   emptyHint = "None yet. Use Book Appt on Home or Package journey to schedule.",
   /** Called after pay / cancel / reschedule reload - e.g. sync `appointments` in App state. */
   onMeetingsChanged,
+  HeaderComponent = null,
+  scrollEnabled = true,
 }) {
   const insets = useSafeAreaInsets();
   const currencyInfo = getUserCurrencyInfo();
@@ -4016,6 +4018,7 @@ export function PatientPackageMeetingsPanel({
 
   return (
     <ScrollView
+      scrollEnabled={scrollEnabled}
       style={{ flex: 1 }}
       contentContainerStyle={{
         paddingHorizontal: S.pad,
@@ -4041,6 +4044,7 @@ export function PatientPackageMeetingsPanel({
           {sectionTitle}
         </Text>
       ) : null}
+      {HeaderComponent}
       {meetings.length === 0 ? (
         <Text
           style={{

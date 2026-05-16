@@ -2257,6 +2257,144 @@
     "options": {}
   },
   {
+    "id": "pda8r4n1z6x2q9",
+    "name": "package_daily_appointment_completions",
+    "type": "base",
+    "system": false,
+    "schema": [
+      {
+        "system": false,
+        "id": "pddpkgkey",
+        "name": "package_key",
+        "type": "text",
+        "required": true,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "min": null,
+          "max": null,
+          "pattern": ""
+        }
+      },
+      {
+        "system": false,
+        "id": "pddoffer",
+        "name": "package_offer",
+        "type": "relation",
+        "required": false,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "collectionId": "od8o9pyobiaaa4i",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": null
+        }
+      },
+      {
+        "system": false,
+        "id": "pddpair",
+        "name": "package_pair",
+        "type": "relation",
+        "required": false,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "collectionId": "kose7ktj5qitlvj",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": null
+        }
+      },
+      {
+        "system": false,
+        "id": "pddpatient",
+        "name": "patient",
+        "type": "relation",
+        "required": true,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "collectionId": "78mar175h5nd34t",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": null
+        }
+      },
+      {
+        "system": false,
+        "id": "pdddoctor",
+        "name": "doctor",
+        "type": "relation",
+        "required": true,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "collectionId": "78mar175h5nd34t",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": null
+        }
+      },
+      {
+        "system": false,
+        "id": "pddactor",
+        "name": "actor_type",
+        "type": "select",
+        "required": true,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "maxSelect": 1,
+          "values": [
+            "patient",
+            "doctor"
+          ]
+        }
+      },
+      {
+        "system": false,
+        "id": "pddday",
+        "name": "completed_on",
+        "type": "text",
+        "required": true,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "min": null,
+          "max": null,
+          "pattern": ""
+        }
+      },
+      {
+        "system": false,
+        "id": "pddat",
+        "name": "completed_at",
+        "type": "date",
+        "required": true,
+        "presentable": false,
+        "unique": false,
+        "options": {
+          "min": "",
+          "max": ""
+        }
+      }
+    ],
+    "indexes": [
+      "CREATE UNIQUE INDEX idx_pkg_daily_completion_actor ON package_daily_appointment_completions (package_key, completed_on, actor_type)"
+    ],
+    "listRule": "patient = @request.auth.id || doctor = @request.auth.id",
+    "viewRule": "patient = @request.auth.id || doctor = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && ((actor_type = \"patient\" && patient = @request.auth.id) || (actor_type = \"doctor\" && doctor = @request.auth.id))",
+    "updateRule": "false = true",
+    "deleteRule": "false = true",
+    "options": {}
+  },
+  {
     "id": "kose7ktj5qitlvj",
     "name": "patient_doctor_packages",
     "type": "base",

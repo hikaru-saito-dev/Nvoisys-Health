@@ -84,10 +84,20 @@ export const pb = new PocketBase(PB_URL, authStore);
  * `package_slot`, `title`. If this collection is absent, the app infers active pairs from paid
  * `package_offers`, so coin settlement still works.
  *
+ * **`package_daily_appointment_completions`**
+ * Stores the daily package appointment completion tick: one row for the patient and one row for the
+ * doctor per `package_key` + `completed_on` date. Recommended fields: `package_key` (text), optional
+ * `package_offer` relation, optional `package_pair` relation, `patient`, `doctor`, `actor_type`
+ * (`patient` / `doctor`), `completed_on` (YYYY-MM-DD text), and `completed_at` (datetime). Add a
+ * unique index on `package_key, completed_on, actor_type` so each side can only mark once per day.
+ * List/view rules should allow either related user; create should require `actor_type="patient"` with
+ * `patient=@request.auth.id` or `actor_type="doctor"` with `doctor=@request.auth.id`.
+ *
  * **Coins**
  * Package Cashfree success marks the offer paid, creates the patient coin load in `coin_ledger`, and
- * keeps the doctor's share pending. Package doctor coins settle when a chat/audio/video interaction
- * exists in `patient_doctor_interactions` for an active paid package pair.
+ * keeps the doctor's share pending. Package doctor coins now settle only after both the patient and
+ * doctor mark the same daily package appointment completed for that day. Chat/audio/video interaction
+ * rows are no longer proof for package coin transfer.
  *
  * **`package_referrals`**
  * Enables Doctor A → Doctor B referral for an active paid package. Fields: `package_offer`,

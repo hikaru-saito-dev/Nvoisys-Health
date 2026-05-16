@@ -268,9 +268,9 @@ export function packageSlotDisplayName(slot) {
 
 /** Minimum package fee (INR) per catalogue slot — Basic / Gold / Premium. No maximum. */
 export const PACKAGE_SLOT_MIN_FEE_INR = Object.freeze({
-  1: 12000,
-  2: 20000,
-  3: 50000,
+  1: 50,
+  2: 50,
+  3: 50,
 });
 
 export function packageSlotMinimumFeeInr(slotNum) {
@@ -767,8 +767,8 @@ const DEFAULT_PACKAGE_AMOUNT_INR = Math.max(
   Number(
     (typeof process !== "undefined" &&
       process.env?.EXPO_PUBLIC_DEFAULT_PACKAGE_AMOUNT_INR) ||
-      8000,
-  ) || 8000,
+      50,
+  ) || 50,
 );
 const REFERRAL_MONTHLY_COMMISSION_COINS = 1000;
 
@@ -934,6 +934,9 @@ const LEDGER_REASON_QUICK_SOLUTION_REFUNDED =
 const LEDGER_REASON_QUICK_COUNSELLING_REFUNDED =
   "quick_counselling_patient_refunded_uncredited";
 const LEDGER_REASON_PACKAGE_SESSION_EARNED = "package_session_doctor_earned";
+export const PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION =
+  "package_daily_appointment_completions";
+const PACKAGE_MONTH_SETTLEMENT_DAYS = 30;
 const LEDGER_REASON_REFERRAL_COMMISSION_RECEIVED =
   "referral_monthly_commission_received";
 const LEDGER_REASON_REFERRAL_COMMISSION_PAID =
@@ -2912,8 +2915,8 @@ export async function doctorSendPackageOffer({
   amountInr = 8000,
   platformFeeInr = 2000,
   doctorCoins = 6000,
-  sessions = 6,
-  validityDays = 90,
+  sessions = PACKAGE_MONTH_SETTLEMENT_DAYS,
+  validityDays = PACKAGE_MONTH_SETTLEMENT_DAYS,
   notes = "",
   package_slot = null,
   treatment_type = "",
@@ -2985,8 +2988,8 @@ export async function doctorSendPackageOfferFromSlot({
     amountInr,
     platformFeeInr,
     doctorCoins,
-    sessions: 6,
-    validityDays: 90,
+    sessions: PACKAGE_MONTH_SETTLEMENT_DAYS,
+    validityDays: PACKAGE_MONTH_SETTLEMENT_DAYS,
     notes,
     package_slot: packageSlotIndex,
     treatment_type: treatment,
@@ -3031,8 +3034,8 @@ export async function createPatientSelectedPackageOffer({
     amount_inr: amountInr,
     platform_fee_inr: platformFeeInr,
     doctor_coins: doctorCoins,
-    sessions: 6,
-    validity_days: 90,
+    sessions: PACKAGE_MONTH_SETTLEMENT_DAYS,
+    validity_days: PACKAGE_MONTH_SETTLEMENT_DAYS,
     notes,
     status: "sent",
     package_slot: slotNum,
@@ -3280,6 +3283,8 @@ function normalizeActivePackagePair(offer) {
   return {
     id: offer.id,
     offerId: offer.id,
+    package_offer_id: offer.id,
+    package_pair_id: "",
     title: offer.title || "Care package",
     amount_inr: Number(offer.amount_inr ?? 0) || 0,
     platform_fee_inr: Number(offer.platform_fee_inr ?? 0) || 0,
@@ -3352,6 +3357,8 @@ export async function listActivePackagePairsForPatient(
       return {
         id: row.id,
         offerId: offerId || row.id,
+        package_offer_id: offerId,
+        package_pair_id: row.id,
         title: row.title || "Care package",
         amount_inr: Number(row.amount_inr ?? 0) || 0,
         platform_fee_inr: Number(row.platform_fee_inr ?? 0) || 0,
@@ -3431,6 +3438,8 @@ export async function listActivePackagePairsForDoctor(doctorUserId) {
       return {
         id: row.id,
         offerId: offerId || row.id,
+        package_offer_id: offerId,
+        package_pair_id: row.id,
         title: row.title || "Care package",
         amount_inr: Number(row.amount_inr ?? 0) || 0,
         platform_fee_inr: Number(row.platform_fee_inr ?? 0) || 0,
@@ -3833,7 +3842,13 @@ async function assertPatientHasPackageCoins(
   coins,
   packageOfferId = "",
 ) {
-  const balance = await getPatientPackageCoinBalance(userId, packageOfferId);
+  const offerId = String(packageOfferId || "").trim();
+  if (!offerId) {
+    throw new Error(
+      "Package offer missing. Cannot use combined package balance for doctor settlement.",
+    );
+  }
+  const balance = await getPatientPackageCoinBalance(userId, offerId);
   if (balance < coins) {
     throw new Error(
       `Not enough package coins. Available: ${balance}, required: ${coins}.`,
@@ -4043,7 +4058,10 @@ export async function recordCasualAppointmentWalletPayment({
       },
     });
   } catch (e) {
-    console.log("recordCasualAppointmentWalletPayment transaction:", e?.message);
+    console.log(
+      "recordCasualAppointmentWalletPayment transaction:",
+      e?.message,
+    );
   }
 
   const meta = {
@@ -4152,6 +4170,787 @@ function monthKey(value) {
   const d = value ? new Date(value) : new Date();
   if (Number.isNaN(d.getTime())) return monthKey();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function pbFilterValue(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+}
+
+function dailyPackageDayKey(value = new Date()) {
+  const d = value ? new Date(value) : new Date();
+  if (Number.isNaN(d.getTime())) return dailyPackageDayKey();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function normalizeDailyPackageCompletionActor(role) {
+  const value = String(role || "")
+    .trim()
+    .toLowerCase();
+  if (value === "patient") return "patient";
+  if (value === "doctor" || value === "doc") return "doctor";
+  return "";
+}
+
+function dailyPackagePairIds(pair = {}) {
+  const packagePairId = String(
+    pair.package_pair_id || pair.packagePairId || "",
+  ).trim();
+  return {
+    packageOfferId: String(
+      pair.package_offer_id ||
+        pair.packageOfferId ||
+        (!packagePairId ? pair.offerId : "") ||
+        "",
+    ).trim(),
+    packagePairId,
+    patientUserId: String(
+      pair.patient_user_id ||
+        pair.patientUserId ||
+        relationId(pair.patient) ||
+        "",
+    ).trim(),
+    doctorUserId: String(
+      pair.doctor_user_id || pair.doctorUserId || relationId(pair.doctor) || "",
+    ).trim(),
+  };
+}
+
+function dailyPackageKey({
+  activeOffer = null,
+  packagePair = null,
+  offerId = "",
+} = {}) {
+  const pair = packagePair || {};
+  return String(
+    activeOffer?.id ||
+      pair.package_offer_id ||
+      pair.packageOfferId ||
+      offerId ||
+      pair.offerId ||
+      pair.package_pair_id ||
+      pair.packagePairId ||
+      pair.id ||
+      "",
+  ).trim();
+}
+
+function dailyPackageSettlementRefId(packageKey, dayKey) {
+  return `${String(packageKey || "").trim()}:${String(dayKey || "").trim()}`;
+}
+
+function normalizeDailyPackageForSettlement(pair, packageKey) {
+  if (!pair) return null;
+  const ids = dailyPackagePairIds(pair);
+  const patientUserId = ids.patientUserId;
+  const doctorUserId = ids.doctorUserId;
+  const totalPatientCoins = Number(pair.amount_inr ?? pair.amountInr ?? 0) || 0;
+  const doctorCoins =
+    Number(
+      pair.doctor_coins ?? pair.doctorCoins ?? pair.doctor_pool_coins ?? 0,
+    ) || 0;
+  if (
+    !patientUserId ||
+    !doctorUserId ||
+    totalPatientCoins <= 0 ||
+    doctorCoins <= 0
+  ) {
+    return null;
+  }
+  return {
+    id: ids.packageOfferId || packageKey || pair.id,
+    patient_user_id: patientUserId,
+    doctor_user_id: doctorUserId,
+    amount_inr: totalPatientCoins,
+    doctor_coins: doctorCoins,
+    sessions: Number(pair.sessions) || 0,
+    validity_days: Number(pair.validity_days ?? pair.validityDays) || 0,
+    status: pair.status || "active",
+  };
+}
+
+function packageMonthSettlementDays(activePackage = {}) {
+  const configured = Number(
+    activePackage.validity_days ?? activePackage.validityDays ?? 0,
+  );
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(1, Math.min(PACKAGE_MONTH_SETTLEMENT_DAYS, Math.round(configured)));
+  }
+  return PACKAGE_MONTH_SETTLEMENT_DAYS;
+}
+
+function proratedPackageCoins(totalCoins, settledSoFar, settlementIndex, settlementDays) {
+  const total = Math.max(0, Number(totalCoins) || 0);
+  const spent = Math.max(0, Number(settledSoFar) || 0);
+  const days = Math.max(1, Number(settlementDays) || PACKAGE_MONTH_SETTLEMENT_DAYS);
+  const index = Math.max(1, Number(settlementIndex) || 1);
+  const remaining = Math.max(0, total - spent);
+  if (index >= days) return remaining;
+  const base = Math.round((total / days) * 100) / 100;
+  return Math.min(remaining, base);
+}
+
+function dailyCompletionActorFromRow(row) {
+  return normalizeDailyPackageCompletionActor(
+    row?.actor_type ||
+      row?.actor ||
+      row?.completed_by_role ||
+      row?.completed_by,
+  );
+}
+
+function buildDailyPackageCompletionState({
+  rows = [],
+  packageKey = "",
+  dayKey = dailyPackageDayKey(),
+  date = new Date(),
+  settledToday = false,
+  error = "",
+} = {}) {
+  const patientRow = (rows || []).find(
+    (row) => dailyCompletionActorFromRow(row) === "patient",
+  );
+  const doctorRow = (rows || []).find(
+    (row) => dailyCompletionActorFromRow(row) === "doctor",
+  );
+  const bounds = dayBoundsIso(date);
+  return {
+    packageKey,
+    dayKey,
+    nextAvailableAt: bounds.end,
+    patientCompleted: Boolean(patientRow),
+    doctorCompleted: Boolean(doctorRow),
+    patientCompletedAt: patientRow?.completed_at || patientRow?.created || "",
+    doctorCompletedAt: doctorRow?.completed_at || doctorRow?.created || "",
+    patientCompletionId: patientRow?.id || "",
+    doctorCompletionId: doctorRow?.id || "",
+    bothCompleted: Boolean(patientRow && doctorRow),
+    settledToday: Boolean(settledToday),
+    patientRow: patientRow || null,
+    doctorRow: doctorRow || null,
+    error,
+  };
+}
+
+function publicDailyPackageCompletionState(state) {
+  if (!state) return null;
+  const publicState = { ...state };
+  delete publicState.patientRow;
+  delete publicState.doctorRow;
+  return publicState;
+}
+
+async function listDailyPackageCompletionRows({
+  packageKey,
+  patientUserId,
+  doctorUserId,
+  dayKey,
+} = {}) {
+  const key = String(packageKey || "").trim();
+  const patient = String(patientUserId || "").trim();
+  const doctor = String(doctorUserId || "").trim();
+  const day = String(dayKey || dailyPackageDayKey()).trim();
+  if (!key && (!patient || !doctor)) return { rows: [], error: null };
+  const filters = [`completed_on="${pbFilterValue(day)}"`];
+  if (key) {
+    filters.push(`package_key="${pbFilterValue(key)}"`);
+  } else {
+    filters.push(`patient="${pbFilterValue(patient)}"`);
+    filters.push(`doctor="${pbFilterValue(doctor)}"`);
+  }
+  try {
+    const rows = await pb
+      .collection(PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION)
+      .getFullList({
+        requestKey: null,
+        sort: "completed_at,created",
+        filter: filters.join(" && "),
+      });
+    return { rows: rows || [], error: null };
+  } catch (error) {
+    return { rows: [], error };
+  }
+}
+
+async function hasDailyPackageSettlement({
+  packageKey,
+  dayKey,
+  doctorUserId,
+} = {}) {
+  const key = String(packageKey || "").trim();
+  const day = String(dayKey || "").trim();
+  if (!key || !day) return false;
+  const refId = dailyPackageSettlementRefId(key, day);
+  try {
+    const rows = await pb.collection("coin_ledger").getFullList({
+      requestKey: null,
+      filter: `ref_collection="${PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION}" && ref_id="${pbFilterValue(refId)}" && reason="package_session_doctor_earned"`,
+    });
+    const doctor = String(doctorUserId || "").trim();
+    if (!doctor) return (rows || []).length > 0;
+    return (rows || []).some((row) => String(row.user || "") === doctor);
+  } catch {
+    return false;
+  }
+}
+
+export async function getDailyPackageAppointmentCompletionState({
+  packagePair = null,
+  offerId = "",
+  patientUserId = "",
+  doctorUserId = "",
+  date = new Date(),
+} = {}) {
+  const pairIds = dailyPackagePairIds(packagePair || {});
+  let patient = String(patientUserId || pairIds.patientUserId || "").trim();
+  let doctor = String(doctorUserId || pairIds.doctorUserId || "").trim();
+  let activeOffer = null;
+  const requestedOfferId = String(
+    offerId || pairIds.packageOfferId || "",
+  ).trim();
+  try {
+    activeOffer = await findActivePackageOfferForPair({
+      patientUserId: patient,
+      doctorUserId: doctor,
+      offerId: requestedOfferId,
+    });
+  } catch {
+    activeOffer = null;
+  }
+  patient = String(activeOffer?.patient_user_id || patient || "").trim();
+  doctor = String(activeOffer?.doctor_user_id || doctor || "").trim();
+  const key = dailyPackageKey({
+    activeOffer,
+    packagePair,
+    offerId: requestedOfferId,
+  });
+  const day = dailyPackageDayKey(date);
+  const { rows, error } = await listDailyPackageCompletionRows({
+    packageKey: key,
+    patientUserId: patient,
+    doctorUserId: doctor,
+    dayKey: day,
+  });
+  const settledToday = await hasDailyPackageSettlement({
+    packageKey: key,
+    dayKey: day,
+    doctorUserId: doctor,
+  });
+  return publicDailyPackageCompletionState(
+    buildDailyPackageCompletionState({
+      rows,
+      packageKey: key,
+      dayKey: day,
+      date,
+      settledToday,
+      error:
+        error &&
+        (formatPocketBaseClientError(error) ||
+          error?.message ||
+          `Add the ${PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION} collection in PocketBase.`),
+    }),
+  );
+}
+
+async function createDailyPackageCompletionRow(payload) {
+  const attempts = [];
+  const full = { ...payload };
+  attempts.push(full);
+  if (full.package_pair) {
+    const withoutPair = { ...full };
+    delete withoutPair.package_pair;
+    attempts.push(withoutPair);
+  }
+  if (full.package_offer) {
+    const withoutOffer = { ...full };
+    delete withoutOffer.package_offer;
+    attempts.push(withoutOffer);
+  }
+  if (full.package_offer || full.package_pair) {
+    const minimal = { ...full };
+    delete minimal.package_offer;
+    delete minimal.package_pair;
+    attempts.push(minimal);
+  }
+  const seen = new Set();
+  let lastError = null;
+  for (const attempt of attempts) {
+    const key = JSON.stringify(attempt);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      return await pb
+        .collection(PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION)
+        .create(attempt);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("Could not mark daily package appointment.");
+}
+
+function dailyPackageLedgerMatches(row, packageKey, offerId) {
+  const meta = parseCoinLedgerMeta(row);
+  const metaKey = String(meta.package_key || "").trim();
+  if (packageKey && metaKey === packageKey) return true;
+  const rowOfferId = coinLedgerRowPackageOfferId(row, meta);
+  return Boolean(offerId && rowOfferId === offerId);
+}
+
+export async function settlePackageCoinsForDailyCompletion({
+  packagePair = null,
+  activeOffer = null,
+  offerId = "",
+  patientUserId = "",
+  doctorUserId = "",
+  dayKey = dailyPackageDayKey(),
+  date = new Date(),
+  patientCompletionRow = null,
+  doctorCompletionRow = null,
+} = {}) {
+  const pairIds = dailyPackagePairIds(packagePair || {});
+  let settledPatientUserId = String(
+    patientUserId || pairIds.patientUserId || "",
+  ).trim();
+  let settledDoctorUserId = String(
+    doctorUserId || pairIds.doctorUserId || "",
+  ).trim();
+  const patientFromProfile = await resolveAuthUserIdForRelationId(
+    "patient_profile",
+    settledPatientUserId,
+  );
+  const doctorFromProfile = await resolveAuthUserIdForRelationId(
+    "doctor_profile",
+    settledDoctorUserId,
+  );
+  settledPatientUserId = patientFromProfile || settledPatientUserId;
+  settledDoctorUserId = doctorFromProfile || settledDoctorUserId;
+  const requestedOfferId = String(
+    offerId || pairIds.packageOfferId || "",
+  ).trim();
+  let packageOffer = activeOffer?.id ? activeOffer : null;
+  if (!packageOffer) {
+    packageOffer = await findActivePackageOfferForPair({
+      patientUserId: settledPatientUserId,
+      doctorUserId: settledDoctorUserId,
+      offerId: requestedOfferId,
+    });
+  }
+  settledPatientUserId = String(
+    packageOffer?.patient_user_id || settledPatientUserId || "",
+  ).trim();
+  settledDoctorUserId = String(
+    packageOffer?.doctor_user_id || settledDoctorUserId || "",
+  ).trim();
+  const packageKey = dailyPackageKey({
+    activeOffer: packageOffer,
+    packagePair,
+    offerId: requestedOfferId,
+  });
+  const activePackage =
+    packageOffer || normalizeDailyPackageForSettlement(packagePair, packageKey);
+  if (!activePackage || !packageKey) {
+    return { settled: false, reason: "no_active_package_pair" };
+  }
+  const { rows, error } = await listDailyPackageCompletionRows({
+    packageKey,
+    patientUserId: settledPatientUserId,
+    doctorUserId: settledDoctorUserId,
+    dayKey,
+  });
+  if (error) return { settled: false, reason: "daily_completion_missing" };
+  const state = buildDailyPackageCompletionState({
+    rows: [patientCompletionRow, doctorCompletionRow, ...rows].filter(Boolean),
+    packageKey,
+    dayKey,
+    date,
+  });
+  if (!state.patientRow?.id || !state.doctorRow?.id) {
+    return { settled: false, reason: "both_daily_completions_required" };
+  }
+  const settlementRefId = dailyPackageSettlementRefId(packageKey, dayKey);
+  try {
+    const existing = await pb.collection("coin_ledger").getFullList({
+      requestKey: null,
+      filter: `ref_collection="${PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION}" && ref_id="${pbFilterValue(settlementRefId)}" && reason="package_session_doctor_earned"`,
+    });
+    if ((existing || []).length > 0) {
+      return { settled: false, reason: "already_settled_today" };
+    }
+  } catch {
+    return { settled: false, reason: "coin_ledger_missing" };
+  }
+
+  const effectiveOfferId = String(
+    packageOffer?.id || requestedOfferId || "",
+  ).trim();
+  if (!effectiveOfferId) {
+    return { settled: false, reason: "missing_package_offer_for_pair" };
+  }
+  const totalDoctorCoins = Number(activePackage.doctor_coins ?? 0);
+  const totalPatientCoins =
+    Number(activePackage.amount_inr ?? 0) || totalDoctorCoins;
+  const settlementDays = packageMonthSettlementDays(activePackage);
+  if (
+    !settledPatientUserId ||
+    !settledDoctorUserId ||
+    !Number.isFinite(totalDoctorCoins) ||
+    totalDoctorCoins <= 0 ||
+    !Number.isFinite(totalPatientCoins) ||
+    totalPatientCoins <= 0
+  ) {
+    return { settled: false, reason: "missing_party_or_amount" };
+  }
+
+  let priorDoctorRows = [];
+  let priorPatientRows = [];
+  try {
+    const [doctorRows, patientRows] = await Promise.all([
+      pb.collection("coin_ledger").getFullList({
+        requestKey: null,
+        filter: `user="${pbFilterValue(settledDoctorUserId)}" && reason="package_session_doctor_earned"`,
+      }),
+      pb.collection("coin_ledger").getFullList({
+        requestKey: null,
+        filter: `user="${pbFilterValue(settledPatientUserId)}" && reason="package_session_patient_spent"`,
+      }),
+    ]);
+    priorDoctorRows = (doctorRows || []).filter((row) =>
+      dailyPackageLedgerMatches(row, packageKey, effectiveOfferId),
+    );
+    priorPatientRows = (patientRows || []).filter((row) =>
+      dailyPackageLedgerMatches(row, packageKey, effectiveOfferId),
+    );
+  } catch {
+    return { settled: false, reason: "coin_ledger_missing" };
+  }
+  if (priorDoctorRows.length >= settlementDays) {
+    return { settled: false, reason: "all_package_days_settled" };
+  }
+  const alreadySettledToday = priorDoctorRows.some((row) => {
+    const meta = parseCoinLedgerMeta(row);
+    if (
+      String(meta.completed_on || meta.daily_completion_day || "") === dayKey
+    ) {
+      return true;
+    }
+    const settledAt = String(meta.settled_at || row.created || "").trim();
+    const bounds = dayBoundsIso(date);
+    return settledAt >= bounds.start && settledAt < bounds.end;
+  });
+  if (alreadySettledToday) {
+    return { settled: false, reason: "already_settled_today" };
+  }
+
+  const doctorEarnedSoFar = priorDoctorRows.reduce(
+    (sum, row) => sum + Math.max(0, Number(row.delta) || 0),
+    0,
+  );
+  const patientSpentSoFar = priorPatientRows.reduce(
+    (sum, row) => sum + Math.max(0, Math.abs(Number(row.delta) || 0)),
+    0,
+  );
+  const settlementIndex = priorDoctorRows.length + 1;
+  const patientCoins = proratedPackageCoins(
+    totalPatientCoins,
+    patientSpentSoFar,
+    settlementIndex,
+    settlementDays,
+  );
+  const doctorCoins = proratedPackageCoins(
+    totalDoctorCoins,
+    doctorEarnedSoFar,
+    settlementIndex,
+    settlementDays,
+  );
+  if (patientCoins <= 0 || doctorCoins <= 0) {
+    return { settled: false, reason: "package_coins_already_depleted" };
+  }
+
+  const balanceOfferId = String(
+    effectiveOfferId || packageOffer?.id || pairIds.packageOfferId || "",
+  ).trim();
+  try {
+    if (balanceOfferId) {
+      const loadedRows = await pb.collection("coin_ledger").getFullList({
+        requestKey: null,
+        filter: `user="${pbFilterValue(settledPatientUserId)}" && ref_collection="package_offers" && ref_id="${pbFilterValue(balanceOfferId)}"`,
+      });
+      const loadedCoins = (loadedRows || [])
+        .filter((row) =>
+          [
+            "package_patient_coins_loaded",
+            "package_patient_coins_adjusted_to_paid_amount",
+          ].includes(String(row.reason || "")),
+        )
+        .reduce((sum, row) => sum + Math.max(0, Number(row.delta) || 0), 0);
+      if (loadedCoins < totalPatientCoins) {
+        const diff = totalPatientCoins - loadedCoins;
+        await createCoinLedgerLine({
+          user: settledPatientUserId,
+          delta: diff,
+          reason: "package_patient_coins_adjusted_to_paid_amount",
+          ref_collection: "package_offers",
+          ref_id: balanceOfferId,
+          meta: {
+            wallet: "package",
+            wallet_mode: "package",
+            package_offer_id: balanceOfferId,
+            package_key: packageKey,
+            paid_amount_inr: totalPatientCoins,
+            previous_loaded_coins: loadedCoins,
+            adjusted_at: new Date().toISOString(),
+          },
+        });
+      }
+    }
+  } catch {
+    // If adjustment cannot be checked, the balance assertion below protects settlement.
+  }
+  await assertPatientHasPackageCoins(
+    settledPatientUserId,
+    patientCoins,
+    balanceOfferId,
+  );
+
+  const nowIso = new Date().toISOString();
+  const meta = {
+    wallet: "package",
+    wallet_mode: "package",
+    package_offer_id: effectiveOfferId,
+    package_key: packageKey,
+    settlement_ref_id: settlementRefId,
+    completed_on: dayKey,
+    patient_completion_id: state.patientRow.id,
+    doctor_completion_id: state.doctorRow.id,
+    patient_completed_at: state.patientCompletedAt,
+    doctor_completed_at: state.doctorCompletedAt,
+    patient_user_id: settledPatientUserId,
+    doctor_user_id: settledDoctorUserId,
+    session_index: settlementIndex,
+    settlement_index: settlementIndex,
+    sessions: settlementDays,
+    settlement_days: settlementDays,
+    total_patient_package_coins: totalPatientCoins,
+    total_doctor_coins: totalDoctorCoins,
+    patient_session_coins: patientCoins,
+    doctor_session_coins: doctorCoins,
+    settled_at: nowIso,
+  };
+  await createCoinLedgerLine({
+    user: settledPatientUserId,
+    delta: -patientCoins,
+    reason: "package_session_patient_spent",
+    ref_collection: PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION,
+    ref_id: settlementRefId,
+    meta,
+  });
+  await createCoinLedgerLine({
+    user: settledDoctorUserId,
+    delta: doctorCoins,
+    reason: "package_session_doctor_earned",
+    ref_collection: PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION,
+    ref_id: settlementRefId,
+    meta,
+  });
+  try {
+    await upsertDoctorCoinBalance(settledDoctorUserId, doctorCoins);
+  } catch {
+    // withdrawal can still use ledger balance if the balance collection is missing
+  }
+  try {
+    const packagePairId = String(pairIds.packagePairId || "").trim();
+    if (packagePairId) {
+      await pb.collection("patient_doctor_packages").update(packagePairId, {
+        remaining_coins: Math.max(
+          0,
+          totalPatientCoins - patientSpentSoFar - patientCoins,
+        ),
+      });
+    } else if (balanceOfferId) {
+      const pair = await pb
+        .collection("patient_doctor_packages")
+        .getFirstListItem(`package_offer="${pbFilterValue(balanceOfferId)}"`, {
+          requestKey: null,
+        });
+      await pb.collection("patient_doctor_packages").update(pair.id, {
+        remaining_coins: Math.max(
+          0,
+          totalPatientCoins - patientSpentSoFar - patientCoins,
+        ),
+      });
+    }
+  } catch {
+    // optional progress cache; ledger remains source of truth
+  }
+  return { settled: true, patientCoins, doctorCoins, sessionIndex: settlementIndex };
+}
+
+export async function markDailyPackageAppointmentCompleted({
+  packagePair = null,
+  actorRole,
+  patientUserId = "",
+  doctorUserId = "",
+  date = new Date(),
+} = {}) {
+  const actor = normalizeDailyPackageCompletionActor(actorRole);
+  if (!actor) throw new Error("Choose patient or doctor completion.");
+  const pairIds = dailyPackagePairIds(packagePair || {});
+  let patient = String(patientUserId || pairIds.patientUserId || "").trim();
+  let doctor = String(doctorUserId || pairIds.doctorUserId || "").trim();
+  const patientFromProfile = await resolveAuthUserIdForRelationId(
+    "patient_profile",
+    patient,
+  );
+  const doctorFromProfile = await resolveAuthUserIdForRelationId(
+    "doctor_profile",
+    doctor,
+  );
+  patient = patientFromProfile || patient;
+  doctor = doctorFromProfile || doctor;
+  const requestedOfferId = String(pairIds.packageOfferId || "").trim();
+  let activeOffer = null;
+  try {
+    activeOffer = await findActivePackageOfferForPair({
+      patientUserId: patient,
+      doctorUserId: doctor,
+      offerId: requestedOfferId,
+    });
+  } catch {
+    activeOffer = null;
+  }
+  patient = String(activeOffer?.patient_user_id || patient || "").trim();
+  doctor = String(activeOffer?.doctor_user_id || doctor || "").trim();
+  if (!patient || !doctor) {
+    throw new Error("Package patient or doctor is missing.");
+  }
+  const key = dailyPackageKey({
+    activeOffer,
+    packagePair,
+    offerId: requestedOfferId,
+  });
+  if (!key) throw new Error("Package reference missing.");
+  const day = dailyPackageDayKey(date);
+  let { rows, error } = await listDailyPackageCompletionRows({
+    packageKey: key,
+    patientUserId: patient,
+    doctorUserId: doctor,
+    dayKey: day,
+  });
+  if (error) {
+    throw new Error(
+      formatPocketBaseClientError(error) ||
+        error?.message ||
+        `Add the ${PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION} collection in PocketBase.`,
+    );
+  }
+  let state = buildDailyPackageCompletionState({
+    rows,
+    packageKey: key,
+    dayKey: day,
+    date,
+    settledToday: await hasDailyPackageSettlement({
+      packageKey: key,
+      dayKey: day,
+      doctorUserId: doctor,
+    }),
+  });
+  const alreadyMarked =
+    actor === "patient" ? state.patientRow : state.doctorRow;
+  let completion = alreadyMarked || null;
+  if (!completion) {
+    const payload = {
+      package_key: key,
+      patient,
+      doctor,
+      actor_type: actor,
+      completed_on: day,
+      completed_at: new Date().toISOString(),
+    };
+    if (activeOffer?.id || pairIds.packageOfferId) {
+      payload.package_offer = activeOffer?.id || pairIds.packageOfferId;
+    }
+    if (pairIds.packagePairId) payload.package_pair = pairIds.packagePairId;
+    try {
+      completion = await createDailyPackageCompletionRow(payload);
+    } catch (createError) {
+      const retry = await listDailyPackageCompletionRows({
+        packageKey: key,
+        patientUserId: patient,
+        doctorUserId: doctor,
+        dayKey: day,
+      });
+      const existingState = buildDailyPackageCompletionState({
+        rows: retry.rows,
+        packageKey: key,
+        dayKey: day,
+        date,
+      });
+      completion =
+        actor === "patient"
+          ? existingState.patientRow
+          : existingState.doctorRow;
+      if (!completion) {
+        throw new Error(
+          formatPocketBaseClientError(createError) ||
+            createError?.message ||
+            "Could not mark today's package appointment completed.",
+        );
+      }
+    }
+  }
+
+  ({ rows, error } = await listDailyPackageCompletionRows({
+    packageKey: key,
+    patientUserId: patient,
+    doctorUserId: doctor,
+    dayKey: day,
+  }));
+  state = buildDailyPackageCompletionState({
+    rows,
+    packageKey: key,
+    dayKey: day,
+    date,
+    settledToday: await hasDailyPackageSettlement({
+      packageKey: key,
+      dayKey: day,
+      doctorUserId: doctor,
+    }),
+    error:
+      error &&
+      (formatPocketBaseClientError(error) ||
+        error?.message ||
+        `Add the ${PACKAGE_DAILY_APPOINTMENT_COMPLETIONS_COLLECTION} collection in PocketBase.`),
+  });
+  let settlement = null;
+  if (state.patientRow?.id && state.doctorRow?.id && !state.settledToday) {
+    settlement = await settlePackageCoinsForDailyCompletion({
+      packagePair,
+      activeOffer,
+      offerId: activeOffer?.id || requestedOfferId,
+      patientUserId: patient,
+      doctorUserId: doctor,
+      dayKey: day,
+      date,
+      patientCompletionRow: state.patientRow,
+      doctorCompletionRow: state.doctorRow,
+    });
+    state.settledToday =
+      settlement?.settled ||
+      settlement?.reason === "already_settled_today" ||
+      (await hasDailyPackageSettlement({
+        packageKey: key,
+        dayKey: day,
+        doctorUserId: doctor,
+      }));
+  }
+  return {
+    alreadyMarked: Boolean(alreadyMarked),
+    completion,
+    state: publicDailyPackageCompletionState(state),
+    settlement,
+  };
 }
 
 async function updatePackageOfferDoctorWithFallback(offerId, toDoctorUserId) {
@@ -4427,22 +5226,17 @@ export async function recordPatientDoctorInteraction({
     return null;
   }
   try {
-    const interaction = await pb.collection("patient_doctor_interactions").create({
-      patient,
-      doctor,
-      kind: interactionKind,
-      conversation: String(conversationId || "").trim(),
-      appointment: String(appointmentId || "").trim(),
-      source: String(source || "app").trim(),
-      occurred_at: new Date().toISOString(),
-    });
-    void settlePackageCoinsForInteraction({
-      patientUserId: patient,
-      doctorUserId: doctor,
-      interactionRow: interaction,
-    }).catch((error) => {
-      console.log("interaction package coin settlement skipped:", error?.message);
-    });
+    const interaction = await pb
+      .collection("patient_doctor_interactions")
+      .create({
+        patient,
+        doctor,
+        kind: interactionKind,
+        conversation: String(conversationId || "").trim(),
+        appointment: String(appointmentId || "").trim(),
+        source: String(source || "app").trim(),
+        occurred_at: new Date().toISOString(),
+      });
     return interaction;
   } catch (error) {
     console.log("recordPatientDoctorInteraction:", error?.message);
@@ -4479,6 +5273,10 @@ export async function settlePackageCoinsForInteraction({
   interactionRow = null,
   interactionId = "",
 } = {}) {
+  const dailyCompletionRequired = true;
+  if (dailyCompletionRequired) {
+    return { settled: false, reason: "daily_completion_required" };
+  }
   let interactionPatientUserId = String(patientUserId || "").trim();
   let interactionDoctorUserId = String(doctorUserId || "").trim();
   const patientFromProfile = await resolveAuthUserIdForRelationId(
@@ -4676,7 +5474,8 @@ export async function settlePackageCoinsForInteraction({
     patient_user_id: settledPatientUserId,
     doctor_user_id: settledDoctorUserId,
     interaction_kind: interaction.kind || "",
-    interaction_occurred_at: interaction.occurred_at || interaction.created || "",
+    interaction_occurred_at:
+      interaction.occurred_at || interaction.created || "",
     session_index: sessionIndex,
     sessions,
     total_patient_package_coins: totalPatientCoins,
@@ -4721,21 +5520,12 @@ export async function settlePackageCoinsForInteraction({
   return { settled: true, patientCoins, doctorCoins };
 }
 
-export async function settlePackageCoinsForCompletedAppointment(appointmentRow) {
+export async function settlePackageCoinsForCompletedAppointment(
+  appointmentRow,
+) {
   if (!appointmentRow?.id)
     return { settled: false, reason: "missing_appointment" };
-  const workflow = decodeMeetingWorkflowFromAppointmentRow(appointmentRow);
-  const patientUserId =
-    String(workflow.patient_auth_user_id || "").trim() ||
-    relationId(appointmentRow.patient);
-  const doctorUserId =
-    String(workflow.doctor_auth_user_id || "").trim() ||
-    relationId(appointmentRow.doctor);
-  return settlePackageCoinsForInteraction({
-    patientUserId,
-    doctorUserId,
-    offerId: String(workflow.package_offer_id || "").trim(),
-  });
+  return { settled: false, reason: "daily_completion_required" };
 }
 
 export async function listCoinLedgerForUser(userId) {
@@ -5290,23 +6080,22 @@ function mapPatientProfileToDoctorPatientCard(
   { conditions = "—", lastVisit = "Active", riskHint = 55 } = {},
 ) {
   const u = patientProf?.expand?.user;
-  const name =
-    resolveListingDisplayName(patientProf, u) || "Patient";
-  const gender = String(patientProf?.gender || patientProf?.sex || "—").trim() || "—";
+  const name = resolveListingDisplayName(patientProf, u) || "Patient";
+  const gender =
+    String(patientProf?.gender || patientProf?.sex || "—").trim() || "—";
   const ageN = ageFromDobIso(
     patientProf?.date_of_birth ||
       patientProf?.dob ||
       u?.date_of_birth ||
       u?.dob,
   );
-  const blood = String(
-    patientProf?.blood_type || patientProf?.blood_group || "—",
-  ).trim() || "—";
+  const blood =
+    String(patientProf?.blood_type || patientProf?.blood_group || "—").trim() ||
+    "—";
   const phoneRaw = pickPatientContactPhone(patientProf, u);
   const phone = phoneRaw || "—";
   const score = Math.min(98, Math.max(12, Math.round(Number(riskHint) || 55)));
-  const riskLevel =
-    score >= 70 ? "Low" : score >= 45 ? "Medium" : "High";
+  const riskLevel = score >= 70 ? "Low" : score >= 45 ? "Medium" : "High";
   return {
     id: String(patientProf?.id || name),
     name,
@@ -5384,10 +6173,8 @@ async function loadAppointmentPatientDisplayHintsForDoctor(
             ? p.expand.user
             : null;
         const name =
-          resolveListingDisplayName(
-            p && typeof p === "object" ? p : null,
-            u,
-          ) || "";
+          resolveListingDisplayName(p && typeof p === "object" ? p : null, u) ||
+          "";
         const phone = pickPatientContactPhone(
           p && typeof p === "object" ? p : null,
           u,
@@ -5533,14 +6320,10 @@ async function buildPackageDoctorPatientRows(doctorUserId, doctorProfile) {
       continue;
     }
     const rem = Number(row?.remaining_coins ?? 0) || 0;
-    const pool =
-      Number(row?.doctor_pool_coins ?? row?.amount_inr ?? 0) || 1;
+    const pool = Number(row?.doctor_pool_coins ?? row?.amount_inr ?? 0) || 1;
     const score = Math.min(
       98,
-      Math.max(
-        15,
-        Math.round((rem / Math.max(pool, 1)) * 100) || 60,
-      ),
+      Math.max(15, Math.round((rem / Math.max(pool, 1)) * 100) || 60),
     );
     let card = mapPatientProfileToDoctorPatientCard(p, {
       conditions: String(row.title || "Care package").trim(),

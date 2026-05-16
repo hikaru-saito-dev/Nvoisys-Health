@@ -117,6 +117,9 @@ import {
   listPackageOffersForDoctor,
   listActivePackagePairsForDoctor,
   listActivePackagePairsForPatient,
+  getDailyPackageAppointmentCompletionState,
+  markDailyPackageAppointmentCompleted,
+  settlePackageCoinsForDailyCompletion,
   recordPatientWalletDeposit,
   mergeLocalFeesOntoSlots,
   minutesUsedWithDoctorThisRollingWeek,
@@ -149,7 +152,6 @@ import {
   QUICK_REQUEST_STATUS,
   resolveDoctorProfileIdForUser,
   resolveListingDisplayName,
-  settlePackageCoinsForCompletedAppointment,
   settleQuickRequestCasualCoins,
   WALLET_TOPUP_MAX_INR,
   WALLET_TOPUP_MIN_INR,
@@ -11941,6 +11943,438 @@ const PatientEditProfileScreen = ({
   );
 };
 
+const dailyPackageAppointmentKey = (pair) =>
+  String(
+    pair?.package_offer_id ||
+      pair?.offerId ||
+      pair?.package_pair_id ||
+      pair?.id ||
+      "",
+  ).trim();
+
+const dailyPackageUserLabel = (user, fallback) => {
+  const name = String(user?.name || user?.full_name || "").trim();
+  if (name) return name;
+  const email = String(user?.email || "").trim();
+  if (email) return email.includes("@") ? email.split("@")[0] : email;
+  return fallback;
+};
+
+const DailyPackageAppointmentSection = ({ role, containerStyle }) => {
+  const { theme } = useTheme();
+  const { currentUser, patientProfile, refreshAllData } = useAppData();
+  const [items, setItems] = useState([]);
+  const [namesById, setNamesById] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [actingKey, setActingKey] = useState("");
+  const [error, setError] = useState("");
+  const isDoctorView = role === "doctor";
+  const actorLabel = isDoctorView ? "doctor" : "patient";
+  const peerLabel = isDoctorView ? "Patient" : "Doctor";
+
+  const loadDailyPackages = useCallback(async () => {
+    if (!currentUser?.id) {
+      setItems([]);
+      setNamesById({});
+      return;
+    }
+    try {
+      setLoading(true);
+      setError("");
+      const pairs = isDoctorView
+        ? await listActivePackagePairsForDoctor(currentUser.id)
+        : await listActivePackagePairsForPatient(
+            currentUser.id,
+            patientProfile?.id,
+          );
+      const activePairs = (pairs || [])
+        .filter((pair) => {
+          const status = String(pair?.status || "active").toLowerCase();
+          return status !== "cancelled" && status !== "revoked";
+        })
+        .slice(0, 6);
+      const peerIds = [
+        ...new Set(
+          activePairs
+            .map((pair) =>
+              String(
+                isDoctorView ? pair.patient_user_id : pair.doctor_user_id,
+              ).trim(),
+            )
+            .filter(Boolean),
+        ),
+      ];
+      const [stateItems, usersById] = await Promise.all([
+        Promise.all(
+          activePairs.map(async (pair) => {
+            const state = await getDailyPackageAppointmentCompletionState({
+              packagePair: pair,
+              patientUserId: pair.patient_user_id,
+              doctorUserId: pair.doctor_user_id,
+            });
+            let settlement = null;
+            if (state?.bothCompleted && !state?.settledToday && !state?.error) {
+              settlement = await settlePackageCoinsForDailyCompletion({
+                packagePair: pair,
+                patientUserId: pair.patient_user_id,
+                doctorUserId: pair.doctor_user_id,
+                dayKey: state.dayKey,
+              });
+              if (
+                settlement?.settled ||
+                settlement?.reason === "already_settled_today"
+              ) {
+                state.settledToday = true;
+              }
+            }
+            return {
+              key: dailyPackageAppointmentKey(pair),
+              pair,
+              state,
+              settlement,
+            };
+          }),
+        ),
+        peerIds.length ? fetchUsersAuthByIds(peerIds) : Promise.resolve(new Map()),
+      ]);
+      const nextNames = {};
+      usersById?.forEach?.((user, id) => {
+        nextNames[id] = dailyPackageUserLabel(
+          user,
+          `${peerLabel} ${String(id).slice(-6)}`,
+        );
+      });
+      setNamesById(nextNames);
+      setItems(stateItems);
+    } catch (loadError) {
+      console.log("DailyPackageAppointmentSection:", loadError?.message);
+      setError(loadError?.message || "Could not load daily package appointment.");
+      setItems([]);
+      setNamesById({});
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser?.id, patientProfile?.id, isDoctorView, peerLabel]);
+
+  useEffect(() => {
+    void loadDailyPackages();
+  }, [loadDailyPackages]);
+
+  useEffect(() => {
+    const nextTimes = (items || [])
+      .map((item) => new Date(item?.state?.nextAvailableAt || "").getTime())
+      .filter((time) => Number.isFinite(time) && time > Date.now());
+    if (!nextTimes.length) return undefined;
+    const delay = Math.min(...nextTimes) - Date.now() + 1000;
+    const timer = setTimeout(() => {
+      void loadDailyPackages();
+    }, Math.min(delay, 24 * 60 * 60 * 1000));
+    return () => clearTimeout(timer);
+  }, [items, loadDailyPackages]);
+
+  const handleMarkCompleted = async (item) => {
+    const key = item?.key || dailyPackageAppointmentKey(item?.pair);
+    if (!key || actingKey) return;
+    try {
+      setActingKey(key);
+      setError("");
+      const result = await markDailyPackageAppointmentCompleted({
+        packagePair: item.pair,
+        actorRole: actorLabel,
+        patientUserId: item.pair?.patient_user_id,
+        doctorUserId: item.pair?.doctor_user_id,
+      });
+      setItems((prev) =>
+        prev.map((entry) =>
+          entry.key === key
+            ? {
+                ...entry,
+                state: result?.state || entry.state,
+                settlement: result?.settlement || entry.settlement,
+              }
+            : entry,
+        ),
+      );
+      await refreshAllData?.();
+    } catch (markError) {
+      console.log("mark daily package appointment:", markError?.message);
+      setError(
+        markError?.message || "Could not mark today's package appointment.",
+      );
+    } finally {
+      setActingKey("");
+    }
+  };
+
+  const statusPill = (label, completed) => (
+    <View
+      key={label}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: completed ? theme.successLight : theme.bg,
+        borderRadius: 999,
+        paddingHorizontal: RFValue(9),
+        paddingVertical: RFValue(5),
+        marginRight: RFValue(6),
+        marginTop: RFValue(6),
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: completed ? theme.success : theme.cardBorder,
+      }}
+    >
+      <Ionicons
+        name={completed ? "checkmark-circle" : "close-circle"}
+        size={RFValue(14)}
+        color={completed ? theme.success : theme.textTertiary}
+      />
+      <Text
+        style={{
+          marginLeft: RFValue(5),
+          color: completed ? theme.success : theme.textSecondary,
+          fontSize: RFValue(11),
+          fontWeight: "800",
+        }}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+
+  return (
+    <View
+      style={[
+        {
+          backgroundColor: theme.card,
+          borderRadius: RFValue(18),
+          padding: RFValue(16),
+          marginHorizontal: RFValue(16),
+          marginTop: RFValue(12),
+          marginBottom: RFValue(8),
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.cardBorder,
+          ...elevatedSurfaceShadow(theme),
+        },
+        containerStyle,
+      ]}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View
+          style={{
+            width: RFValue(38),
+            height: RFValue(38),
+            borderRadius: RFValue(12),
+            backgroundColor: theme.successLight,
+            alignItems: "center",
+            justifyContent: "center",
+            marginRight: RFValue(10),
+          }}
+        >
+          <Ionicons
+            name="checkbox-outline"
+            size={RFValue(20)}
+            color={theme.success}
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text
+            style={{
+              color: theme.textPrimary,
+              fontSize: RFValue(16),
+              fontWeight: "900",
+              letterSpacing: -0.2,
+            }}
+          >
+            Daily packaged appointment
+          </Text>
+          <Text
+            style={{
+              color: theme.textTertiary,
+              fontSize: RFValue(11),
+              fontWeight: "600",
+              marginTop: RFValue(2),
+            }}
+          >
+            One completion per package, per day
+          </Text>
+        </View>
+        {loading ? <ActivityIndicator color={theme.accent} /> : null}
+      </View>
+
+      {error ? (
+        <Text
+          style={{
+            color: theme.danger,
+            fontSize: RFValue(12),
+            fontWeight: "700",
+            marginTop: RFValue(10),
+            lineHeight: RFValue(17),
+          }}
+        >
+          {error}
+        </Text>
+      ) : null}
+
+      {!loading && items.length === 0 ? (
+        <Text
+          style={{
+            color: theme.textSecondary,
+            fontSize: RFValue(12),
+            lineHeight: RFValue(18),
+            marginTop: RFValue(12),
+            fontWeight: "600",
+          }}
+        >
+          No active packaged patient appointment yet.
+        </Text>
+      ) : null}
+
+      {items.map((item) => {
+        const state = item.state || {};
+        const ownCompleted = isDoctorView
+          ? state.doctorCompleted
+          : state.patientCompleted;
+        const otherCompleted = isDoctorView
+          ? state.patientCompleted
+          : state.doctorCompleted;
+        const peerId = String(
+          isDoctorView
+            ? item.pair?.patient_user_id || ""
+            : item.pair?.doctor_user_id || "",
+        ).trim();
+        const peerName =
+          namesById[peerId] ||
+          (peerId ? `${peerLabel} ${peerId.slice(-6)}` : peerLabel);
+        const busy = actingKey === item.key;
+        const disabled = busy || ownCompleted || !!state.error;
+        const settlementReason = String(item.settlement?.reason || "");
+        return (
+          <View
+            key={item.key || peerId}
+            style={{
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderTopColor: theme.cardBorder,
+              marginTop: RFValue(12),
+              paddingTop: RFValue(12),
+            }}
+          >
+            <Text
+              style={{
+                color: theme.textPrimary,
+                fontSize: RFValue(14),
+                fontWeight: "800",
+              }}
+              numberOfLines={1}
+            >
+              {peerName}
+            </Text>
+            <Text
+              style={{
+                color: theme.textSecondary,
+                fontSize: RFValue(12),
+                marginTop: RFValue(3),
+                fontWeight: "600",
+              }}
+              numberOfLines={1}
+            >
+              {String(item.pair?.title || "Care package").trim()}
+            </Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+              {statusPill("Patient", state.patientCompleted)}
+              {statusPill("Doctor", state.doctorCompleted)}
+            </View>
+            {state.error ? (
+              <Text
+                style={{
+                  color: theme.danger,
+                  fontSize: RFValue(11),
+                  marginTop: RFValue(8),
+                  lineHeight: RFValue(16),
+                  fontWeight: "600",
+                }}
+              >
+                {state.error}
+              </Text>
+            ) : null}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                flexWrap: "wrap",
+                marginTop: RFValue(10),
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => handleMarkCompleted(item)}
+                disabled={disabled}
+                activeOpacity={0.86}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: ownCompleted ? theme.successLight : theme.success,
+                  borderRadius: RFValue(12),
+                  paddingHorizontal: RFValue(13),
+                  paddingVertical: RFValue(9),
+                  opacity: disabled && !ownCompleted ? 0.55 : 1,
+                  marginRight: RFValue(8),
+                  marginBottom: RFValue(6),
+                  minWidth: RFValue(132),
+                }}
+              >
+                {busy ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons
+                      name={ownCompleted ? "checkmark-circle" : "checkmark"}
+                      size={RFValue(16)}
+                      color={ownCompleted ? theme.success : "#fff"}
+                    />
+                    <Text
+                      style={{
+                        color: ownCompleted ? theme.success : "#fff",
+                        fontSize: RFValue(12),
+                        fontWeight: "900",
+                        marginLeft: RFValue(6),
+                      }}
+                    >
+                      {ownCompleted ? "Marked today" : "Mark completed"}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              <Text
+                style={{
+                  flexShrink: 1,
+                  color: state.settledToday
+                    ? theme.success
+                    : ownCompleted && !otherCompleted
+                      ? theme.textTertiary
+                      : theme.textSecondary,
+                  fontSize: RFValue(11),
+                  lineHeight: RFValue(16),
+                  fontWeight: "700",
+                }}
+              >
+                {state.settledToday
+                  ? "Coins transferred for today."
+                  : state.bothCompleted
+                    ? settlementReason === "all_package_days_settled" ||
+                      settlementReason === "all_package_sessions_settled"
+                      ? "All package days are already settled."
+                      : "Both marked. Coin transfer is pending."
+                    : ownCompleted
+                      ? `Waiting for ${isDoctorView ? "patient" : "doctor"}. Next mark opens at 12:00 AM.`
+                      : "Daily appt - tap tick after completion."}
+              </Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+};
+
 const PatientAppointmentsScreen = ({ onBack }) => {
   const { theme } = useTheme();
   const tabNav = useMainTabNav();
@@ -12227,7 +12661,12 @@ const PatientAppointmentsScreen = ({ onBack }) => {
           </Text>
         </View>
       </View>
-      <View style={{ flex: 1 }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: tabScrollBottomPadding() }}
+        showsVerticalScrollIndicator={false}
+      >
+        <DailyPackageAppointmentSection role="patient" />
         <View
           style={{
             backgroundColor: theme.card,
@@ -12434,11 +12873,12 @@ const PatientAppointmentsScreen = ({ onBack }) => {
           onAfterPackagePayment={handleAfterPackagePayment}
           onPayPackageOffer={payForPackageOffer}
           onPayAppointment={handlePayForAppointment}
+          scrollEnabled={false}
           scrollContentBottomInset={tabScrollBottomPadding()}
           emptyHint="None yet. Use Book Appt on Home or Package journey to schedule - everything appears here."
           onMeetingsChanged={() => refreshAllData()}
         />
-      </View>
+      </ScrollView>
       <Modal
         visible={!!phonePaymentAppointment}
         transparent
@@ -20449,6 +20889,15 @@ const DoctorDashboard = () => {
         >
           {isPackageDoctor ? (
             <>
+              <DailyPackageAppointmentSection
+                role="doctor"
+                containerStyle={{
+                  marginHorizontal: 0,
+                  marginTop: 0,
+                  marginBottom: RFValue(16),
+                }}
+              />
+
               <PackageMeetingDoctorPanel theme={theme} />
 
               <View
@@ -31798,31 +32247,6 @@ export default function App() {
         );
       };
 
-      const completedPackageRowsForAutoSettlement = (appointmentsForMap || [])
-        .filter(
-          (record) =>
-            normalizeAppointmentStatus(record?.status) === "completed" &&
-            (activeRole === "patient"
-              ? record?.patient === activeUser.id
-              : activeRole === "doctor"
-                ? doctorMatchesAppointment(record)
-                : false),
-        )
-        .slice(0, 20);
-      if (completedPackageRowsForAutoSettlement.length) {
-        void Promise.all(
-          completedPackageRowsForAutoSettlement.map((record) =>
-            settlePackageCoinsForCompletedAppointment(record).catch((error) => {
-              console.log(
-                "auto package coin settlement skipped:",
-                error?.message,
-              );
-              return null;
-            }),
-          ),
-        );
-      }
-
       if (activeRole === "patient") {
         setWounds(
           allWounds.filter((record) => record.patientId === activeUser.id),
@@ -32689,15 +33113,6 @@ export default function App() {
             "Unable to update appointment status.",
         );
       }
-    }
-
-    if (normalized === "completed" && existing) {
-      void settlePackageCoinsForCompletedAppointment({
-        ...existing,
-        status: normalized,
-      }).catch((error) => {
-        console.log("package coin settlement skipped:", error?.message);
-      });
     }
 
     const conversationId = existing?.conversation || null;
