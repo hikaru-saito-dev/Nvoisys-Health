@@ -1107,29 +1107,49 @@ const removePendingCashfreePayment = async (entryId) => {
 // - Legacy custom gateway: POST the same { kind, … } payload; response { reply } or
 //   { warnings } unchanged.
 // When URL or key is missing, the app falls back to local stubs.
+// Defaults mirror doctor_in_pocket.py (HealthMate AI reference).
 // ---------------------------------------------------------------------------
-const AI_BASE_URL = String(
-  Constants.expoConfig?.extra?.aiBaseUrl ||
-    process.env.EXPO_PUBLIC_AI_BASE_URL ||
-    "",
-).trim();
-const AI_API_KEY = String(
-  Constants.expoConfig?.extra?.aiApiKey ||
-    process.env.EXPO_PUBLIC_GROQ_API_KEY ||
-    process.env.EXPO_PUBLIC_AI_API_KEY ||
-    "ollama",
-).trim();
-const AI_MODEL = String(
-  Constants.expoConfig?.extra?.aiModel ||
-    process.env.EXPO_PUBLIC_AI_MODEL ||
-    process.env.EXPO_PUBLIC_GROQ_MODEL ||
-    "phi3:latest",
-).trim();
-const AI_PREDICT_URL = String(
-  Constants.expoConfig?.extra?.aiPredictUrl ||
-    process.env.EXPO_PUBLIC_AI_PREDICT_URL ||
-    "https://ai.nvoisyshealth.com/predict",
-).trim();
+const AI_CONFIG_DEFAULTS = {
+  baseUrl: "https://ais.nvoisyshealth.com/v1/chat/completions",
+  predictUrl: "https://ai.nvoisyshealth.com/predict",
+  model: "phi3:latest",
+  apiKey: "ollama",
+};
+
+const getAiRuntimeConfig = () => {
+  const baseUrl =
+    String(
+      Constants.expoConfig?.extra?.aiBaseUrl ||
+        process.env.EXPO_PUBLIC_AI_BASE_URL ||
+        AI_CONFIG_DEFAULTS.baseUrl,
+    ).trim() || AI_CONFIG_DEFAULTS.baseUrl;
+  const predictUrl =
+    String(
+      Constants.expoConfig?.extra?.aiPredictUrl ||
+        process.env.EXPO_PUBLIC_AI_PREDICT_URL ||
+        AI_CONFIG_DEFAULTS.predictUrl,
+    ).trim() || AI_CONFIG_DEFAULTS.predictUrl;
+  const model =
+    String(
+      Constants.expoConfig?.extra?.aiModel ||
+        process.env.EXPO_PUBLIC_AI_MODEL ||
+        process.env.EXPO_PUBLIC_GROQ_MODEL ||
+        AI_CONFIG_DEFAULTS.model,
+    ).trim() || AI_CONFIG_DEFAULTS.model;
+  let apiKey =
+    String(
+      Constants.expoConfig?.extra?.aiApiKey ||
+        process.env.EXPO_PUBLIC_GROQ_API_KEY ||
+        process.env.EXPO_PUBLIC_AI_API_KEY ||
+        AI_CONFIG_DEFAULTS.apiKey,
+    ).trim() || AI_CONFIG_DEFAULTS.apiKey;
+  // ais.nvoisyshealth.com is an Ollama proxy — legacy Groq cloud keys fail here.
+  if (baseUrl.includes("ais.nvoisyshealth.com") && /^gsk_/i.test(apiKey)) {
+    apiKey = AI_CONFIG_DEFAULTS.apiKey;
+  }
+  return { baseUrl, predictUrl, model, apiKey };
+};
+
 const AI_CHAT_TIMEOUT_MS = 300000;
 const AI_PREDICT_TIMEOUT_MS = 30000;
 
@@ -1154,7 +1174,12 @@ const isOpenAICompatibleChatCompletionsUrl = (url) =>
     .includes("/chat/completions");
 
 const extractChatCompletionText = (data) => {
-  const raw = data?.choices?.[0]?.message?.content;
+  const choice = data?.choices?.[0];
+  const raw =
+    choice?.message?.content ??
+    choice?.text ??
+    data?.reply ??
+    data?.response;
   if (typeof raw === "string") return raw.trim();
   if (Array.isArray(raw)) {
     const joined = raw
@@ -1188,7 +1213,7 @@ const parseAssistantJsonObject = (text) => {
 };
 
 const postChatCompletions = async (url, apiKey, body) => {
-  const key = String(apiKey || "ollama").trim() || "ollama";
+  const key = String(apiKey || AI_CONFIG_DEFAULTS.apiKey).trim() || AI_CONFIG_DEFAULTS.apiKey;
   try {
     const response = await fetchWithTimeout(
       url,
@@ -1206,14 +1231,52 @@ const postChatCompletions = async (url, apiKey, body) => {
     if (!response.ok) {
       const msg =
         data?.error?.message || data?.message || `HTTP ${response.status}`;
-      console.log("AI chat completions error:", msg);
+      console.log("AI chat completions error:", msg, url);
       return null;
     }
     return data;
   } catch (error) {
-    console.log("AI chat completions failed:", error?.message || error);
+    console.log("AI chat completions failed:", error?.message || error, url);
     return null;
   }
+};
+
+// Map PocketBase patient_profile + user into the shape doctor_in_pocket.py expects.
+const buildPatientRecordForAI = (profile, user) => {
+  const p = { ...(profile || {}) };
+  if (!Object.keys(p).length && !user) return {};
+  const nameParts = splitNameParts(
+    p.demographics_first_name && p.demographics_last_name
+      ? `${p.demographics_first_name} ${p.demographics_last_name}`
+      : "",
+    p.name,
+    p.full_name,
+    p.display_name,
+    user?.name,
+    user?.full_name,
+    user?.display_name,
+    user?.username,
+  );
+  return {
+    ...p,
+    demographics_first_name: firstPresent(p.demographics_first_name, nameParts.first),
+    demographics_last_name: firstPresent(p.demographics_last_name, nameParts.last),
+    demographics_sex: fieldText(p, ["demographics_sex", "sex", "gender"], "Unknown"),
+    demographics_age: fieldNumber(p, ["demographics_age", "age"]),
+    chronic_conditions: firstPresent(p.chronic_conditions, p.medical_conditions),
+    allergies_drug_allergies: firstPresent(p.allergies_drug_allergies, p.allergies),
+    chief_complaint: firstPresent(
+      p.chief_complaint,
+      p.primary_condition,
+      p.condition,
+      p.medical_conditions,
+    ),
+    lifestyle_smoking_status: fieldText(p, ["lifestyle_smoking_status", "smoking"], ""),
+    lifestyle_alcohol_use: fieldText(p, ["lifestyle_alcohol_use", "alcohol"], ""),
+    anthropometrics_height_cm: fieldNumber(p, ["anthropometrics_height_cm", "height_cm"]),
+    anthropometrics_weight_kg: fieldNumber(p, ["anthropometrics_weight_kg", "weight_kg"]),
+    user: user?.id,
+  };
 };
 
 // "Doctor in Your Pocket" base prompt. Mirrors the client's Python reference
@@ -1724,11 +1787,12 @@ const buildPredictPayload = ({ patient, user, question, prescriptions } = {}) =>
   return normalizePredictPayloadForMlService(payload);
 };
 
-const callPredictEndpoint = async (payload) => {
-  if (!AI_PREDICT_URL || payload?.kind !== "chat") return null;
+const callPredictEndpoint = async (payload, predictUrlOverride) => {
+  const predictUrl = String(predictUrlOverride || getAiRuntimeConfig().predictUrl).trim();
+  if (!predictUrl || payload?.kind !== "chat") return null;
   try {
     const response = await fetchWithTimeout(
-      AI_PREDICT_URL,
+      predictUrl,
       {
         method: "POST",
         headers: {
@@ -1950,6 +2014,7 @@ reviewed with their clinician. Stay in direct second person throughout.`;
 };
 
 const callOpenAICompatibleAI = async (payload) => {
+  const { baseUrl, model, apiKey } = getAiRuntimeConfig();
   const kind = payload?.kind;
   if (kind === "chat") {
     const question = String(payload?.question || "").trim();
@@ -1965,15 +2030,16 @@ const callOpenAICompatibleAI = async (payload) => {
         (item?.role === "user" || item?.role === "assistant") &&
         String(item?.content || "").trim(),
     );
-    const data = await postChatCompletions(AI_BASE_URL, AI_API_KEY, {
-      model: AI_MODEL,
+    const messages = [{ role: "system", content: system }, ...history];
+    const last = messages[messages.length - 1];
+    if (!(last?.role === "user" && String(last?.content || "").trim() === question)) {
+      messages.push({ role: "user", content: question });
+    }
+    const data = await postChatCompletions(baseUrl, apiKey, {
+      model,
       temperature: 0.4,
       max_tokens: 1024,
-      messages: [
-        { role: "system", content: system },
-        ...history,
-        { role: "user", content: question },
-      ],
+      messages,
     });
     const reply = extractChatCompletionText(data);
     return reply ? { reply } : null;
@@ -2016,8 +2082,8 @@ CANDIDATE MEDICATIONS the clinician is about to prescribe:
 ${itemsBlock || "  (none)"}
 
 Return the JSON safety screen now.`;
-    const data = await postChatCompletions(AI_BASE_URL, AI_API_KEY, {
-      model: AI_MODEL,
+    const data = await postChatCompletions(baseUrl, apiKey, {
+      model,
       temperature: 0.1,
       max_tokens: 1536,
       messages: [
@@ -2676,12 +2742,23 @@ const pbFilterDateTime = (value) =>
 // Never throws; returns null so callers can fall back to stubs.
 // ---------------------------------------------------------------------------
 const callAIEndpoint = async (payload) => {
-  if (!AI_BASE_URL) return null;
+  const { baseUrl, predictUrl, apiKey } = getAiRuntimeConfig();
+  if (!baseUrl) {
+    console.log("AI: no base URL configured");
+    return null;
+  }
+  let mlPredictions = payload?.mlPredictions;
+  if (payload?.kind === "chat" && mlPredictions === undefined) {
+    mlPredictions = await Promise.race([
+      callPredictEndpoint(payload, predictUrl),
+      new Promise((resolve) => {
+        setTimeout(() => resolve(null), AI_PREDICT_TIMEOUT_MS);
+      }),
+    ]);
+  }
   const enrichedPayload =
-    payload?.kind === "chat" && payload.mlPredictions === undefined
-      ? { ...payload, mlPredictions: await callPredictEndpoint(payload) }
-      : payload;
-  if (isOpenAICompatibleChatCompletionsUrl(AI_BASE_URL)) {
+    payload?.kind === "chat" ? { ...payload, mlPredictions } : payload;
+  if (isOpenAICompatibleChatCompletionsUrl(baseUrl)) {
     try {
       return await callOpenAICompatibleAI(enrichedPayload);
     } catch (error) {
@@ -2690,11 +2767,11 @@ const callAIEndpoint = async (payload) => {
     }
   }
   try {
-    const response = await fetchWithTimeout(AI_BASE_URL, {
+    const response = await fetchWithTimeout(baseUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(AI_API_KEY ? { Authorization: `Bearer ${AI_API_KEY}` } : {}),
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(enrichedPayload),
     });
@@ -34833,7 +34910,7 @@ export default function App() {
     const aiResult = await callAIEndpoint({
       kind: "chat",
       question: trimmed,
-      patient: patientProfile || null,
+      patient: buildPatientRecordForAI(patientProfile, currentUser),
       user: currentUser || null,
       prescriptions: prescriptionsContext,
       history: buildAssistantHistoryForAI(priorMessages),
@@ -34871,7 +34948,10 @@ export default function App() {
   // Uses the configured AI endpoint if available, otherwise a local stub.
   // -------------------------------------------------------------------------
   const runSideEffectCheck = async ({ items, patient } = {}) => {
-    const patientFields = patient || patientProfile || {};
+    const patientFields = buildPatientRecordForAI(
+      patient || patientProfile,
+      currentUser,
+    );
     const payload = {
       kind: "side_effect_check",
       items,
