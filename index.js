@@ -22,7 +22,15 @@ if (Platform.OS === "web" && typeof document !== "undefined") {
     showWebFatal("Web runtime error", event.error || event.message);
   });
   window.addEventListener("unhandledrejection", (event) => {
-    showWebFatal("Unhandled promise rejection", event.reason);
+    const reason = event.reason;
+    const msg = String(reason?.message || reason || "");
+    // PocketBase preview / network timeouts are non-fatal; log without blocking the UI.
+    if (/timeout exceeded/i.test(msg)) {
+      console.warn("Non-fatal promise rejection:", msg);
+      event.preventDefault();
+      return;
+    }
+    showWebFatal("Unhandled promise rejection", reason);
   });
 }
 

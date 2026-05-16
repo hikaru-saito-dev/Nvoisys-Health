@@ -31740,6 +31740,7 @@ export default function App() {
 
   const callInviteWsRef = useRef(null);
   const callInviteReconnectRef = useRef(null);
+  const refreshAllDataInFlightRef = useRef(false);
   /** Dedupe rapid duplicate `incoming_call` frames ({ key, at }). */
   const lastIncomingCallSigRef = useRef(null);
   const navigateToChatTabRef = useRef(null);
@@ -32063,19 +32064,23 @@ export default function App() {
   /** Latest message per thread: small `getList(1,1)` calls (batched) - avoids loading every message in the database. */
   const loadMessagePreviewMap = async (conversationIds) => {
     if (!conversationIds.length) return {};
-    const ids = [...new Set(conversationIds)].filter(Boolean);
+    const ids = [...new Set(conversationIds)].filter(Boolean).slice(0, 30);
     const previewMap = {};
-    const CONCURRENCY = 12;
+    const CONCURRENCY = Platform.OS === "web" ? 4 : 8;
+    const REQUEST_MS = 10000;
     for (let i = 0; i < ids.length; i += CONCURRENCY) {
       const slice = ids.slice(i, i + CONCURRENCY);
-      await Promise.all(
+      await Promise.allSettled(
         slice.map(async (cid) => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), REQUEST_MS);
           try {
             const result = await pb.collection("messages").getList(1, 1, {
               requestKey: null,
               filter: `conversation="${cid}"`,
               sort: "-created",
               expand: "sender",
+              signal: controller.signal,
             });
             const first = result?.items?.[0];
             if (first) {
@@ -32083,6 +32088,8 @@ export default function App() {
             }
           } catch (error) {
             console.log("loadMessagePreviewMap conv:", cid, error?.message);
+          } finally {
+            clearTimeout(timeoutId);
           }
         }),
       );
@@ -32265,6 +32272,11 @@ export default function App() {
       setPatients([]);
       return;
     }
+
+    if (refreshAllDataInFlightRef.current) {
+      return;
+    }
+    refreshAllDataInFlightRef.current = true;
 
     try {
       setDataLoading(true);
@@ -32480,6 +32492,7 @@ export default function App() {
       setAppointments([]);
       setPatients([]);
     } finally {
+      refreshAllDataInFlightRef.current = false;
       setDataLoading(false);
     }
   };
@@ -35146,7 +35159,9 @@ export default function App() {
       setAppointments([]);
       return;
     }
-    refreshAllData(currentUser, userRole);
+    refreshAllData(currentUser, userRole).catch((error) => {
+      console.log("refreshAllData on login:", error?.message || error);
+    });
   }, [
     currentUser?.id,
     userRole,
@@ -35380,10 +35395,13 @@ export default function App() {
     let debounceTimer = null;
     const scheduleDataRefresh = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      const debounceMs = Platform.OS === "web" ? 2000 : 800;
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-        refreshAllData(currentUser, userRole);
-      }, 800);
+        refreshAllData(currentUser, userRole).catch((error) => {
+          console.log("refreshAllData realtime:", error?.message || error);
+        });
+      }, debounceMs);
     };
 
     const paidPackageNotifyAt = Object.create(null);
@@ -35535,7 +35553,9 @@ export default function App() {
       }
     };
 
-    subscribe();
+    subscribe().catch((error) => {
+      console.log("PocketBase realtime subscribe:", error?.message || error);
+    });
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
