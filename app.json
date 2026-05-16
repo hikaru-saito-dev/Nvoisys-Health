@@ -45,7 +45,7 @@
       "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
-      "output": "static",
+      "bundler": "metro",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -61,7 +61,6 @@
           }
         }
       ],
-      "expo-router",
       "expo-web-browser",
       [
         "expo-notifications",
@@ -77,19 +76,18 @@
       "@react-native-community/datetimepicker"
     ],
     "experiments": {
-      "typedRoutes": true,
       "reactCompiler": false
     },
     "extra": {
-      "router": {},
       "pbAppointmentsCollection": "appointments",
       "pbAppointmentDoctorIsProfile": true,
       "paymentMode": "cashfree",
       "stripePublishableKey": "",
       "paymentBackendUrl": "https://api.nvoisyshealth.com",
       "cashfreeReturnUrl": "myapp://payment/cashfree",
-      "aiBaseUrl": "https://api.groq.com/openai/v1/chat/completions",
-      "aiModel": "llama-3.3-70b-versatile",
+      "aiBaseUrl": "http://100.68.96.41:11434/v1/chat/completions",
+      "aiModel": "gemma3:1b",
+      "aiApiKey": "ollama",
       "eas": {
         "projectId": "2fb4857b-e269-408a-9f5f-1efefd650376"
       }

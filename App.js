@@ -189,6 +189,7 @@ ExpoSplashScreen.preventAutoHideAsync().catch(() => {});
 /** Load WebRTC only when a call screen runs - avoids native init at cold start (common emulator crash). */
 let livekitWebRtcModule = null;
 const getLivekitWebRTC = () => {
+  if (Platform.OS === "web") return null;
   if (!livekitWebRtcModule) {
     livekitWebRtcModule = require("@livekit/react-native-webrtc");
   }
@@ -1120,7 +1121,8 @@ const AI_API_KEY = String(
 const AI_MODEL = String(
   Constants.expoConfig?.extra?.aiModel ||
     process.env.EXPO_PUBLIC_AI_MODEL ||
-    "llama-3.3-70b-versatile",
+    process.env.EXPO_PUBLIC_GROQ_MODEL ||
+    "gemma3:1b",
 ).trim();
 const AI_PREDICT_URL = String(
   Constants.expoConfig?.extra?.aiPredictUrl ||
@@ -35449,33 +35451,35 @@ export default function App() {
 
   if (loadingAuth) {
     return (
-      <SafeAreaView
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: BRAND_SPLASH_BG,
-        }}
-        edges={["top", "left", "right"]}
-      >
-        <StatusBar barStyle="light-content" backgroundColor={BRAND_SPLASH_BG} />
-        <Image
-          source={NVOISYS_SPLASH_LOGO_PNG}
-          resizeMode="contain"
-          style={{ width: 120, height: 120, marginBottom: 20 }}
-        />
-        <ActivityIndicator size="large" color="#FFFFFF" />
-        <Text
+      <SafeAreaProvider>
+        <SafeAreaView
           style={{
-            color: "rgba(255,255,255,0.85)",
-            fontSize: RFValue(15),
-            fontWeight: "600",
-            marginTop: 14,
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            backgroundColor: BRAND_SPLASH_BG,
           }}
+          edges={["top", "left", "right"]}
         >
-          Loading…
-        </Text>
-      </SafeAreaView>
+          <StatusBar barStyle="light-content" backgroundColor={BRAND_SPLASH_BG} />
+          <Image
+            source={NVOISYS_SPLASH_LOGO_PNG}
+            resizeMode="contain"
+            style={{ width: 120, height: 120, marginBottom: 20 }}
+          />
+          <ActivityIndicator size="large" color="#FFFFFF" />
+          <Text
+            style={{
+              color: "rgba(255,255,255,0.85)",
+              fontSize: RFValue(15),
+              fontWeight: "600",
+              marginTop: 14,
+            }}
+          >
+            Loading…
+          </Text>
+        </SafeAreaView>
+      </SafeAreaProvider>
     );
   }
 

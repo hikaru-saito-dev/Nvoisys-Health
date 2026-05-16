@@ -1,16 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import PocketBase, { AsyncAuthStore } from "pocketbase";
 import Constants from "expo-constants";
+import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
-import EventSource from "react-native-sse";
 
 WebBrowser.maybeCompleteAuthSession();
 
-// PocketBase OAuth2 all-in-one flow relies on realtime.
-// React Native needs an EventSource polyfill for that.
-if (!global.EventSource) {
-  global.EventSource = EventSource;
+// PocketBase OAuth2 realtime: browsers already have EventSource; native uses a polyfill.
+if (Platform.OS !== "web" && typeof global.EventSource === "undefined") {
+  // eslint-disable-next-line global-require
+  global.EventSource = require("react-native-sse");
 }
 
 const PB_URL = "https://pbs.nvoisyshealth.com";

@@ -25,9 +25,25 @@ try {
   // dotenv is optional - ignore resolution failures (e.g. EAS cloud build).
 }
 
+const aiBaseUrlFromEnv = String(
+  process.env.EXPO_PUBLIC_AI_BASE_URL ||
+    process.env.EXPO_PUBLIC_GROQ_URL ||
+    process.env.GROQ_URL ||
+    "",
+).trim();
+
+const aiModelFromEnv = String(
+  process.env.EXPO_PUBLIC_AI_MODEL ||
+    process.env.EXPO_PUBLIC_GROQ_MODEL ||
+    process.env.GROQ_MODEL ||
+    "",
+).trim();
+
 const aiApiKeyFromEnv = String(
   process.env.EXPO_PUBLIC_GROQ_API_KEY ||
     process.env.EXPO_PUBLIC_AI_API_KEY ||
+    process.env.EXPO_PUBLIC_GROQ_KEY ||
+    process.env.GROQ_KEY ||
     "",
 ).trim();
 
@@ -42,6 +58,7 @@ module.exports = ({ config }) => {
     "expo-build-properties",
     {
       android: {
+        usesCleartextTraffic: true,
         reactNativeArchitectures: [
           "armeabi-v7a",
           "arm64-v8a",
@@ -57,6 +74,12 @@ module.exports = ({ config }) => {
     plugins: [...basePlugins, "expo-sharing", "expo-localization", androidAbiPlugin],
     extra: {
       ...baseExtra,
+      aiBaseUrl:
+        aiBaseUrlFromEnv ||
+        String(baseExtra.aiBaseUrl || "").trim(),
+      aiModel:
+        aiModelFromEnv ||
+        String(baseExtra.aiModel || "").trim(),
       aiApiKey:
         aiApiKeyFromEnv ||
         String(baseExtra.aiApiKey || "").trim(),
