@@ -1107,14 +1107,18 @@ const removePendingCashfreePayment = async (entryId) => {
 // - Legacy custom gateway: POST the same { kind, … } payload; response { reply } or
 //   { warnings } unchanged.
 // When URL or key is missing, the app falls back to local stubs.
-// Defaults mirror doctor_in_pocket.py (HealthMate AI reference).
+// Defaults mirror speed-optimized doctor_in_pocket.py (phi3 on Ollama).
 // ---------------------------------------------------------------------------
 const AI_CONFIG_DEFAULTS = {
-  baseUrl: "https://ais.nvoisyshealth.com/v1/chat/completions",
+  baseUrl: "http://100.90.217.109:11434/v1/chat/completions",
   predictUrl: "https://ai.nvoisyshealth.com/predict",
   model: "phi3:latest",
   apiKey: "ollama",
 };
+const AI_CHAT_MAX_TOKENS = 100;
+const AI_CHAT_TEMPERATURE = 0.3;
+const AI_OLLAMA_NUM_CTX = 2048;
+const AI_OLLAMA_NUM_BATCH = 512;
 
 const getAiRuntimeConfig = () => {
   const baseUrl =
@@ -1147,11 +1151,16 @@ const getAiRuntimeConfig = () => {
   if (baseUrl.includes("ais.nvoisyshealth.com") && /^gsk_/i.test(apiKey)) {
     apiKey = AI_CONFIG_DEFAULTS.apiKey;
   }
-  return { baseUrl, predictUrl, model, apiKey };
+  const useMlPredict = Constants.expoConfig?.extra?.aiUseMlPredict === true;
+  return { baseUrl, predictUrl, model, apiKey, useMlPredict };
 };
 
-const AI_CHAT_TIMEOUT_MS = 300000;
+const AI_CHAT_TIMEOUT_MS = 45000;
 const AI_PREDICT_TIMEOUT_MS = 30000;
+
+const isDirectOllamaUrl = (url) =>
+  /:11434(\/|$)/.test(String(url || "")) ||
+  /localhost:11434|127\.0\.0\.1:11434/i.test(String(url || ""));
 
 const fetchWithTimeout = async (url, options = {}, timeoutMs = AI_CHAT_TIMEOUT_MS) => {
   const controller = new AbortController();
@@ -1212,20 +1221,32 @@ const parseAssistantJsonObject = (text) => {
   }
 };
 
-const postChatCompletions = async (url, apiKey, body) => {
-  const key = String(apiKey || AI_CONFIG_DEFAULTS.apiKey).trim() || AI_CONFIG_DEFAULTS.apiKey;
+const buildChatCompletionsRequestBody = (baseUrl, body) => {
+  const payload = { ...body, stream: false };
+  if (isDirectOllamaUrl(baseUrl)) {
+    payload.options = {
+      num_ctx: AI_OLLAMA_NUM_CTX,
+      num_batch: AI_OLLAMA_NUM_BATCH,
+    };
+  }
+  return payload;
+};
+
+const postChatCompletions = async (url, apiKey, body, timeoutMs = AI_CHAT_TIMEOUT_MS) => {
+  const key = String(apiKey || AI_CONFIG_DEFAULTS.apiKey).trim();
+  const headers = { "Content-Type": "application/json" };
+  if (!isDirectOllamaUrl(url) && key) {
+    headers.Authorization = `Bearer ${key}`;
+  }
   try {
     const response = await fetchWithTimeout(
       url,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify(body),
+        headers,
+        body: JSON.stringify(buildChatCompletionsRequestBody(url, body)),
       },
-      AI_CHAT_TIMEOUT_MS,
+      timeoutMs,
     );
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -1989,8 +2010,34 @@ const formatPrescriptionsForPrompt = (prescriptions) => {
   return lines.join("\n");
 };
 
-// Build the full assistant system prompt: persona + patient block + Rx block +
-// server-side model predictions when the prediction API is reachable.
+// Ultra-short system prompt (speed-optimized doctor_in_pocket.py).
+const buildFastHealthAssistantSystemPrompt = (patient, prescriptions, user) => {
+  const p = buildPredictPayload({ patient, prescriptions, user });
+  const firstName = fmtVal(p.demographics_first_name, "there");
+  const age = fmtVal(p.demographics_age, "?");
+  const conditions = promptList(p, "chronic_conditions");
+  let medications = promptList(p, "current_medications");
+  const rxList = safeArray(prescriptions);
+  if (rxList.length) {
+    const rxMeds = rxList
+      .flatMap((rx) => safeArray(rx?.medicines).map((m) => String(m?.name || "").trim()))
+      .filter(Boolean);
+    if (rxMeds.length) {
+      medications = medications === "None" ? rxMeds.join(", ") : `${medications}, ${rxMeds.join(", ")}`;
+    }
+  }
+  const bp = `${fmtVal(p.vitals_blood_pressure_systolic_mmHg)}/${fmtVal(p.vitals_blood_pressure_diastolic_mmHg)}`;
+  const hba1c = fmtVal(p.vitals_HbA1c_percent, "N/A");
+  return `You are Dr. Aiden. Patient: ${firstName}, ${age}yo.
+Conditions: ${conditions}
+Medications: ${medications}
+BP: ${bp}, HbA1c: ${hba1c}
+
+Rules: Very short answers (2-3 sentences). Be warm. No jargon.
+Say 'consult your doctor' when needed. Ask 'Anything else?'`;
+};
+
+// Full prompt (ML predictions + long record) — used when aiUseMlPredict is enabled.
 const buildHealthAssistantSystemPrompt = (patient, prescriptions, predictions, user) => {
   const patientPayload = buildPredictPayload({ patient, prescriptions, user });
   const firstName = fmtVal(patientPayload.demographics_first_name, "there");
@@ -2014,33 +2061,46 @@ reviewed with their clinician. Stay in direct second person throughout.`;
 };
 
 const callOpenAICompatibleAI = async (payload) => {
-  const { baseUrl, model, apiKey } = getAiRuntimeConfig();
+  const { baseUrl, model, apiKey, useMlPredict } = getAiRuntimeConfig();
   const kind = payload?.kind;
   if (kind === "chat") {
     const question = String(payload?.question || "").trim();
     if (!question) return { reply: "" };
-    const system = buildHealthAssistantSystemPrompt(
-      payload.patient,
-      payload.prescriptions,
-      payload.mlPredictions,
-      payload.user,
-    );
-    const history = safeArray(payload.history).filter(
-      (item) =>
-        (item?.role === "user" || item?.role === "assistant") &&
-        String(item?.content || "").trim(),
-    );
+    const system = useMlPredict
+      ? buildHealthAssistantSystemPrompt(
+          payload.patient,
+          payload.prescriptions,
+          payload.mlPredictions,
+          payload.user,
+        )
+      : buildFastHealthAssistantSystemPrompt(
+          payload.patient,
+          payload.prescriptions,
+          payload.user,
+        );
+    const history = safeArray(payload.history)
+      .filter(
+        (item) =>
+          (item?.role === "user" || item?.role === "assistant") &&
+          String(item?.content || "").trim(),
+      )
+      .slice(-6);
     const messages = [{ role: "system", content: system }, ...history];
     const last = messages[messages.length - 1];
     if (!(last?.role === "user" && String(last?.content || "").trim() === question)) {
       messages.push({ role: "user", content: question });
     }
-    const data = await postChatCompletions(baseUrl, apiKey, {
-      model,
-      temperature: 0.4,
-      max_tokens: 1024,
-      messages,
-    });
+    const data = await postChatCompletions(
+      baseUrl,
+      apiKey,
+      {
+        model,
+        temperature: AI_CHAT_TEMPERATURE,
+        max_tokens: AI_CHAT_MAX_TOKENS,
+        messages,
+      },
+      AI_CHAT_TIMEOUT_MS,
+    );
     const reply = extractChatCompletionText(data);
     return reply ? { reply } : null;
   }
@@ -2127,7 +2187,7 @@ const buildAssistantHistoryForAI = (messages) =>
         content: String(message.text || "").trim(),
       };
     })
-    .slice(-12);
+    .slice(-6);
 
 // All message kinds are eligible for encryption. `decryptChatText` gracefully
 // returns legacy plaintext records unchanged when they do not have the prefix.
@@ -2742,19 +2802,23 @@ const pbFilterDateTime = (value) =>
 // Never throws; returns null so callers can fall back to stubs.
 // ---------------------------------------------------------------------------
 const callAIEndpoint = async (payload) => {
-  const { baseUrl, predictUrl, apiKey } = getAiRuntimeConfig();
+  const { baseUrl, predictUrl, apiKey, useMlPredict } = getAiRuntimeConfig();
   if (!baseUrl) {
     console.log("AI: no base URL configured");
     return null;
   }
   let mlPredictions = payload?.mlPredictions;
   if (payload?.kind === "chat" && mlPredictions === undefined) {
-    mlPredictions = await Promise.race([
-      callPredictEndpoint(payload, predictUrl),
-      new Promise((resolve) => {
-        setTimeout(() => resolve(null), AI_PREDICT_TIMEOUT_MS);
-      }),
-    ]);
+    if (useMlPredict) {
+      mlPredictions = await Promise.race([
+        callPredictEndpoint(payload, predictUrl),
+        new Promise((resolve) => {
+          setTimeout(() => resolve(null), AI_PREDICT_TIMEOUT_MS);
+        }),
+      ]);
+    } else {
+      mlPredictions = null;
+    }
   }
   const enrichedPayload =
     payload?.kind === "chat" ? { ...payload, mlPredictions } : payload;
@@ -2767,14 +2831,19 @@ const callAIEndpoint = async (payload) => {
     }
   }
   try {
-    const response = await fetchWithTimeout(baseUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    const headers = { "Content-Type": "application/json" };
+    if (!isDirectOllamaUrl(baseUrl) && apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+    const response = await fetchWithTimeout(
+      baseUrl,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(enrichedPayload),
       },
-      body: JSON.stringify(enrichedPayload),
-    });
+      AI_CHAT_TIMEOUT_MS,
+    );
     if (!response?.ok) {
       return null;
     }
@@ -2812,7 +2881,7 @@ const aiChatStubReply = (text, { prescriptionsContext = [] } = {}) => {
   if (lower.includes("diet") || lower.includes("food")) {
     return "A balanced plate with vegetables, whole grains, and lean protein supports recovery. If you have diabetes or hypertension, your doctor's plan should guide portions and timing.";
   }
-  return `I hear you. For your question about "${clean.slice(0, 80)}": always combine general guidance with your doctor's advice.${medSummary || " Share symptoms, duration, and medicines you take so I can give a more useful answer."}`;
+  return `I understand. For specific medical advice about "${clean.slice(0, 60)}", please consult your doctor.${medSummary || ""} Anything else I can help with?`;
 };
 
 const aiSideEffectStubWarnings = (items, patientFields) => {

@@ -85,10 +85,11 @@
       "stripePublishableKey": "",
       "paymentBackendUrl": "https://api.nvoisyshealth.com",
       "cashfreeReturnUrl": "myapp://payment/cashfree",
-      "aiBaseUrl": "https://ais.nvoisyshealth.com/v1/chat/completions",
+      "aiBaseUrl": "http://100.90.217.109:11434/v1/chat/completions",
       "aiPredictUrl": "https://ai.nvoisyshealth.com/predict",
       "aiModel": "phi3:latest",
       "aiApiKey": "ollama",
+      "aiUseMlPredict": false,
       "eas": {
         "projectId": "2fb4857b-e269-408a-9f5f-1efefd650376"
       }

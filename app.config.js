@@ -90,6 +90,7 @@ module.exports = ({ config }) => {
       aiPredictUrl:
         aiPredictUrlFromEnv ||
         String(baseExtra.aiPredictUrl || "").trim(),
+      aiUseMlPredict: baseExtra.aiUseMlPredict === true,
     },
   };
 };
