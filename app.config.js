@@ -47,6 +47,10 @@ const aiApiKeyFromEnv = String(
     "",
 ).trim();
 
+const aiPredictUrlFromEnv = String(
+  process.env.EXPO_PUBLIC_AI_PREDICT_URL || process.env.ML_SERVICE_URL || "",
+).trim();
+
 module.exports = ({ config }) => {
   // `config` is the parsed `app.json` (everything inside the `expo` key).
   // We spread it and override only the fields we need to compute at runtime.
@@ -83,6 +87,9 @@ module.exports = ({ config }) => {
       aiApiKey:
         aiApiKeyFromEnv ||
         String(baseExtra.aiApiKey || "").trim(),
+      aiPredictUrl:
+        aiPredictUrlFromEnv ||
+        String(baseExtra.aiPredictUrl || "").trim(),
     },
   };
 };

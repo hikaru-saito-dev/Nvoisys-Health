@@ -1,4 +1,4 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
@@ -1117,7 +1117,7 @@ const AI_API_KEY = String(
   Constants.expoConfig?.extra?.aiApiKey ||
     process.env.EXPO_PUBLIC_GROQ_API_KEY ||
     process.env.EXPO_PUBLIC_AI_API_KEY ||
-    "",
+    "ollama",
 ).trim();
 const AI_MODEL = String(
   Constants.expoConfig?.extra?.aiModel ||
@@ -1128,11 +1128,12 @@ const AI_MODEL = String(
 const AI_PREDICT_URL = String(
   Constants.expoConfig?.extra?.aiPredictUrl ||
     process.env.EXPO_PUBLIC_AI_PREDICT_URL ||
-    "https://ais.nvoisyshealth.com/v1/chat/completions",
+    "https://ai.nvoisyshealth.com/predict",
 ).trim();
-const AI_REQUEST_TIMEOUT_MS = 600000;
+const AI_CHAT_TIMEOUT_MS = 300000;
+const AI_PREDICT_TIMEOUT_MS = 30000;
 
-const fetchWithTimeout = async (url, options = {}, timeoutMs = AI_REQUEST_TIMEOUT_MS) => {
+const fetchWithTimeout = async (url, options = {}, timeoutMs = AI_CHAT_TIMEOUT_MS) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -1187,15 +1188,20 @@ const parseAssistantJsonObject = (text) => {
 };
 
 const postChatCompletions = async (url, apiKey, body) => {
+  const key = String(apiKey || "ollama").trim() || "ollama";
   try {
-    const response = await fetchWithTimeout(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-    });
+      AI_CHAT_TIMEOUT_MS,
+    );
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const msg =
@@ -1721,21 +1727,25 @@ const buildPredictPayload = ({ patient, user, question, prescriptions } = {}) =>
 const callPredictEndpoint = async (payload) => {
   if (!AI_PREDICT_URL || payload?.kind !== "chat") return null;
   try {
-    const response = await fetchWithTimeout(AI_PREDICT_URL, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
+    const response = await fetchWithTimeout(
+      AI_PREDICT_URL,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          buildPredictPayload({
+            patient: payload.patient,
+            user: payload.user,
+            question: payload.question,
+            prescriptions: payload.prescriptions,
+          }),
+        ),
       },
-      body: JSON.stringify(
-        buildPredictPayload({
-          patient: payload.patient,
-          user: payload.user,
-          question: payload.question,
-          prescriptions: payload.prescriptions,
-        }),
-      ),
-    });
+      AI_PREDICT_TIMEOUT_MS,
+    );
     const text = await response.text().catch(() => "");
     let data = null;
     try {
@@ -2672,12 +2682,6 @@ const callAIEndpoint = async (payload) => {
       ? { ...payload, mlPredictions: await callPredictEndpoint(payload) }
       : payload;
   if (isOpenAICompatibleChatCompletionsUrl(AI_BASE_URL)) {
-    if (!AI_API_KEY) {
-      console.log(
-        "AI: chat/completions URL set but no API key (extra.aiApiKey or EXPO_PUBLIC_GROQ_API_KEY).",
-      );
-      return null;
-    }
     try {
       return await callOpenAICompatibleAI(enrichedPayload);
     } catch (error) {

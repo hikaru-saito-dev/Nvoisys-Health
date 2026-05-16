@@ -86,6 +86,7 @@
       "paymentBackendUrl": "https://api.nvoisyshealth.com",
       "cashfreeReturnUrl": "myapp://payment/cashfree",
       "aiBaseUrl": "https://ais.nvoisyshealth.com/v1/chat/completions",
+      "aiPredictUrl": "https://ai.nvoisyshealth.com/predict",
       "aiModel": "phi3:latest",
       "aiApiKey": "ollama",
       "eas": {
