@@ -12704,12 +12704,16 @@ const PatientAppointmentsScreen = ({ onBack }) => {
       }
     };
 
+    const trimmedDescription = description.trim();
+    const canSendFoodLog =
+      Boolean(photoAsset?.uri) && trimmedDescription.length > 0 && !saving;
+
     const submitFoodLog = async () => {
       const trimmed = description.trim();
-      if (!trimmed && !photoAsset?.uri) {
+      if (!photoAsset?.uri || !trimmed) {
         Alert.alert(
-          "Missing details",
-          "Add a meal description or a photo before submitting.",
+          "Almost there",
+          "Add a meal photo and a short description, then tap the button below to send to your Premium doctors.",
         );
         return;
       }
@@ -12774,7 +12778,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
             "Food journal (Premium package)",
             `Package: ${pkgTitle}`,
             "",
-            trimmed || (assetForSend ? "See meal photo." : ""),
+            trimmed,
           ];
           const bodyText = bodyLines.filter(Boolean).join("\n");
 
@@ -12793,8 +12797,6 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                 assetForSend,
                 bodyText,
               );
-            } else {
-              mapped = await sendConversationMessage(cid, bodyText);
             }
             if (mapped) successCount += 1;
             else failures.push({ doctorId, reason: "Message was not saved" });
@@ -12959,11 +12961,8 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                   lineHeight: RFValue(18),
                 }}
               >
-                Submit a meal photo and/or notes. We send this only to doctors you
-                have an active Premium package with — in your existing Chat thread
-                with each of those doctors (not Basic or Gold). Replies appear in
-                Chat. Optional warnings may still show on this list when your
-                clinic uses food log records.
+                Add a meal photo and a short note, then tap Confirm. Sent to your Premium
+                doctor in Chat.
               </Text>
               <View
                 style={{
@@ -13028,7 +13027,7 @@ const PatientAppointmentsScreen = ({ onBack }) => {
                 value={description}
                 onChangeText={setDescription}
                 multiline
-                placeholder="Describe what you ate (portion, ingredients, timing, anything important)..."
+                placeholder="What did you eat?"
                 placeholderTextColor={theme.textTertiary}
                 style={{
                   marginTop: RFValue(12),
@@ -13045,24 +13044,36 @@ const PatientAppointmentsScreen = ({ onBack }) => {
               />
               <TouchableOpacity
                 onPress={submitFoodLog}
-                disabled={saving}
+                disabled={!canSendFoodLog}
                 style={{
                   marginTop: RFValue(12),
                   backgroundColor: theme.accent,
                   borderRadius: RFValue(12),
                   paddingVertical: RFValue(12),
                   alignItems: "center",
-                  opacity: saving ? 0.65 : 1,
+                  opacity: canSendFoodLog ? 1 : 0.45,
                 }}
               >
                 {saving ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text style={{ color: "#fff", fontWeight: "800" }}>
-                    Submit food log
+                    Confirm & send to doctors
                   </Text>
                 )}
               </TouchableOpacity>
+              {!canSendFoodLog && !saving ? (
+                <Text
+                  style={{
+                    color: theme.textTertiary,
+                    fontSize: RFValue(11),
+                    marginTop: RFValue(8),
+                    lineHeight: RFValue(16),
+                  }}
+                >
+                  Add a photo and a note, then tap Confirm to send.
+                </Text>
+              ) : null}
               {remoteError ? (
                 <Text
                   style={{
