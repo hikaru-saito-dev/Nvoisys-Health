@@ -1128,7 +1128,7 @@ const AI_MODEL = String(
 const AI_PREDICT_URL = String(
   Constants.expoConfig?.extra?.aiPredictUrl ||
     process.env.EXPO_PUBLIC_AI_PREDICT_URL ||
-    "https://ai.nvoisyshealth.com/predict",
+    "https://ais.nvoisyshealth.com/v1/chat/completions",
 ).trim();
 const AI_REQUEST_TIMEOUT_MS = 600000;
 
