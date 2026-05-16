@@ -1223,6 +1223,7 @@ AI HEALTH ANALYSIS (from our prediction models — use this to personalise advic
 
 HOW TO RESPOND:
 - Answer what the patient is asking — do not dump their entire record at them
+- Do NOT include ANY markdown symbols in your response back, like "**" or "__" or "#" etc. for things like bold/italics/headings anything. NO markdown symbols.
 - Relate your answers to THEIR specific numbers and situation
 - If they ask about a medication, explain what it does in plain language, why it might help THEM specifically, and any side effects to watch for
 - If they ask about a lab result, explain what it means in everyday terms
@@ -1307,11 +1308,11 @@ const yesNoFlag = (value) => {
 
 const splitNameParts = (...values) => {
   const full = firstPresent(...values);
-  if (!full) return { first: "Unknown", last: "Unknown" };
+  if (!full) return { first: "Unknown", last: "" };
   const parts = full.split(/\s+/).filter(Boolean);
   return {
     first: parts[0] || "Unknown",
-    last: parts.length > 1 ? parts.slice(1).join(" ") : "Unknown",
+    last: parts.length > 1 ? parts.slice(1).join(" ") : "",
   };
 };
 
@@ -1506,11 +1507,31 @@ const hasMedicationMatch = (medications, terms) => {
 
 const buildPredictPayload = ({ patient, user, question, prescriptions } = {}) => {
   const p = patient || {};
+  const profileFirstLast = [p.first_name, p.last_name]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  const demographicsFirstLast = [
+    p.demographics_first_name,
+    p.demographics_last_name,
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" ");
   const nameParts = splitNameParts(
-    p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : "",
+    demographicsFirstLast,
+    profileFirstLast,
     p.name,
     p.full_name,
+    p.fullName,
+    p.display_name,
+    p.displayName,
+    p.patient_name,
+    p.patientName,
+    resolveListingDisplayName(p, user),
     user?.name,
+    user?.full_name,
+    user?.display_name,
     user?.username,
     user?.email,
   );
@@ -1872,8 +1893,8 @@ const formatPrescriptionsForPrompt = (prescriptions) => {
 
 // Build the full assistant system prompt: persona + patient block + Rx block +
 // server-side model predictions when the prediction API is reachable.
-const buildHealthAssistantSystemPrompt = (patient, prescriptions, predictions) => {
-  const patientPayload = buildPredictPayload({ patient, prescriptions });
+const buildHealthAssistantSystemPrompt = (patient, prescriptions, predictions, user) => {
+  const patientPayload = buildPredictPayload({ patient, prescriptions, user });
   const firstName = fmtVal(patientPayload.demographics_first_name, "there");
   const patientBlock = formatPatientForPrompt(patientPayload);
   const rxBlock = formatPrescriptionsForPrompt(prescriptions);
@@ -1903,6 +1924,7 @@ const callOpenAICompatibleAI = async (payload) => {
       payload.patient,
       payload.prescriptions,
       payload.mlPredictions,
+      payload.user,
     );
     const history = safeArray(payload.history).filter(
       (item) =>
