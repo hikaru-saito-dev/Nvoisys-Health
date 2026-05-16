@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+﻿import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
@@ -1129,6 +1129,22 @@ const AI_PREDICT_URL = String(
     process.env.EXPO_PUBLIC_AI_PREDICT_URL ||
     "https://ai.nvoisyshealth.com/predict",
 ).trim();
+const AI_REQUEST_TIMEOUT_MS = 600000;
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = AI_REQUEST_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
 
 const isOpenAICompatibleChatCompletionsUrl = (url) =>
   String(url || "")
@@ -1170,22 +1186,27 @@ const parseAssistantJsonObject = (text) => {
 };
 
 const postChatCompletions = async (url, apiKey, body) => {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const msg =
-      data?.error?.message || data?.message || `HTTP ${response.status}`;
-    console.log("AI chat completions error:", msg);
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const msg =
+        data?.error?.message || data?.message || `HTTP ${response.status}`;
+      console.log("AI chat completions error:", msg);
+      return null;
+    }
+    return data;
+  } catch (error) {
+    console.log("AI chat completions failed:", error?.message || error);
     return null;
   }
-  return data;
 };
 
 // "Doctor in Your Pocket" base prompt. Mirrors the client's Python reference
@@ -1699,7 +1720,7 @@ const buildPredictPayload = ({ patient, user, question, prescriptions } = {}) =>
 const callPredictEndpoint = async (payload) => {
   if (!AI_PREDICT_URL || payload?.kind !== "chat") return null;
   try {
-    const response = await fetch(AI_PREDICT_URL, {
+    const response = await fetchWithTimeout(AI_PREDICT_URL, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -2664,7 +2685,7 @@ const callAIEndpoint = async (payload) => {
     }
   }
   try {
-    const response = await fetch(AI_BASE_URL, {
+    const response = await fetchWithTimeout(AI_BASE_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
