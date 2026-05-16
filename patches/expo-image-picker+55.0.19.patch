@@ -1,0 +1,14 @@
+diff --git a/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/contracts/CropImageContract.kt b/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/contracts/CropImageContract.kt
+index 6337340..a529b36 100644
+--- a/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/contracts/CropImageContract.kt
++++ b/node_modules/expo-image-picker/android/src/main/java/expo/modules/imagepicker/contracts/CropImageContract.kt
+@@ -48,6 +48,9 @@ internal class CropImageContract(
+             CropShape.RECTANGLE -> CropImageView.CropShape.RECTANGLE
+             CropShape.OVAL -> CropImageView.CropShape.OVAL
+           }
++
++          // Friendlier label than the library default "CROP" (patient food journal flow).
++          cropMenuCropButtonTitle = "Done"
+         }
+       )
+     )
