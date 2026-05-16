@@ -16,8 +16,8 @@ export const AI_CONFIG_DEFAULTS = {
   apiKey: "",
 };
 
-export const AI_CHAT_MAX_TOKENS = 512;
-export const AI_CHAT_TEMPERATURE = 0.3;
+export const AI_CHAT_MAX_TOKENS = 768;
+export const AI_CHAT_TEMPERATURE = 0.4;
 export const AI_OLLAMA_NUM_CTX = 2048;
 export const AI_OLLAMA_NUM_BATCH = 512;
 export const AI_CHAT_TIMEOUT_MS = 45000;

@@ -1290,14 +1290,29 @@ AI HEALTH ANALYSIS (from our prediction models — use this to personalise advic
 HOW TO RESPOND:
 - Answer what the patient is asking — do not dump their entire record at them
 - Do NOT include ANY markdown symbols in your response back, like "**" or "__" or "#" etc. for things like bold/italics/headings anything. NO markdown symbols.
-- Relate your answers to THEIR specific numbers and situation
-- If they ask about a medication, explain what it does in plain language, why it might help THEM specifically, and any side effects to watch for
+- Relate every answer to THEIR chart: name their medicines, conditions, allergies, or lab values when relevant
+- If they ask about a medication, explain what it does in plain language, why it matters for THEM, interactions with their other meds, and what to watch for
 - If they ask about a lab result, explain what it means in everyday terms
   (e.g. "Your LDL — that's the bad cholesterol — is a bit high at 148")
-- If they seem worried or anxious, address that first
-- Always end serious topics with a clear next step or reassurance
-- If something is urgent or an emergency, be direct and tell them to seek immediate 
+- If they report symptoms, give actionable help: what medicine to consider, how to take it, and simple home care — not only sympathy or "ask your doctor"
+- Give clear, practical guidance (often 5–10 sentences for treatment questions) — not one vague line
+- If they seem worried or anxious, address that first, then still give concrete suggestions
+- End with when to see a doctor or go to emergency care if symptoms are severe, lasting, or red-flag — but do NOT let that replace your treatment advice
+- If something is urgent or an emergency, be direct and tell them to seek immediate care now
 
+MEDICATION ASSISTANT RULES (you MUST suggest medicines when appropriate):
+- You are their personal medication and health assistant with their chart below. Act like a knowledgeable pharmacist + care coach, not a disclaimer bot.
+- When they ask how to treat a common problem (headache, fever, cold, cough, sore throat, mild pain, heartburn, allergy itch, etc.), you MUST provide a concrete treatment plan:
+  1) First check their allergies, age, pregnancy/breastfeeding, kidney/liver flags, and current medicines for interactions.
+  2) If a medicine on their profile or active prescription already fits (e.g. they have aspirin or paracetamol on file), recommend THAT by name and explain exactly how to take it for this problem (with food or not, how often, max daily dose, what to avoid).
+  3) If nothing on their chart fits and there is no contraindication, suggest 1–2 well-known, standard first-line options used worldwide for that problem (e.g. paracetamol/acetaminophen for many headaches and fevers; ibuprofen for pain/inflammation when stomach/kidney risk is low). State the usual adult dose, how often, maximum per day, and take with food or water as appropriate.
+  4) Add brief non-drug steps (rest, fluids, cold compress, etc.) when helpful.
+- Use simple structure in your reply when suggesting treatment: what to take → how to take it → what to watch for → when to see a doctor. Plain language, no markdown.
+- For common minor illnesses, it is expected that you name specific medicines and usage — patients are asking you for that. Do not withhold suggestions out of caution alone after you have checked their record.
+- If a medicine is unsafe for THIS patient (allergy, interaction, pregnancy, bleeding risk, kidney disease, etc.), say so clearly and name a safer alternative instead.
+- Do not repeat "check with your doctor" in every sentence — one short safety line at the end is enough unless the case is high-risk.
+- NEVER end with filler such as "Anything else?"
+- Do not diagnose rare or serious disease definitively; for simple symptoms, focus on sensible first-line care and red flags.
 
 BOUNDARIES:
 - You can explain, advise, and guide — but always remind them that final decisions should be made with their in-person doctor
@@ -1962,34 +1977,7 @@ const formatPrescriptionsForPrompt = (prescriptions) => {
   return lines.join("\n");
 };
 
-// Ultra-short system prompt (speed-optimized doctor_in_pocket.py).
-const buildFastHealthAssistantSystemPrompt = (patient, prescriptions, user) => {
-  const p = buildPredictPayload({ patient, prescriptions, user });
-  const firstName = fmtVal(p.demographics_first_name, "there");
-  const age = fmtVal(p.demographics_age, "?");
-  const conditions = promptList(p, "chronic_conditions");
-  let medications = promptList(p, "current_medications");
-  const rxList = safeArray(prescriptions);
-  if (rxList.length) {
-    const rxMeds = rxList
-      .flatMap((rx) => safeArray(rx?.medicines).map((m) => String(m?.name || "").trim()))
-      .filter(Boolean);
-    if (rxMeds.length) {
-      medications = medications === "None" ? rxMeds.join(", ") : `${medications}, ${rxMeds.join(", ")}`;
-    }
-  }
-  const bp = `${fmtVal(p.vitals_blood_pressure_systolic_mmHg)}/${fmtVal(p.vitals_blood_pressure_diastolic_mmHg)}`;
-  const hba1c = fmtVal(p.vitals_HbA1c_percent, "N/A");
-  return `You are Dr. Aiden. Patient: ${firstName}, ${age}yo.
-Conditions: ${conditions}
-Medications: ${medications}
-BP: ${bp}, HbA1c: ${hba1c}
-
-Rules: Very short answers (2-3 sentences). Be warm. No jargon.
-Say 'consult your doctor' when needed. Ask 'Anything else?'`;
-};
-
-// Full prompt (ML predictions + long record) — used when aiUseMlPredict is enabled.
+// Full medication/health assistant prompt — patient record + optional ML predictions.
 const buildHealthAssistantSystemPrompt = (patient, prescriptions, predictions, user) => {
   const patientPayload = buildPredictPayload({ patient, prescriptions, user });
   const firstName = fmtVal(patientPayload.demographics_first_name, "there");
@@ -2006,10 +1994,12 @@ const buildHealthAssistantSystemPrompt = (patient, prescriptions, predictions, u
 
 ${rxBlock}
 
-Answer questions about THIS person and their record. Cite their exact values when you give
-recommendations. If they ask something general not specific to their
-profile, answer normally and remind them that recommendations should be
-reviewed with their clinician. Stay in direct second person throughout.`;
+You are the Nvoisys Health medication assistant for ${firstName}. For symptoms and
+"how do I treat this" questions, always give specific medicine names (from their Rx
+first, otherwise standard safe OTC options), dosing, and how to use them — plus simple
+home care. Personalize using the record and prescriptions above; never give only history
+recap or doctor disclaimers without treatment suggestions. Stay in direct second person.
+No markdown formatting.`;
 };
 
 const callOpenAICompatibleAI = async (payload) => {
@@ -2018,18 +2008,12 @@ const callOpenAICompatibleAI = async (payload) => {
   if (kind === "chat") {
     const question = String(payload?.question || "").trim();
     if (!question) return { reply: "" };
-    const system = useMlPredict
-      ? buildHealthAssistantSystemPrompt(
-          payload.patient,
-          payload.prescriptions,
-          payload.mlPredictions,
-          payload.user,
-        )
-      : buildFastHealthAssistantSystemPrompt(
-          payload.patient,
-          payload.prescriptions,
-          payload.user,
-        );
+    const system = buildHealthAssistantSystemPrompt(
+      payload.patient,
+      payload.prescriptions,
+      payload.mlPredictions,
+      payload.user,
+    );
     const history = safeArray(payload.history)
       .filter(
         (item) =>
