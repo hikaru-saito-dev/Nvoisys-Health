@@ -10082,24 +10082,48 @@ const PatientChatScreen = () => {
   const sendMessage = async () => {
     if (!message.trim() || !selectedContact?.id) return;
     const text = message.trim();
-    // Step 9: route through the assistant endpoint when chatting with the
-    // Health Assistant conversation, so the AI reply is appended immediately.
+    // Step 9: Health Assistant — show the user's question immediately, then typing, then reply.
     if (isAssistantConversation(selectedContact)) {
       if (assistantThinking) return;
+      const optimisticId = `pending-assistant-user-${Date.now()}`;
+      const optimisticUserMessage = {
+        id: optimisticId,
+        text,
+        kind: ASSISTANT_USER_MESSAGE_KIND,
+        imageUrls: [],
+        imageUrl: null,
+        senderId: currentUserId,
+        senderRole: "user",
+        senderName: "You",
+        time: formatTimeValue(new Date().toISOString()),
+        created: new Date().toISOString(),
+        raw: null,
+      };
       setMessage("");
       setAssistantThinking(true);
+      isAtChatBottomRef.current = true;
+      setIsAtChatBottom(true);
+      setContactMessages((prev) => {
+        if (prev.some((item) => item.id === optimisticId)) return prev;
+        return [...prev, optimisticUserMessage];
+      });
+      scrollChatToBottom(true);
       try {
         const result = await sendAssistantMessage(selectedContact.id, text, {
           consumerPlan: patientQuickCareBinding?.consumerPlan || CONSUMER_PLAN.BASIC,
         });
         if (result?.userMessage || result?.replyMessage) {
           setContactMessages((prev) => {
-            const next = [...prev];
-            if (
-              result.userMessage &&
-              !next.some((item) => item.id === result.userMessage.id)
-            ) {
-              next.push(result.userMessage);
+            let next = prev.filter((item) => item.id !== optimisticId);
+            if (result.userMessage) {
+              const uid = result.userMessage.id;
+              if (!next.some((item) => item.id === uid)) {
+                next.push(result.userMessage);
+              } else {
+                next = next.map((item) =>
+                  item.id === uid ? result.userMessage : item,
+                );
+              }
             }
             if (
               result.replyMessage &&
@@ -10109,11 +10133,18 @@ const PatientChatScreen = () => {
             }
             return next;
           });
+          scrollChatToBottom(true);
         } else {
+          setContactMessages((prev) =>
+            prev.filter((item) => item.id !== optimisticId),
+          );
           setMessage(text);
         }
       } catch (error) {
         console.log("Assistant send error:", error?.message);
+        setContactMessages((prev) =>
+          prev.filter((item) => item.id !== optimisticId),
+        );
         if (error?.code === "AI_DAILY_LIMIT_REACHED") {
           Alert.alert("Limit reached", error.message);
         }
@@ -10405,10 +10436,13 @@ const PatientChatScreen = () => {
                   Loading chat...
                 </Text>
               </View>
-            ) : contactMessages.length > 0 ? (
-              contactMessages.map((msg) => {
+            ) : contactMessages.length > 0 ||
+              (isAssistantConversation(selectedContact) && assistantThinking) ? (
+              <>
+              {contactMessages.map((msg) => {
                 const isCurrentUser =
-                  msg.senderId && msg.senderId === currentUserId;
+                  (msg.senderId && msg.senderId === currentUserId) ||
+                  msg.senderRole === "user";
                 const isSystem = msg.kind === "system";
                 const hasImage = !!msg.imageUrl;
                 const isPrescription =
@@ -10560,7 +10594,43 @@ const PatientChatScreen = () => {
                     </InnerBubble>
                   </View>
                 );
-              })
+              })}
+              {isAssistantConversation(selectedContact) && assistantThinking ? (
+                <View
+                  style={{
+                    marginBottom: RFValue(12),
+                    flexDirection: "row",
+                    justifyContent: "flex-start",
+                  }}
+                >
+                  <View
+                    style={{
+                      maxWidth: "75%",
+                      backgroundColor: theme.card,
+                      paddingHorizontal: RFValue(14),
+                      paddingVertical: RFValue(12),
+                      borderRadius: RFValue(16),
+                      borderBottomLeftRadius: RFValue(4),
+                      borderWidth: 1,
+                      borderColor: theme.inputBorder,
+                      flexDirection: "row",
+                      alignItems: "center",
+                    }}
+                  >
+                    <ActivityIndicator size="small" color={theme.accent} />
+                    <Text
+                      style={{
+                        marginLeft: RFValue(10),
+                        fontSize: RFValue(13),
+                        color: theme.textSecondary,
+                      }}
+                    >
+                      Health Assistant is thinking…
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+              </>
             ) : (
               <View
                 style={{
