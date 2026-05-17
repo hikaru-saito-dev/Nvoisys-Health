@@ -3268,6 +3268,65 @@ const validatePatientHealthProfileComplete = (values) => {
   return null;
 };
 
+const getPatientProfileCompletionError = ({
+  currentUser,
+  patientProfile,
+  fullName,
+  phone,
+  condition,
+  comfortLanguage,
+  gender,
+  healthValues,
+  avatarAsset,
+}) => {
+  if (!String(fullName ?? currentUser?.name ?? "").trim()) {
+    return "Please enter your full name.";
+  }
+  const phoneDigits = String(
+    phone ?? patientProfilePhoneRaw(patientProfile) ?? "",
+  ).replace(/\D/g, "");
+  if (phoneDigits.length < 10) {
+    return "Please enter a valid phone number (at least 10 digits).";
+  }
+  if (
+    !String(
+      condition ??
+        patientProfile?.primary_condition ??
+        patientProfile?.condition ??
+        "",
+    ).trim()
+  ) {
+    return "Please enter your condition or main concern.";
+  }
+  if (!String(comfortLanguage ?? patientProfile?.language ?? "").trim()) {
+    return "Please enter your comfortable consultation language.";
+  }
+  if (!String(gender ?? patientProfile?.gender ?? "").trim()) {
+    return "Please select your gender.";
+  }
+  const hasAvatar =
+    Boolean(avatarAsset?.uri) || Boolean(patientProfileAvatarUrl(patientProfile));
+  if (!hasAvatar) {
+    return "Please add a profile photo.";
+  }
+  return validatePatientHealthProfileComplete(
+    healthValues ?? patientHealthValuesFromProfile(patientProfile),
+  );
+};
+
+const isPatientProfileComplete = (currentUser, patientProfile) =>
+  !getPatientProfileCompletionError({
+    currentUser,
+    patientProfile,
+    fullName: currentUser?.name,
+    phone: patientProfilePhoneRaw(patientProfile),
+    condition: patientProfile?.primary_condition || patientProfile?.condition,
+    comfortLanguage: patientProfile?.language,
+    gender: patientProfile?.gender,
+    healthValues: patientHealthValuesFromProfile(patientProfile),
+    avatarAsset: null,
+  });
+
 // Pull stored values back out of a PocketBase patient_profile record into the
 // shape the form uses (strings, so TextInput can render them).
 const patientHealthValuesFromProfile = (profile) => ({
@@ -11727,6 +11786,7 @@ const PatientEditProfileScreen = ({
   currentUser,
   patientProfile,
   onSaved,
+  locked = false,
 }) => {
   const { theme } = useTheme();
   const keyboardInset = useKeyboardBottomInset();
@@ -11758,6 +11818,14 @@ const PatientEditProfileScreen = ({
     setAvatarAsset(null);
     setError("");
   }, [patientProfile?.id, currentUser?.id]);
+
+  useEffect(() => {
+    if (!locked) return undefined;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () =>
+      true,
+    );
+    return () => subscription.remove();
+  }, [locked]);
 
   const pickAvatar = async (source) => {
     try {
@@ -11803,21 +11871,22 @@ const PatientEditProfileScreen = ({
       setError("Profile not loaded. Please try again.");
       return;
     }
-    if (!fullName.trim()) {
-      setError("Please enter your full name.");
+    const completionError = getPatientProfileCompletionError({
+      currentUser,
+      patientProfile,
+      fullName,
+      phone,
+      condition,
+      comfortLanguage,
+      gender,
+      healthValues,
+      avatarAsset,
+    });
+    if (completionError) {
+      setError(completionError);
       return;
     }
     const phoneDigits = String(phone || "").replace(/\D/g, "");
-    if (phoneDigits.length < 10) {
-      setError("Please enter a valid phone number (at least 10 digits).");
-      return;
-    }
-    const healthProfileError =
-      validatePatientHealthProfileComplete(healthValues);
-    if (healthProfileError) {
-      setError(healthProfileError);
-      return;
-    }
     try {
       setSaving(true);
       setError("");
@@ -11852,7 +11921,7 @@ const PatientEditProfileScreen = ({
         }
       }
       if (onSaved) await onSaved();
-      onBack();
+      if (!locked) onBack?.();
     } catch (saveError) {
       console.log("PatientEditProfileScreen save:", saveError);
       setError(
@@ -11888,29 +11957,32 @@ const PatientEditProfileScreen = ({
             alignItems: "center",
           }}
         >
-          <TouchableOpacity
-            onPress={onBack}
-            style={{
-              width: RFValue(36),
-              height: RFValue(36),
-              borderRadius: RFValue(10),
-              backgroundColor: theme.bg,
-              justifyContent: "center",
-              alignItems: "center",
-              marginRight: RFValue(14),
-            }}
-          >
-            <Ionicons
-              name="arrow-back"
-              size={RFValue(20)}
-              color={theme.textPrimary}
-            />
-          </TouchableOpacity>
+          {!locked ? (
+            <TouchableOpacity
+              onPress={onBack}
+              style={{
+                width: RFValue(36),
+                height: RFValue(36),
+                borderRadius: RFValue(10),
+                backgroundColor: theme.bg,
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: RFValue(14),
+              }}
+            >
+              <Ionicons
+                name="arrow-back"
+                size={RFValue(20)}
+                color={theme.textPrimary}
+              />
+            </TouchableOpacity>
+          ) : null}
           <Text
             style={{
               fontSize: RFValue(20),
               fontWeight: "800",
               color: theme.textPrimary,
+              flex: 1,
             }}
           >
             Edit profile
@@ -11920,10 +11992,44 @@ const PatientEditProfileScreen = ({
           contentContainerStyle={{
             padding: RFValue(16),
             paddingBottom:
-              tabScrollBottomPadding() + androidKeyboardPad(keyboardInset),
+              (locked ? RFValue(24) : tabScrollBottomPadding()) +
+              androidKeyboardPad(keyboardInset),
           }}
           keyboardShouldPersistTaps="handled"
         >
+          {locked ? (
+            <View
+              style={{
+                backgroundColor: theme.accentLight,
+                borderRadius: RFValue(14),
+                padding: RFValue(14),
+                marginBottom: RFValue(16),
+                borderWidth: 1,
+                borderColor: theme.cardBorder,
+              }}
+            >
+              <Text
+                style={{
+                  color: theme.textPrimary,
+                  fontWeight: "800",
+                  fontSize: RFValue(15),
+                  marginBottom: RFValue(6),
+                }}
+              >
+                Complete your profile
+              </Text>
+              <Text
+                style={{
+                  color: theme.textSecondary,
+                  fontSize: RFValue(13),
+                  lineHeight: RFValue(18),
+                }}
+              >
+                Fill in every field below and save to continue. You cannot use
+                the app until your profile is complete.
+              </Text>
+            </View>
+          ) : null}
           <Text
             style={{
               fontSize: RFValue(13),
@@ -12146,7 +12252,7 @@ const PatientEditProfileScreen = ({
                   fontSize: RFValue(16),
                 }}
               >
-                Save changes
+                {locked ? "Save and continue" : "Save changes"}
               </Text>
             )}
           </TouchableOpacity>
@@ -36975,6 +37081,31 @@ const AppContent = ({
           await reloadPatientPrimaryCarePaths();
         }}
       />
+    );
+  }
+
+  if (
+    userRole === "patient" &&
+    patientProfile?.id &&
+    !needsCareOnboarding(patientProfile, localCareMode) &&
+    !isPatientProfileComplete(currentUser, patientProfile)
+  ) {
+    return (
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        edges={["top", "left", "right"]}
+      >
+        <StatusBar
+          barStyle={theme.statusBarStyle}
+          backgroundColor={theme.statusBarBg}
+        />
+        <PatientEditProfileScreen
+          locked
+          currentUser={currentUser}
+          patientProfile={patientProfile}
+          onSaved={handlePatientProfileSaved}
+        />
+      </SafeAreaView>
     );
   }
 

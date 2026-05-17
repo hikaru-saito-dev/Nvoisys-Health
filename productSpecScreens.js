@@ -3280,6 +3280,18 @@ export function QuickSolutionScreen({
     }
   };
 
+  const assetToImagePart = (asset) => {
+    const uri = asset.uri;
+    const nameGuess = uri.split("/").pop() || "upload.jpg";
+    const lower = nameGuess.toLowerCase();
+    const mime = lower.endsWith(".png")
+      ? "image/png"
+      : lower.endsWith(".webp")
+        ? "image/webp"
+        : "image/jpeg";
+    return { uri, name: nameGuess, type: mime };
+  };
+
   const pickOptionalImage = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -3292,18 +3304,30 @@ export function QuickSolutionScreen({
         quality: 0.85,
       });
       if (res.canceled || !res.assets?.[0]) return;
-      const asset = res.assets[0];
-      const uri = asset.uri;
-      const nameGuess = uri.split("/").pop() || "upload.jpg";
-      const lower = nameGuess.toLowerCase();
-      const mime = lower.endsWith(".png")
-        ? "image/png"
-        : lower.endsWith(".webp")
-          ? "image/webp"
-          : "image/jpeg";
-      setImagePart({ uri, name: nameGuess, type: mime });
+      setImagePart(assetToImagePart(res.assets[0]));
     } catch (e) {
       Alert.alert("Image", e?.message || "Could not pick a photo.");
+    }
+  };
+
+  const takeOptionalPhoto = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          "Permission",
+          "Camera access is needed to take a photo.",
+        );
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      setImagePart(assetToImagePart(res.assets[0]));
+    } catch (e) {
+      Alert.alert("Camera", e?.message || "Could not take a photo.");
     }
   };
 
@@ -3501,9 +3525,28 @@ export function QuickSolutionScreen({
           }}
         >
           <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
-            {imagePart?.uri ? "Change attached photo" : "Attach photo (optional)"}
+            {imagePart?.uri ? "Change gallery photo" : "Attach photo (optional)"}
           </Text>
           <Ionicons name="image-outline" size={22} color={theme.accent} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={takeOptionalPhoto}
+          style={{
+            marginTop: 8,
+            padding: 14,
+            borderRadius: 14,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.cardBorder,
+            backgroundColor: theme.card,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
+            {imagePart?.uri ? "Retake with camera" : "Take photo with camera"}
+          </Text>
+          <Ionicons name="camera-outline" size={22} color={theme.accent} />
         </TouchableOpacity>
         {imagePart?.uri ? (
           <Text
