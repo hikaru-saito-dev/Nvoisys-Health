@@ -6,7 +6,7 @@
   "redirects": [
     {
       "source": "/(.*)",
-      "destination": "https://app.nvoisyshealth.com/",
+      "destination": "",
       "permanent": true
     }
   ]
