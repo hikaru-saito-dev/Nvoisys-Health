@@ -6,7 +6,7 @@
   "redirects": [
     {
       "source": "/(.*)",
-      "destination": "https://nvoisyshealth.com/app/$1",
+      "destination": "https://apk.nvoisyshealth.com/",
       "permanent": true
     }
   ]
