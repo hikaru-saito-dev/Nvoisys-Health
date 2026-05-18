@@ -68,7 +68,6 @@
   },
   "devDependencies": {
     "@expo/cli": "55.0.26",
-    "@react-native/gradle-plugin": "^0.81.5",
     "@types/react": "~19.2.10",
     "dotenv": "^17.4.2",
     "eslint": "^9.25.0",
