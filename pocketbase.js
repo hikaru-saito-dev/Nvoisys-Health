@@ -15,7 +15,7 @@ if (Platform.OS !== "web" && typeof global.EventSource === "undefined") {
 
 const PB_URL = "https://pbs.nvoisyshealth.com";
 const OAUTH2_REDIRECT_URL = `https://nvoisyshealth.com/authredirect`;
-const WEB_OAUTH2_REDIRECT_URL = "https://app.nvoisyshealth.com/authredirect";
+const WEB_OAUTH2_REDIRECT_URL = "https://app.nvoisyshealth.com";
 const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
 
 function getOAuth2RedirectUrl() {
