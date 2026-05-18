@@ -15,15 +15,12 @@ if (Platform.OS !== "web" && typeof global.EventSource === "undefined") {
 
 const PB_URL = "https://pbs.nvoisyshealth.com";
 const OAUTH2_REDIRECT_URL = `https://nvoisyshealth.com/authredirect`;
+const WEB_OAUTH2_REDIRECT_URL = "https://app.nvoisyshealth.com/authredirect";
 const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
 
 function getOAuth2RedirectUrl() {
-  if (
-    Platform.OS === "web" &&
-    typeof window !== "undefined" &&
-    window.location?.origin
-  ) {
-    return `${window.location.origin}/authredirect`;
+  if (Platform.OS === "web") {
+    return WEB_OAUTH2_REDIRECT_URL;
   }
 
   return OAUTH2_REDIRECT_URL;
@@ -683,7 +680,9 @@ async function createPharmacyProfileRecord(userId, merged) {
   const payloadBase = { user: userId };
   if (fallbackStoreName) payloadBase.store_name = fallbackStoreName;
 
-  const providerKind = coercePharmacyProviderKindForCreate(merged.provider_kind);
+  const providerKind = coercePharmacyProviderKindForCreate(
+    merged.provider_kind,
+  );
   const payload = { ...payloadBase };
   if (providerKind) payload.provider_kind = providerKind;
 
@@ -1011,10 +1010,7 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
       const authUrl = `${provider.authUrl}${redirectUrl}`;
       console.log("OAuth vendor URL:", authUrl);
 
-      const result = await WebBrowser.openAuthSessionAsync(
-        authUrl,
-        returnUrl,
-      );
+      const result = await WebBrowser.openAuthSessionAsync(authUrl, returnUrl);
 
       console.log("OAuth browser result:", JSON.stringify(result, null, 2));
 
