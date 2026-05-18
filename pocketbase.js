@@ -17,6 +17,22 @@ const PB_URL = "https://pbs.nvoisyshealth.com";
 const OAUTH2_REDIRECT_URL = `https://nvoisyshealth.com/authredirect`;
 const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
 
+function getOAuth2RedirectUrl() {
+  if (
+    Platform.OS === "web" &&
+    typeof window !== "undefined" &&
+    window.location?.origin
+  ) {
+    return `${window.location.origin}/authredirect`;
+  }
+
+  return OAUTH2_REDIRECT_URL;
+}
+
+function getOAuth2ReturnUrl(redirectUrl) {
+  return Platform.OS === "web" ? redirectUrl : APP_OAUTH2_RETURN_URL;
+}
+
 const authStore = new AsyncAuthStore({
   save: async (serialized) => {
     await AsyncStorage.setItem("pb_auth", serialized);
@@ -981,21 +997,23 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
     let authData;
 
     if (providerName === "google") {
-      // Manual code exchange (recommended on mobile):
-      // 1) Open Google's consent screen with redirect_uri pointing to an HTTPS page.
-      // 2) That page redirects back into the app via deep link (myapp://oauth2).
-      // 3) Exchange the received code via PocketBase authWithOAuth2Code.
+      // Manual code exchange: native uses the HTTPS bridge page to return to
+      // myapp://oauth2, while web can receive the OAuth callback directly.
 
       // IMPORTANT:
       // - Add `https://nvoisyshealth.com/authredirect` to Google Console redirect URIs
-      // - The redirect page bounces back into the app via deep link (myapp://oauth2).
+      // - Native: the redirect page bounces back into the app via deep link (myapp://oauth2).
+      // - Web: add your deployed /authredirect URL to Google Console redirect URIs.
 
-      const authUrl = `${provider.authUrl}${OAUTH2_REDIRECT_URL}`;
+      const redirectUrl = getOAuth2RedirectUrl();
+      const returnUrl = getOAuth2ReturnUrl(redirectUrl);
+
+      const authUrl = `${provider.authUrl}${redirectUrl}`;
       console.log("OAuth vendor URL:", authUrl);
 
       const result = await WebBrowser.openAuthSessionAsync(
         authUrl,
-        APP_OAUTH2_RETURN_URL,
+        returnUrl,
       );
 
       console.log("OAuth browser result:", JSON.stringify(result, null, 2));
@@ -1034,7 +1052,7 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
           provider.name,
           code,
           provider.codeVerifier,
-          OAUTH2_REDIRECT_URL,
+          redirectUrl,
           {
             role: selectedRole,
           },
