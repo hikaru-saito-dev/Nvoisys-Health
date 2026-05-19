@@ -16,7 +16,10 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "signaling": "node server/signaling-server.js",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "build:playstore": "eas build -p android --profile production",
+    "build:preview": "eas build -p android --profile preview",
+    "submit:playstore": "eas submit -p android --profile production"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -71,6 +74,7 @@
     "@expo/cli": "55.0.26",
     "@types/react": "~19.2.10",
     "dotenv": "^17.4.2",
+    "eas-cli": "^18.13.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~55.0.0",
     "patch-package": "^8.0.1",

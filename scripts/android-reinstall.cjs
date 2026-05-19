@@ -5,7 +5,7 @@ const { spawnSync } = require('child_process');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const pkg = 'com.anonymous.myapp';
+const pkg = 'com.nvoisys.health';
 
 spawnSync('adb', ['uninstall', pkg], { stdio: 'inherit', cwd: root, shell: true });
 

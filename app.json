@@ -21,7 +21,7 @@
         "NSPhotoLibraryAddUsageDescription": "Allow saving chat photos to your library if needed."
       },
       "bitcode": false,
-      "bundleIdentifier": "com.anonymous.myapp"
+      "bundleIdentifier": "com.nvoisys.health"
     },
     "android": {
       "permissions": [
@@ -41,7 +41,7 @@
         "foregroundImage": "./assets/icons/logo_N.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.myapp",
+      "package": "com.nvoisys.health",
       "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
