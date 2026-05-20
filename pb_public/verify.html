@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Email Verification</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 520px;
+        margin: 60px auto;
+        padding: 20px;
+        line-height: 1.5;
+      }
+      .box {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 20px;
+      }
+      button,
+      .button {
+        display: inline-block;
+        border: 1px solid #111;
+        border-radius: 4px;
+        background: #111;
+        color: #fff;
+        padding: 10px 14px;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .button.secondary {
+        background: #fff;
+        color: #111;
+      }
+      .actions {
+        display: none;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+      .ok {
+        color: green;
+      }
+      .err {
+        color: red;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h1>Verify your email</h1>
+      <p id="status">Checking token...</p>
+      <button id="verifyBtn" style="display: none">Verify Email</button>
+
+      <div id="actions" class="actions">
+        <a id="webLink" class="button" href="https://app.nvoisyshealth.com">
+          Continue on web
+        </a>
+        <a id="appLink" class="button secondary" href="myapp://">
+          Open mobile app
+        </a>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/pocketbase/dist/pocketbase.umd.js"></script>
+    <script>
+      var pb = new PocketBase("https://pbs.nvoisyshealth.com");
+      var WEB_APP_URL = "https://app.nvoisyshealth.com";
+      var MOBILE_APP_URL = "myapp://";
+
+      var statusEl = document.getElementById("status");
+      var verifyBtn = document.getElementById("verifyBtn");
+      var actionsEl = document.getElementById("actions");
+      var webLinkEl = document.getElementById("webLink");
+      var appLinkEl = document.getElementById("appLink");
+
+      var params = new URLSearchParams(window.location.search || "");
+      var token = params.get("token");
+      var returnTarget = String(params.get("return") || params.get("returnTo") || "").toLowerCase();
+
+      function isMobileBrowser() {
+        return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+      }
+
+      function getPreferredReturnUrl() {
+        if (returnTarget === "app" || returnTarget === "mobile") return MOBILE_APP_URL;
+        if (returnTarget === "web") return WEB_APP_URL;
+        return isMobileBrowser() ? MOBILE_APP_URL : WEB_APP_URL;
+      }
+
+      function showReturnActions() {
+        webLinkEl.href = WEB_APP_URL;
+        appLinkEl.href = MOBILE_APP_URL;
+        actionsEl.style.display = "flex";
+      }
+
+      function redirectAfterSuccess() {
+        var url = getPreferredReturnUrl();
+        window.setTimeout(function () {
+          window.location.href = url;
+        }, 1200);
+      }
+
+      if (!token) {
+        statusEl.textContent = "Missing verification token.";
+        statusEl.className = "err";
+        showReturnActions();
+      } else {
+        statusEl.textContent = "Token found. Click below to verify your email.";
+        verifyBtn.style.display = "inline-block";
+      }
+
+      verifyBtn.addEventListener("click", async function () {
+        statusEl.textContent = "Verifying...";
+        statusEl.className = "";
+
+        try {
+          await pb.collection("UsersAuth").confirmVerification(token);
+          statusEl.textContent = "Your email has been verified successfully. Redirecting...";
+          statusEl.className = "ok";
+          verifyBtn.style.display = "none";
+          showReturnActions();
+          redirectAfterSuccess();
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent =
+            err?.response?.message ||
+            "Verification failed. Token may be invalid or expired.";
+          statusEl.className = "err";
+        }
+      });
+    </script>
+  </body>
+</html>

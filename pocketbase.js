@@ -15,19 +15,22 @@ if (Platform.OS !== "web" && typeof global.EventSource === "undefined") {
 
 const PB_URL = "https://pbs.nvoisyshealth.com";
 const OAUTH2_REDIRECT_URL = `https://nvoisyshealth.com/authredirect`;
-const WEB_OAUTH2_REDIRECT_URL = "https://app.nvoisyshealth.com";
+const WEB_OAUTH2_RETURN_URL = "https://app.nvoisyshealth.com/authredirect";
 const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
+const WEB_OAUTH2_RETURN_COOKIE = "nvoisys_oauth_return=web";
 
 function getOAuth2RedirectUrl() {
-  if (Platform.OS === "web") {
-    return WEB_OAUTH2_REDIRECT_URL;
-  }
-
   return OAUTH2_REDIRECT_URL;
 }
 
-function getOAuth2ReturnUrl(redirectUrl) {
-  return Platform.OS === "web" ? redirectUrl : APP_OAUTH2_RETURN_URL;
+function getOAuth2ReturnUrl() {
+  return Platform.OS === "web" ? WEB_OAUTH2_RETURN_URL : APP_OAUTH2_RETURN_URL;
+}
+
+function markWebOAuthReturnTarget() {
+  if (Platform.OS !== "web" || typeof document === "undefined") return;
+
+  document.cookie = `${WEB_OAUTH2_RETURN_COOKIE}; Max-Age=600; Path=/; Domain=.nvoisyshealth.com; SameSite=Lax; Secure`;
 }
 
 const authStore = new AsyncAuthStore({
@@ -1002,10 +1005,11 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
       // IMPORTANT:
       // - Add `https://nvoisyshealth.com/authredirect` to Google Console redirect URIs
       // - Native: the redirect page bounces back into the app via deep link (myapp://oauth2).
-      // - Web: add your deployed /authredirect URL to Google Console redirect URIs.
+      // - Web: the redirect page bounces back to app.nvoisyshealth.com/authredirect.
 
       const redirectUrl = getOAuth2RedirectUrl();
-      const returnUrl = getOAuth2ReturnUrl(redirectUrl);
+      const returnUrl = getOAuth2ReturnUrl();
+      markWebOAuthReturnTarget();
 
       const authUrl = `${provider.authUrl}${redirectUrl}`;
       console.log("OAuth vendor URL:", authUrl);

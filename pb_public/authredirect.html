@@ -46,15 +46,16 @@
       <h1>Signing you in...</h1>
       <p>
         If you are not redirected automatically, tap
-        <a id="openLink" href="#">Return to app</a>.
+        <a id="openLink" href="#">Continue</a>.
       </p>
     </div>
 
     <script>
       (function () {
-        // IMPORTANT: keep this scheme in sync with your Expo config (app.json -> expo.scheme)
-        // and with the `APP_OAUTH2_RETURN_URL` in pocketbase.js.
+        // IMPORTANT: keep these URLs in sync with pocketbase.js.
         var APP_RETURN_URL = "myapp://oauth2";
+        var WEB_RETURN_URL = "https://app.nvoisyshealth.com/authredirect";
+        var RETURN_COOKIE = "nvoisys_oauth_return=web";
 
         var params = new URLSearchParams(window.location.search || "");
 
@@ -73,7 +74,18 @@
           if (v != null && v !== "") nextParams.set(key, v);
         });
 
-        var nextUrl = APP_RETURN_URL;
+        var shouldReturnToWeb =
+          params.get("return") === "web" ||
+          params.get("returnTo") === "web" ||
+          document.cookie.indexOf(RETURN_COOKIE) !== -1 ||
+          Boolean(window.opener);
+
+        if (shouldReturnToWeb) {
+          document.cookie =
+            "nvoisys_oauth_return=; Max-Age=0; Path=/; Domain=.nvoisyshealth.com; SameSite=Lax; Secure";
+        }
+
+        var nextUrl = shouldReturnToWeb ? WEB_RETURN_URL : APP_RETURN_URL;
         var query = nextParams.toString();
         if (query) nextUrl += "?" + query;
 
