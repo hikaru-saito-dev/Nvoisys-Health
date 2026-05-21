@@ -42,6 +42,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.nvoisys.health",
+      "versionCode": 5,
       "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
