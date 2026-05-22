@@ -5665,7 +5665,7 @@ export async function doctorWithdrawCoinsStub(
   }
 }
 
-// --- Quick Solution (10 coins) / Quick Counselling (25 coins) ---
+// --- Quick Solution (20 coins) / Quick Counselling (25 coins) ---
 
 async function getActiveQuickRequestLoadByRecipient(candidateUserIds) {
   const candidateSet = new Set(
@@ -5842,7 +5842,7 @@ export async function createQuickSolutionRequest({
   /** Pharmacy account (UsersAuth id). Mutually exclusive with `targetDoctorUserId`. */
   targetPharmacyUserId,
 }) {
-  await assertPatientHasCasualCoins(patientUserId, 10);
+  await assertPatientHasCasualCoins(patientUserId, 20);
   const td = String(targetDoctorUserId || "").trim();
   const tp = String(targetPharmacyUserId || "").trim();
   if (!td && !tp) {
@@ -5858,9 +5858,9 @@ export async function createQuickSolutionRequest({
     recipient: recipientUserId,
     notes: cleanNotes,
     private_mode: Boolean(privateMode),
-    patient_cost_coins: 10,
+    patient_cost_coins: 20,
     platform_fee_coins: 5,
-    provider_coins: 5,
+    provider_coins: 15,
     status: "queued",
   };
   try {
@@ -5871,9 +5871,9 @@ export async function createQuickSolutionRequest({
       form.append("recipient", recipientUserId);
       form.append("notes", base.notes);
       form.append("private_mode", privateMode ? "true" : "false");
-      form.append("patient_cost_coins", "10");
+      form.append("patient_cost_coins", "20");
       form.append("platform_fee_coins", "5");
-      form.append("provider_coins", "5");
+      form.append("provider_coins", "15");
       form.append("status", "queued");
       form.append("image", imagePart);
       row = await pb.collection("quick_solution_requests").create(form);
@@ -5946,8 +5946,8 @@ export async function createQuickCounsellingRequest({
       recipient: recipientUserId,
       topic: cleanTopic,
       patient_cost_coins: 25,
-      platform_fee_coins: 10,
-      provider_coins: 15,
+      platform_fee_coins: 5,
+      provider_coins: 20,
       status: "queued",
     });
     await notifyLocal("Quick Counselling", "A provider will connect shortly.");
@@ -7074,9 +7074,9 @@ export async function listActiveQuickRequestsForPatient(patientUserId) {
 function quickRequestCoinSettlementConfig(kind, request = {}) {
   const requestKind = kind === "counselling" ? "counselling" : "solution";
   const isCounselling = requestKind === "counselling";
-  const patientDefault = isCounselling ? 25 : 10;
-  const providerDefault = isCounselling ? 15 : 5;
-  const platformDefault = isCounselling ? 10 : 5;
+  const patientDefault = isCounselling ? 25 : 20;
+  const providerDefault = isCounselling ? 20 : 15;
+  const platformDefault = 5;
   const patientCostCoins =
     Number(request?.patient_cost_coins ?? patientDefault) || patientDefault;
   const providerCoins =

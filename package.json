@@ -74,7 +74,7 @@
     "@expo/cli": "55.0.26",
     "@types/react": "~19.2.10",
     "dotenv": "^17.4.2",
-    "eas-cli": "^18.13.1",
+    "eas-cli": "^0.52.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~55.0.0",
     "patch-package": "^8.0.1",

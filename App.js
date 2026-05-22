@@ -3277,7 +3277,6 @@ const getPatientProfileCompletionError = ({
   comfortLanguage,
   gender,
   healthValues,
-  avatarAsset,
 }) => {
   if (!String(fullName ?? currentUser?.name ?? "").trim()) {
     return "Please enter your full name.";
@@ -3303,11 +3302,6 @@ const getPatientProfileCompletionError = ({
   }
   if (!String(gender ?? patientProfile?.gender ?? "").trim()) {
     return "Please select your gender.";
-  }
-  const hasAvatar =
-    Boolean(avatarAsset?.uri) || Boolean(patientProfileAvatarUrl(patientProfile));
-  if (!hasAvatar) {
-    return "Please add a profile photo.";
   }
   return validatePatientHealthProfileComplete(
     healthValues ?? patientHealthValuesFromProfile(patientProfile),
@@ -7472,8 +7466,8 @@ const PatientHomeScreen = () => {
                       }}
                     >
                       {patientCareMode === CARE_MODE.PACKAGE
-                        ? "10 coins · RMP/clinic queue"
-                        : `${formatCurrencyFromInr(10)} · Private mode available`}
+                        ? "20 coins · RMP/clinic queue"
+                        : `${formatCurrencyFromInr(20)} · Private mode available`}
                     </Text>
                   </View>
                   <Ionicons
@@ -11927,7 +11921,7 @@ const PatientEditProfileScreen = ({
       setError(
         saveError?.data?.message ||
           saveError?.message ||
-          "Could not save. Required patient_profile fields in PocketBase: phone, primary_condition, gender, avatar, plus optional: language, age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies. Display name is saved on UsersAuth.name.",
+          "Could not save. Required patient_profile fields in PocketBase: phone, primary_condition, gender, plus optional: avatar, language, age, weight_kg, height_cm, marital_status, district, state, smoking, alcohol, medical_conditions, allergies. Display name is saved on UsersAuth.name.",
       );
     } finally {
       setSaving(false);
@@ -12025,8 +12019,8 @@ const PatientEditProfileScreen = ({
                   lineHeight: RFValue(18),
                 }}
               >
-                Fill in every field below and save to continue. You cannot use
-                the app until your profile is complete.
+                Fill in every required field below and save to continue. You
+                cannot use the app until your profile is complete.
               </Text>
             </View>
           ) : null}
@@ -12038,7 +12032,7 @@ const PatientEditProfileScreen = ({
               marginBottom: RFValue(8),
             }}
           >
-            Profile photo
+            Profile photo (optional)
           </Text>
           <TouchableOpacity
             onPress={() =>

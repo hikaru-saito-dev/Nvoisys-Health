@@ -510,7 +510,7 @@ export function CareModeOnboardingScreen({
           >
             Enter {WALLET_TOPUP_MIN_INR}-{WALLET_TOPUP_MAX_INR} coins. Cashfree
             charges roughly {formatCurrencyFromInr(WALLET_TOPUP_MIN_INR, currencyInfo)}-
-            {formatCurrencyFromInr(WALLET_TOPUP_MAX_INR, currencyInfo)}. Quick Solution costs 10 coins and Quick Counselling costs 25 coins.
+            {formatCurrencyFromInr(WALLET_TOPUP_MAX_INR, currencyInfo)}. Quick Solution costs 20 coins and Quick Counselling costs 25 coins.
           </Text>
           <TextInput
             placeholder="e.g. 500"
@@ -3354,7 +3354,7 @@ export function QuickSolutionScreen({
         "Submitted",
         privateMode
           ? "Private mode is on: your name, photo, and contact details are hidden from the provider side."
-          : "Your request was sent. 10 coins are charged only when the provider responds/prescribes.",
+          : "Your request was sent. 20 coins are charged only when the provider responds/prescribes.",
       );
       onBack?.();
     } catch (e) {
@@ -3445,7 +3445,7 @@ export function QuickSolutionScreen({
             fontSize: S.body,
           }}
         >
-          Doctor / clinic review (10 coins)
+          Doctor / clinic review (20 coins)
         </Text>
         <Text
           style={{
@@ -3454,8 +3454,8 @@ export function QuickSolutionScreen({
             fontSize: S.small,
           }}
         >
-          ₹10 (10 coins) per snap or query — charged on provider response;
-          platform 5 coins, provider 5 coins.
+          20 coins per snap or query — charged on provider response;
+          platform 5 coins, provider 15 coins.
         </Text>
         <TouchableOpacity
           onPress={() => setPrivateMode((v) => !v)}
@@ -3716,7 +3716,7 @@ export function QuickCounsellingScreen({
       });
       Alert.alert(
         "Queued",
-        "Quick Counselling queued. 25 coins are charged only when the provider responds/prescribes. Platform 10, provider 15.",
+        "Quick Counselling queued. 25 coins are charged only when the provider responds/prescribes. Platform 5, provider 20.",
       );
       onBack?.();
     } catch (e) {
