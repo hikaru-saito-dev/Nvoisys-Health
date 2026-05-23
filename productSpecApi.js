@@ -279,6 +279,12 @@ export const PACKAGE_SLOT_MIN_FEE_INR = Object.freeze({
   3: 50,
 });
 
+export const DEFAULT_PACKAGE_SLOT_AMOUNT_INR = Object.freeze({
+  1: 12000,
+  2: 20000,
+  3: 50000,
+});
+
 export function packageSlotMinimumFeeInr(slotNum) {
   const n = Number(slotNum);
   const v = PACKAGE_SLOT_MIN_FEE_INR[n];
@@ -367,18 +373,18 @@ export function parseLeadingTime12hToReferenceDate(raw) {
 }
 
 /**
- * Normalizes stored fee strings: empty stays empty; amounts below the tier
- * minimum are cleared so doctors must re-enter a valid fee (save stays blocked
- * until all slots meet minimums — see doctorPackageFeeErrors).
+ * Normalizes stored fee strings. Missing or invalid values use the app default
+ * tier amount so every doctor package has a payable default fee.
  */
 function coerceStoredPackageFeeInr(slotNum, feeRaw) {
-  if (feeRaw === undefined || feeRaw === null) return "";
+  const fallback = String(defaultPackageSlotAmountInr(slotNum));
+  if (feeRaw === undefined || feeRaw === null) return fallback;
   const trimmed = String(feeRaw).trim();
-  if (!trimmed) return "";
+  if (!trimmed) return fallback;
   const amount = Number(trimmed.replace(/,/g, "") || 0);
-  if (!Number.isFinite(amount) || amount <= 0) return "";
+  if (!Number.isFinite(amount) || amount <= 0) return fallback;
   const min = packageSlotMinimumFeeInr(slotNum);
-  if (amount < min) return "";
+  if (amount < min) return fallback;
   return String(Math.round(amount));
 }
 
@@ -849,10 +855,17 @@ const DEFAULT_PACKAGE_AMOUNT_INR = Math.max(
   Number(
     (typeof process !== "undefined" &&
       process.env?.EXPO_PUBLIC_DEFAULT_PACKAGE_AMOUNT_INR) ||
-      50,
-  ) || 50,
+      DEFAULT_PACKAGE_SLOT_AMOUNT_INR[1],
+  ) || DEFAULT_PACKAGE_SLOT_AMOUNT_INR[1],
 );
 const REFERRAL_MONTHLY_COMMISSION_COINS = 1000;
+
+export function defaultPackageSlotAmountInr(slotNum) {
+  const n = Number(slotNum) || 1;
+  const amount = DEFAULT_PACKAGE_SLOT_AMOUNT_INR[n];
+  if (Number.isFinite(amount) && amount > 0) return amount;
+  return DEFAULT_PACKAGE_AMOUNT_INR;
+}
 
 export function resolvePackageSlotAmountInr(slot) {
   const slotNum = Number(slot?.slot) || 1;
@@ -864,7 +877,7 @@ export function resolvePackageSlotAmountInr(slot) {
     "";
   const amount = Number(String(raw).replace(/,/g, "").trim() || 0);
   if (!Number.isFinite(amount) || amount <= 0) {
-    return Math.max(min, DEFAULT_PACKAGE_AMOUNT_INR);
+    return Math.max(min, defaultPackageSlotAmountInr(slotNum));
   }
   return Math.max(min, Math.round(amount));
 }
@@ -5671,7 +5684,19 @@ export async function doctorWithdrawCoinsStub(
   }
 }
 
-// --- Quick Solution (20 coins) / Quick Counselling (25 coins) ---
+export const QUICK_SOLUTION_COIN_SPLIT = Object.freeze({
+  patientCostCoins: 20,
+  platformFeeCoins: 8,
+  providerCoins: 12,
+});
+
+export const QUICK_COUNSELLING_COIN_SPLIT = Object.freeze({
+  patientCostCoins: 25,
+  platformFeeCoins: 12,
+  providerCoins: 13,
+});
+
+// --- Quick Solution / Quick Counselling ---
 
 async function getActiveQuickRequestLoadByRecipient(candidateUserIds) {
   const candidateSet = new Set(
@@ -5848,7 +5873,10 @@ export async function createQuickSolutionRequest({
   /** Pharmacy account (UsersAuth id). Mutually exclusive with `targetDoctorUserId`. */
   targetPharmacyUserId,
 }) {
-  await assertPatientHasCasualCoins(patientUserId, 20);
+  await assertPatientHasCasualCoins(
+    patientUserId,
+    QUICK_SOLUTION_COIN_SPLIT.patientCostCoins,
+  );
   const td = String(targetDoctorUserId || "").trim();
   const tp = String(targetPharmacyUserId || "").trim();
   if (!td && !tp) {
@@ -5864,9 +5892,9 @@ export async function createQuickSolutionRequest({
     recipient: recipientUserId,
     notes: cleanNotes,
     private_mode: Boolean(privateMode),
-    patient_cost_coins: 20,
-    platform_fee_coins: 5,
-    provider_coins: 15,
+    patient_cost_coins: QUICK_SOLUTION_COIN_SPLIT.patientCostCoins,
+    platform_fee_coins: QUICK_SOLUTION_COIN_SPLIT.platformFeeCoins,
+    provider_coins: QUICK_SOLUTION_COIN_SPLIT.providerCoins,
     status: "queued",
   };
   try {
@@ -5877,9 +5905,18 @@ export async function createQuickSolutionRequest({
       form.append("recipient", recipientUserId);
       form.append("notes", base.notes);
       form.append("private_mode", privateMode ? "true" : "false");
-      form.append("patient_cost_coins", "20");
-      form.append("platform_fee_coins", "5");
-      form.append("provider_coins", "15");
+      form.append(
+        "patient_cost_coins",
+        String(QUICK_SOLUTION_COIN_SPLIT.patientCostCoins),
+      );
+      form.append(
+        "platform_fee_coins",
+        String(QUICK_SOLUTION_COIN_SPLIT.platformFeeCoins),
+      );
+      form.append(
+        "provider_coins",
+        String(QUICK_SOLUTION_COIN_SPLIT.providerCoins),
+      );
       form.append("status", "queued");
       form.append("image", imagePart);
       row = await pb.collection("quick_solution_requests").create(form);
@@ -5935,7 +5972,10 @@ export async function createQuickCounsellingRequest({
   targetDoctorUserId,
   targetPharmacyUserId,
 }) {
-  await assertPatientHasCasualCoins(patientUserId, 25);
+  await assertPatientHasCasualCoins(
+    patientUserId,
+    QUICK_COUNSELLING_COIN_SPLIT.patientCostCoins,
+  );
   const td = String(targetDoctorUserId || "").trim();
   const tp = String(targetPharmacyUserId || "").trim();
   if (!td && !tp) {
@@ -5951,9 +5991,9 @@ export async function createQuickCounsellingRequest({
       patient: patientUserId,
       recipient: recipientUserId,
       topic: cleanTopic,
-      patient_cost_coins: 25,
-      platform_fee_coins: 5,
-      provider_coins: 20,
+      patient_cost_coins: QUICK_COUNSELLING_COIN_SPLIT.patientCostCoins,
+      platform_fee_coins: QUICK_COUNSELLING_COIN_SPLIT.platformFeeCoins,
+      provider_coins: QUICK_COUNSELLING_COIN_SPLIT.providerCoins,
       status: "queued",
     });
     await notifyLocal("Quick Counselling", "A provider will connect shortly.");

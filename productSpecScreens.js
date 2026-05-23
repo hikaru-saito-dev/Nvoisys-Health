@@ -49,6 +49,7 @@ import {
   createPackageMeetingRequest,
   createQuickCounsellingRequest,
   createQuickSolutionRequest,
+  defaultPackageSlotAmountInr,
   pickRandomQuickCareRecipient,
   entitlementsForConsumerPlan,
   displayQuickCounsellingTopic,
@@ -98,6 +99,8 @@ import {
   patientPayPackageOfferStub,
   persistPackageSetupSkip,
   persistPatientCareMode,
+  QUICK_COUNSELLING_COIN_SPLIT,
+  QUICK_SOLUTION_COIN_SPLIT,
   readLocalDoctorPackageFees,
   referPackagePatientToDoctor,
   requestPackageDoctorChange,
@@ -510,7 +513,7 @@ export function CareModeOnboardingScreen({
           >
             Enter {WALLET_TOPUP_MIN_INR}-{WALLET_TOPUP_MAX_INR} coins. Cashfree
             charges roughly {formatCurrencyFromInr(WALLET_TOPUP_MIN_INR, currencyInfo)}-
-            {formatCurrencyFromInr(WALLET_TOPUP_MAX_INR, currencyInfo)}. Quick Solution costs 20 coins and Quick Counselling costs 25 coins.
+            {formatCurrencyFromInr(WALLET_TOPUP_MAX_INR, currencyInfo)}. Quick Solution costs {QUICK_SOLUTION_COIN_SPLIT.patientCostCoins} coins and Quick Counselling costs {QUICK_COUNSELLING_COIN_SPLIT.patientCostCoins} coins.
           </Text>
           <TextInput
             placeholder="e.g. 500"
@@ -1510,7 +1513,7 @@ export function DoctorPackageSetupScreen({
               Your service fee (INR)
             </Text>
             <TextInput
-              placeholder={`e.g. ${packageSlotMinimumFeeInr(slot.slot)}`}
+              placeholder={`e.g. ${defaultPackageSlotAmountInr(slot.slot)}`}
               placeholderTextColor={theme.textTertiary}
               keyboardType="numeric"
               ref={(el) => {
@@ -3355,7 +3358,7 @@ export function QuickSolutionScreen({
         "Submitted",
         privateMode
           ? "Private mode is on: your name, photo, and contact details are hidden from the provider side."
-          : "Your request was sent. 20 coins are charged only when the provider responds/prescribes.",
+          : `Your request was sent. ${QUICK_SOLUTION_COIN_SPLIT.patientCostCoins} coins are charged only when the provider responds/prescribes. Platform ${QUICK_SOLUTION_COIN_SPLIT.platformFeeCoins}, provider ${QUICK_SOLUTION_COIN_SPLIT.providerCoins}.`,
       );
       onBack?.();
     } catch (e) {
@@ -3446,7 +3449,7 @@ export function QuickSolutionScreen({
             fontSize: S.body,
           }}
         >
-          Doctor / clinic review (20 coins)
+          Doctor / clinic review ({QUICK_SOLUTION_COIN_SPLIT.patientCostCoins} coins)
         </Text>
         <Text
           style={{
@@ -3455,8 +3458,8 @@ export function QuickSolutionScreen({
             fontSize: S.small,
           }}
         >
-          20 coins per snap or query — charged on provider response;
-          platform 5 coins, provider 15 coins.
+          {QUICK_SOLUTION_COIN_SPLIT.patientCostCoins} coins per snap or query — charged on provider response;
+          platform {QUICK_SOLUTION_COIN_SPLIT.platformFeeCoins} coins, provider {QUICK_SOLUTION_COIN_SPLIT.providerCoins} coins.
         </Text>
         <TouchableOpacity
           onPress={() => setPrivateMode((v) => !v)}
@@ -3721,7 +3724,7 @@ export function QuickCounsellingScreen({
       });
       Alert.alert(
         "Queued",
-        "Quick Counselling queued. 25 coins are charged only when the provider responds/prescribes. Platform 5, provider 20.",
+        `Quick Counselling queued. ${QUICK_COUNSELLING_COIN_SPLIT.patientCostCoins} coins are charged only when the provider responds/prescribes. Platform ${QUICK_COUNSELLING_COIN_SPLIT.platformFeeCoins}, provider ${QUICK_COUNSELLING_COIN_SPLIT.providerCoins}.`,
       );
       onBack?.();
     } catch (e) {
@@ -5064,8 +5067,8 @@ export function PackageDoctorJourneyScreen({
                 lineHeight: 18,
               }}
             >
-              Pay the doctor’s configured package fee, or the default amount if
-              the fee is not configured. The paid doctor-patient pair is fixed
+              Pay the doctor’s configured package fee, or the default tier amount
+              if the fee is not configured. The paid doctor-patient pair is fixed
               for coin settlement.
             </Text>
             <Text
@@ -5677,7 +5680,7 @@ function PackageSuggestAfterMeetingInline({
                   setDraftSlot((d) => ({ ...d, total_amount_inr: t }))
                 }
                 style={slotInput(theme)}
-                placeholder={`e.g. ${packageSlotMinimumFeeInr(Number(draftSlot?.slot) || 1)}`}
+                placeholder={`e.g. ${defaultPackageSlotAmountInr(Number(draftSlot?.slot) || 1)}`}
                 placeholderTextColor={theme.textTertiary}
               />
             </ScrollView>
