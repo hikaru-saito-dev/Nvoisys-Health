@@ -52,6 +52,30 @@ const aiPredictUrlFromEnv = String(
   process.env.EXPO_PUBLIC_AI_PREDICT_URL || process.env.ML_SERVICE_URL || "",
 ).trim();
 
+const chatEncryptionKeyB64FromEnv = String(
+  process.env.EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64 || "",
+).trim();
+
+const signalingUrlFromEnv = String(
+  process.env.EXPO_PUBLIC_SIGNALING_URL || "",
+).trim();
+
+const paymentBackendUrlFromEnv = String(
+  process.env.EXPO_PUBLIC_PAYMENT_BACKEND_URL || "",
+).trim();
+
+const pbAppointmentsCollectionFromEnv = String(
+  process.env.EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION || "",
+).trim();
+
+const pbAppointmentDoctorIsProfileFromEnv = String(
+  process.env.EXPO_PUBLIC_PB_APPOINTMENT_DOCTOR_IS_PROFILE || "",
+).trim();
+
+const pbUsersCollectionFromEnv = String(
+  process.env.EXPO_PUBLIC_PB_USERS_COLLECTION || "",
+).trim();
+
 module.exports = ({ config }) => {
   // `config` is the parsed `app.json` (everything inside the `expo` key).
   // We spread it and override only the fields we need to compute at runtime.
@@ -92,6 +116,23 @@ module.exports = ({ config }) => {
         aiPredictUrlFromEnv ||
         String(baseExtra.aiPredictUrl || "").trim(),
       aiUseMlPredict: baseExtra.aiUseMlPredict === true,
+      chatEncryptionKeyB64:
+        chatEncryptionKeyB64FromEnv ||
+        String(baseExtra.chatEncryptionKeyB64 || "").trim(),
+      signalingUrl:
+        signalingUrlFromEnv || String(baseExtra.signalingUrl || "").trim(),
+      paymentBackendUrl:
+        paymentBackendUrlFromEnv ||
+        String(baseExtra.paymentBackendUrl || "").trim(),
+      pbAppointmentsCollection:
+        pbAppointmentsCollectionFromEnv ||
+        String(baseExtra.pbAppointmentsCollection || "").trim(),
+      pbAppointmentDoctorIsProfile:
+        pbAppointmentDoctorIsProfileFromEnv ||
+        baseExtra.pbAppointmentDoctorIsProfile === true,
+      pbUsersCollection:
+        pbUsersCollectionFromEnv ||
+        String(baseExtra.pbUsersCollection || "").trim(),
     },
   };
 };

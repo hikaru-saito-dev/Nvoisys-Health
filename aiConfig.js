@@ -23,9 +23,16 @@ export const AI_OLLAMA_NUM_BATCH = 512;
 export const AI_CHAT_TIMEOUT_MS = 45000;
 export const AI_PREDICT_TIMEOUT_MS = 30000;
 
+const getExpoExtra = () =>
+  Constants?.expoConfig?.extra ||
+  Constants?.manifest?.extra ||
+  Constants?.manifest2?.extra?.expoClient?.extra ||
+  Constants?.manifest2?.extra ||
+  {};
+
 /** Read OpenAI key from .env (injected into expo.extra by app.config.js). */
 export const getAiApiKey = () => {
-  const fromExtra = String(Constants.expoConfig?.extra?.aiApiKey || "").trim();
+  const fromExtra = String(getExpoExtra()?.aiApiKey || "").trim();
   const fromEnv = String(
     process.env.EXPO_PUBLIC_AI_API_KEY ||
       process.env.EXPO_PUBLIC_GROQ_API_KEY ||
@@ -36,21 +43,22 @@ export const getAiApiKey = () => {
 };
 
 export const getAiRuntimeConfig = () => {
+  const extra = getExpoExtra();
   const baseUrl =
     String(
-      Constants.expoConfig?.extra?.aiBaseUrl ||
+      extra?.aiBaseUrl ||
         process.env.EXPO_PUBLIC_AI_BASE_URL ||
         AI_CONFIG_DEFAULTS.baseUrl,
     ).trim() || AI_CONFIG_DEFAULTS.baseUrl;
   const predictUrl =
     String(
-      Constants.expoConfig?.extra?.aiPredictUrl ||
+      extra?.aiPredictUrl ||
         process.env.EXPO_PUBLIC_AI_PREDICT_URL ||
         AI_CONFIG_DEFAULTS.predictUrl,
     ).trim() || AI_CONFIG_DEFAULTS.predictUrl;
   const model =
     String(
-      Constants.expoConfig?.extra?.aiModel ||
+      extra?.aiModel ||
         process.env.EXPO_PUBLIC_AI_MODEL ||
         process.env.EXPO_PUBLIC_GROQ_MODEL ||
         AI_CONFIG_DEFAULTS.model,
@@ -59,6 +67,6 @@ export const getAiRuntimeConfig = () => {
   if (baseUrl.includes("ais.nvoisyshealth.com") && /^gsk_/i.test(apiKey)) {
     apiKey = AI_CONFIG_DEFAULTS.apiKey;
   }
-  const useMlPredict = Constants.expoConfig?.extra?.aiUseMlPredict === true;
+  const useMlPredict = extra?.aiUseMlPredict === true;
   return { baseUrl, predictUrl, model, apiKey, useMlPredict };
 };

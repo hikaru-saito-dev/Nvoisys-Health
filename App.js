@@ -76,8 +76,10 @@ import {
   getAiRuntimeConfig,
 } from "./aiConfig";
 import {
+  CASHFREE_SUPPORTED_COUNTRIES,
   cashfreeAmountForInr,
   getCurrencyInfoForCountry,
+  getSupportedCountryOption,
   formatCurrencyFromInr,
   getUserCurrencyInfo,
   setUserCurrencyCountry,
@@ -766,7 +768,18 @@ const CALL_DIRECTORY_VISIBLE_ROLES = ["doctor", "pharmacy", "patient"];
 const DEFAULT_WOUND_SYSTEM_MESSAGE =
   "Wound report submitted. Doctor will review shortly.";
 
+const EXPO_EXTRA =
+  Constants?.expoConfig?.extra ||
+  Constants?.manifest?.extra ||
+  Constants?.manifest2?.extra?.expoClient?.extra ||
+  Constants?.manifest2?.extra ||
+  {};
+
 const SIGNALING_SERVER_URL = (() => {
+  const configuredUrl = String(
+    EXPO_EXTRA.signalingUrl || process.env.EXPO_PUBLIC_SIGNALING_URL || "",
+  ).trim();
+  if (configuredUrl) return configuredUrl;
   if (process.env.EXPO_PUBLIC_SIGNALING_URL) {
     return process.env.EXPO_PUBLIC_SIGNALING_URL;
   }
@@ -1013,19 +1026,19 @@ const parseDurationDays = (raw) => {
 // Package purchases use Cashfree when configured; approved appointments are
 // covered by package wallet coins and settle from the ledger on completion.
 // ---------------------------------------------------------------------------
-const PAYMENT_MODE = String(Constants.expoConfig?.extra?.paymentMode || "stub")
+const PAYMENT_MODE = String(EXPO_EXTRA.paymentMode || "stub")
   .trim()
   .toLowerCase();
 
 const PAYMENT_BACKEND_URL = String(
-  process.env.EXPO_PUBLIC_PAYMENT_BACKEND_URL ||
-    Constants.expoConfig?.extra?.paymentBackendUrl ||
+  EXPO_EXTRA.paymentBackendUrl ||
+    process.env.EXPO_PUBLIC_PAYMENT_BACKEND_URL ||
     "",
 )
   .trim()
   .replace(/\/+$/, "");
 const PAYMENT_CASHFREE_RETURN_URL = String(
-  Constants.expoConfig?.extra?.cashfreeReturnUrl || "myapp://payment/cashfree",
+  EXPO_EXTRA.cashfreeReturnUrl || "myapp://payment/cashfree",
 ).trim();
 
 const packageOfferPaymentAmount = (offer) =>
@@ -1033,6 +1046,28 @@ const packageOfferPaymentAmount = (offer) =>
 
 const walletTopupPaymentAmount = (amountInr) =>
   cashfreeAmountForInr(Math.floor(Number(amountInr)));
+
+const USER_COUNTRY_STORAGE_PREFIX = "nvhs_user_country_v1_";
+const userCountryStorageKey = (userId) =>
+  `${USER_COUNTRY_STORAGE_PREFIX}${String(userId || "anon")}`;
+
+const readStoredUserCountry = async (userId) => {
+  if (!userId) return "";
+  try {
+    return String((await AsyncStorage.getItem(userCountryStorageKey(userId))) || "").trim();
+  } catch {
+    return "";
+  }
+};
+
+const writeStoredUserCountry = async (userId, country) => {
+  if (!userId) return;
+  try {
+    await AsyncStorage.setItem(userCountryStorageKey(userId), String(country || "").trim());
+  } catch {
+    /* ignore */
+  }
+};
 
 const parseUrlQueryParams = (url) => {
   const queryString =
@@ -3205,7 +3240,6 @@ const ALCOHOL_OPTIONS = [
 
 const PATIENT_HEALTH_TEXT_KEYS = [
   "marital_status",
-  "country",
   "district",
   "state",
   "smoking",
@@ -3248,7 +3282,6 @@ const validatePatientHealthProfileComplete = (values) => {
   need("weight_kg", "weight (kg)");
   need("height_cm", "height (cm)");
   need("marital_status", "marital status");
-  need("country", "country");
   need("district", "district");
   need("state", "state");
   need("smoking", "smoking");
@@ -3332,7 +3365,6 @@ const patientHealthValuesFromProfile = (profile) => ({
   weight_kg: profile?.weight_kg != null ? String(profile.weight_kg) : "",
   height_cm: profile?.height_cm != null ? String(profile.height_cm) : "",
   marital_status: String(profile?.marital_status || ""),
-  country: String(profile?.country || profile?.demographics_country || ""),
   district: String(profile?.district || ""),
   state: String(profile?.state || ""),
   smoking: String(profile?.smoking || ""),
@@ -3346,7 +3378,6 @@ const emptyPatientHealthValues = () => ({
   weight_kg: "",
   height_cm: "",
   marital_status: "",
-  country: "",
   district: "",
   state: "",
   smoking: "",
@@ -3469,7 +3500,6 @@ const PatientHealthProfileFields = ({
       {renderChips("alcohol", "Alcohol", ALCOHOL_OPTIONS)}
 
       <Text style={sectionStyle}>Location</Text>
-      {renderText("country", "Country", "e.g. India")}
       <View style={{ flexDirection: "row" }}>
         <View style={{ flex: 1, marginRight: RFValue(8) }}>
           {renderText("district", "District", "e.g. Pune")}
@@ -15788,6 +15818,298 @@ const OnboardingCarousel = ({ onNext, onBack }) => {
   );
 };
 
+const CountrySelectionScreen = ({
+  selectedCountry = "",
+  onContinue,
+  onBack,
+  title = "Choose your country",
+  subtitle = "We use this before care mode so Cashfree prices show in the right currency.",
+  continueLabel = "Continue",
+  saving = false,
+  error = "",
+}) => {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [query, setQuery] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(true);
+  const [pickedCountry, setPickedCountry] = useState(selectedCountry || "");
+
+  useEffect(() => {
+    setPickedCountry(selectedCountry || "");
+  }, [selectedCountry]);
+
+  const pickedOption = getSupportedCountryOption(pickedCountry);
+  const pickedCurrency = getCurrencyInfoForCountry(pickedCountry);
+  const filteredCountries = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return CASHFREE_SUPPORTED_COUNTRIES;
+    return CASHFREE_SUPPORTED_COUNTRIES.filter((country) =>
+      `${country.name} ${country.code} ${country.currency}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [query]);
+
+  const finish = () => {
+    if (!pickedOption) {
+      Alert.alert("Country", "Choose your country from the dropdown first.");
+      return;
+    }
+    onContinue?.(pickedOption.name);
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.bg} />
+      <View style={{ flex: 1, minHeight: 0 }}>
+        <ScrollView
+          style={{ flex: 1, minHeight: 0 }}
+          contentContainerStyle={{
+            padding: RFValue(24),
+            paddingTop: Math.max(insets.top + RFValue(8), RFValue(24)),
+            paddingBottom: Math.max(insets.bottom + RFValue(24), RFValue(40)),
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {onBack ? (
+            <TouchableOpacity
+              onPress={onBack}
+              disabled={saving}
+              style={{ marginBottom: RFValue(18), alignSelf: "flex-start" }}
+            >
+              <Ionicons
+                name="arrow-back"
+                size={RFValue(24)}
+                color={theme.textPrimary}
+              />
+            </TouchableOpacity>
+          ) : null}
+
+          <View
+            style={{
+              width: RFValue(62),
+              height: RFValue(62),
+              borderRadius: RFValue(20),
+              backgroundColor: theme.accentLight,
+              justifyContent: "center",
+              alignItems: "center",
+              marginBottom: RFValue(18),
+            }}
+          >
+            <Ionicons name="globe-outline" size={RFValue(32)} color={theme.accent} />
+          </View>
+
+          <Text
+            style={{
+              fontSize: RFValue(27),
+              fontWeight: "900",
+              color: theme.textPrimary,
+              marginBottom: RFValue(8),
+            }}
+          >
+            {title}
+          </Text>
+          <Text
+            style={{
+              fontSize: RFValue(14),
+              color: theme.textSecondary,
+              lineHeight: RFValue(21),
+              marginBottom: RFValue(20),
+            }}
+          >
+            {subtitle}
+          </Text>
+
+          <Text
+            style={{
+              fontSize: RFValue(13),
+              fontWeight: "800",
+              color: theme.textSecondary,
+              marginBottom: RFValue(8),
+            }}
+          >
+            Country
+          </Text>
+          <TouchableOpacity
+            onPress={() => setPickerOpen((prev) => !prev)}
+            disabled={saving}
+            activeOpacity={0.85}
+            style={{
+              backgroundColor: theme.card,
+              borderRadius: RFValue(16),
+              padding: RFValue(16),
+              borderWidth: 1,
+              borderColor: pickedOption ? theme.accent : theme.inputBorder,
+              flexDirection: "row",
+              alignItems: "center",
+              marginBottom: pickerOpen ? RFValue(10) : RFValue(16),
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  color: pickedOption ? theme.textPrimary : theme.textTertiary,
+                  fontWeight: "800",
+                  fontSize: RFValue(15),
+                }}
+              >
+                {pickedOption ? pickedOption.name : "Select your country"}
+              </Text>
+              {pickedOption ? (
+                <Text
+                  style={{
+                    color: theme.textSecondary,
+                    fontSize: RFValue(12),
+                    marginTop: RFValue(4),
+                  }}
+                >
+                  Cashfree currency: {pickedCurrency.currency}
+                </Text>
+              ) : null}
+            </View>
+            <Ionicons
+              name={pickerOpen ? "chevron-up" : "chevron-down"}
+              size={RFValue(20)}
+              color={theme.textSecondary}
+            />
+          </TouchableOpacity>
+
+          {pickerOpen ? (
+            <View
+              style={{
+                backgroundColor: theme.card,
+                borderRadius: RFValue(18),
+                borderWidth: 1,
+                borderColor: theme.inputBorder,
+                overflow: "hidden",
+                marginBottom: RFValue(16),
+              }}
+            >
+              <TextInput
+                placeholder="Search country or currency"
+                value={query}
+                onChangeText={setQuery}
+                editable={!saving}
+                autoCapitalize="words"
+                placeholderTextColor={theme.textTertiary}
+                style={{
+                  paddingHorizontal: RFValue(16),
+                  paddingVertical: RFValue(14),
+                  color: theme.textPrimary,
+                  borderBottomWidth: 1,
+                  borderBottomColor: theme.cardBorder,
+                  fontSize: RFValue(15),
+                }}
+              />
+              <ScrollView
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                style={{ maxHeight: RFValue(320) }}
+              >
+                {filteredCountries.map((country) => {
+                  const active = pickedOption?.code === country.code;
+                  return (
+                    <TouchableOpacity
+                      key={country.code}
+                      onPress={() => {
+                        setPickedCountry(country.name);
+                        setPickerOpen(false);
+                        setQuery("");
+                      }}
+                      disabled={saving}
+                      style={{
+                        paddingHorizontal: RFValue(16),
+                        paddingVertical: RFValue(14),
+                        borderBottomWidth: StyleSheet.hairlineWidth,
+                        borderBottomColor: theme.cardBorder,
+                        backgroundColor: active ? theme.accentLight : theme.card,
+                        flexDirection: "row",
+                        alignItems: "center",
+                      }}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={{
+                            color: theme.textPrimary,
+                            fontWeight: active ? "900" : "700",
+                            fontSize: RFValue(14),
+                          }}
+                        >
+                          {country.name}
+                        </Text>
+                        <Text
+                          style={{
+                            color: theme.textTertiary,
+                            fontSize: RFValue(12),
+                            marginTop: RFValue(2),
+                          }}
+                        >
+                          {country.code} · {country.currency}
+                        </Text>
+                      </View>
+                      {active ? (
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={RFValue(20)}
+                          color={theme.accent}
+                        />
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+                {!filteredCountries.length ? (
+                  <Text
+                    style={{
+                      color: theme.textTertiary,
+                      padding: RFValue(16),
+                      fontSize: RFValue(13),
+                    }}
+                  >
+                    No Cashfree-supported country matched that search.
+                  </Text>
+                ) : null}
+              </ScrollView>
+            </View>
+          ) : null}
+
+          {error ? (
+            <Text
+              style={{
+                color: theme.danger,
+                fontSize: RFValue(13),
+                marginBottom: RFValue(12),
+                fontWeight: "700",
+              }}
+            >
+              {error}
+            </Text>
+          ) : null}
+
+          <TouchableOpacity
+            onPress={finish}
+            disabled={saving || !pickedOption}
+            style={{
+              backgroundColor: theme.accent,
+              borderRadius: RFValue(16),
+              paddingVertical: RFValue(16),
+              alignItems: "center",
+              opacity: saving || !pickedOption ? 0.5 : 1,
+            }}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "900", fontSize: RFValue(16) }}>
+                {continueLabel}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    </SafeAreaView>
+  );
+};
+
 const chipStyle = {
   backgroundColor: "#F3F4F6",
   paddingHorizontal: RFValue(10),
@@ -17688,6 +18010,10 @@ const AuthScreen = ({ onLogin }) => {
         return true;
       }
       if (step === "ROLE") {
+        setStep("COUNTRY");
+        return true;
+      }
+      if (step === "COUNTRY") {
         setStep("CAROUSEL");
         return true;
       }
@@ -17749,9 +18075,7 @@ const AuthScreen = ({ onLogin }) => {
   };
 
   const signupCountryValue = () =>
-    String(
-      role === "patient" ? patientHealthValues?.country : registrationCountry,
-    ).trim();
+    String(registrationCountry || "").trim();
 
   const signupCurrencyInfo = getCurrencyInfoForCountry(signupCountryValue());
 
@@ -17810,7 +18134,7 @@ const AuthScreen = ({ onLogin }) => {
         }
 
         if (!signupCountryValue()) {
-          throw new Error("Please enter your country.");
+          throw new Error("Please choose your country.");
         }
 
         if (password.trim().length < 8) {
@@ -17938,7 +18262,7 @@ const AuthScreen = ({ onLogin }) => {
       }
 
       if (authMode === "signup" && !signupCountryValue()) {
-        setAuthError("Please enter your country.");
+        setAuthError("Please choose your country.");
         return;
       }
 
@@ -17975,7 +18299,7 @@ const AuthScreen = ({ onLogin }) => {
       }
 
       if (authMode === "signup" && !signupCountryValue()) {
-        setAuthError("Please enter your country.");
+        setAuthError("Please choose your country.");
         return;
       }
 
@@ -18017,8 +18341,24 @@ const AuthScreen = ({ onLogin }) => {
   if (step === "CAROUSEL") {
     return (
       <OnboardingCarousel
-        onNext={() => setStep("ROLE")}
+        onNext={() => setStep("COUNTRY")}
         onBack={() => setStep("LANG")}
+      />
+    );
+  }
+
+  if (step === "COUNTRY") {
+    return (
+      <CountrySelectionScreen
+        selectedCountry={registrationCountry}
+        onContinue={(country) => {
+          setRegistrationCountry(country);
+          setAuthError("");
+          setAuthSuccess("");
+          setStep("ROLE");
+        }}
+        onBack={() => setStep("CAROUSEL")}
+        subtitle="Choose your country now so payment currency is known before you select how to use the app."
       />
     );
   }
@@ -18612,50 +18952,60 @@ const AuthScreen = ({ onLogin }) => {
               </>
             )}
 
-            {authMode === "signup" && role !== "patient" && (
-              <>
-                <Text
-                  style={{
-                    fontSize: RFValue(13),
-                    fontWeight: "700",
-                    color: theme.textSecondary,
-                    marginBottom: RFValue(8),
-                  }}
-                >
-                  Country
-                </Text>
-                <TextInput
-                  placeholder="e.g. India"
-                  value={registrationCountry}
-                  onChangeText={(value) => {
-                    setRegistrationCountry(value);
-                    if (authError) setAuthError("");
-                    if (authSuccess) setAuthSuccess("");
-                  }}
-                  style={{
-                    backgroundColor: theme.card,
-                    borderRadius: RFValue(14),
-                    paddingHorizontal: RFValue(16),
-                    paddingVertical: RFValue(16),
-                    marginBottom: RFValue(8),
-                    borderWidth: 1,
-                    borderColor: theme.inputBorder,
-                    fontSize: RFValue(15),
-                    color: theme.textPrimary,
-                  }}
-                  placeholderTextColor={theme.textTertiary}
+            {authMode === "signup" && (
+              <View
+                style={{
+                  backgroundColor: theme.accentLight,
+                  borderRadius: RFValue(14),
+                  padding: RFValue(14),
+                  marginBottom: RFValue(14),
+                  borderWidth: 1,
+                  borderColor: theme.cardBorder,
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons
+                  name="globe-outline"
+                  size={RFValue(20)}
+                  color={theme.accent}
+                  style={{ marginRight: RFValue(10) }}
                 />
-                <Text
-                  style={{
-                    color: theme.textTertiary,
-                    fontSize: RFValue(12),
-                    marginBottom: RFValue(14),
-                  }}
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      color: theme.textPrimary,
+                      fontWeight: "800",
+                      fontSize: RFValue(13),
+                    }}
+                  >
+                    {registrationCountry || "Country not selected"}
+                  </Text>
+                  <Text
+                    style={{
+                      color: theme.textSecondary,
+                      fontSize: RFValue(12),
+                      marginTop: RFValue(3),
+                    }}
+                  >
+                    Cashfree currency: {signupCurrencyInfo.currency}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setStep("COUNTRY")}
+                  disabled={authLoading}
                 >
-                  Currency will be set to {signupCurrencyInfo.currency} from
-                  your country.
-                </Text>
-              </>
+                  <Text
+                    style={{
+                      color: theme.accent,
+                      fontWeight: "900",
+                      fontSize: RFValue(12),
+                    }}
+                  >
+                    Change
+                  </Text>
+                </TouchableOpacity>
+              </View>
             )}
 
             {authMode === "signup" && role === "doctor" && (
@@ -32103,6 +32453,7 @@ export default function App() {
   const [pharmaciesLoading, setPharmaciesLoading] = useState(false);
   const [patients, setPatients] = useState([]);
   const [localCareMode, setLocalCareMode] = useState("");
+  const [localCurrencyCountry, setLocalCurrencyCountry] = useState("");
   const [patientPrimaryCarePaths, setPatientPrimaryCarePaths] =
     useState(null);
   const [patientPrimaryCarePathsLoaded, setPatientPrimaryCarePathsLoaded] =
@@ -32217,8 +32568,25 @@ export default function App() {
   }, [theme.bg]);
 
   useEffect(() => {
-    setUserCurrencyCountry(patientProfile?.country || currentUser?.country || "");
-  }, [currentUser?.country, patientProfile?.country]);
+    let active = true;
+    if (!currentUser?.id) {
+      setLocalCurrencyCountry("");
+      return undefined;
+    }
+    (async () => {
+      const stored = await readStoredUserCountry(currentUser.id);
+      if (active) setLocalCurrencyCountry(stored);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    setUserCurrencyCountry(
+      patientProfile?.country || currentUser?.country || localCurrencyCountry || "",
+    );
+  }, [currentUser?.country, localCurrencyCountry, patientProfile?.country]);
 
   useEffect(() => {
     if (userRole !== "patient" || !currentUser?.id) {
@@ -36229,6 +36597,8 @@ export default function App() {
               setPatientProfile={setPatientProfile}
               localCareMode={localCareMode}
               setLocalCareMode={setLocalCareMode}
+              localCurrencyCountry={localCurrencyCountry}
+              setLocalCurrencyCountry={setLocalCurrencyCountry}
               theme={theme}
               wounds={wounds}
               setWounds={setWounds}
@@ -36681,6 +37051,8 @@ const AppContent = ({
   setPatientProfile,
   localCareMode,
   setLocalCareMode,
+  localCurrencyCountry,
+  setLocalCurrencyCountry,
   theme,
   wounds,
   setWounds,
@@ -36703,6 +37075,8 @@ const AppContent = ({
   } = useAppData();
   const [showProfilePackageUpgrade, setShowProfilePackageUpgrade] =
     useState(false);
+  const [countrySaving, setCountrySaving] = useState(false);
+  const [countrySaveError, setCountrySaveError] = useState("");
 
   const handleAuthSuccess = ({ user, profile }) => {
     setCurrentUser(user);
@@ -36738,6 +37112,59 @@ const AppContent = ({
       console.log("onPatientProfileSaved:", error);
     }
   }, [setCurrentUser, setPatientProfile]);
+
+  const handleLoggedInCountrySelected = useCallback(
+    async (country) => {
+      const option = getSupportedCountryOption(country);
+      if (!option) {
+        setCountrySaveError("Choose a Cashfree-supported country.");
+        return;
+      }
+      const countryName = option.name;
+      try {
+        setCountrySaving(true);
+        setCountrySaveError("");
+        setUserCurrencyCountry(countryName);
+        setLocalCurrencyCountry(countryName);
+        await writeStoredUserCountry(currentUser?.id, countryName);
+
+        if (patientProfile?.id) {
+          try {
+            await pb.collection("patient_profile").update(patientProfile.id, {
+              country: countryName,
+            });
+          } catch (error) {
+            console.log("patient country profile update skipped:", error?.message);
+          }
+        }
+        if (currentUser?.id) {
+          try {
+            await pb.collection("UsersAuth").update(currentUser.id, {
+              country: countryName,
+            });
+          } catch (error) {
+            console.log("user country update skipped:", error?.message);
+          }
+        }
+
+        setPatientProfile((prev) =>
+          prev ? { ...prev, country: countryName } : prev,
+        );
+        setCurrentUser((prev) => (prev ? { ...prev, country: countryName } : prev));
+      } catch (error) {
+        setCountrySaveError(error?.message || "Could not save country.");
+      } finally {
+        setCountrySaving(false);
+      }
+    },
+    [
+      currentUser?.id,
+      patientProfile?.id,
+      setCurrentUser,
+      setLocalCurrencyCountry,
+      setPatientProfile,
+    ],
+  );
 
   const activateExistingPaidPackage = useCallback(
     async ({ showAlert = true } = {}) => {
@@ -37220,6 +37647,28 @@ const AppContent = ({
         />
         <AdminConsoleAppScreen theme={theme} onLogout={handleLogout} />
       </SafeAreaView>
+    );
+  }
+
+  const activeCountry = String(
+    patientProfile?.country || currentUser?.country || localCurrencyCountry || "",
+  ).trim();
+
+  if (
+    userRole === "patient" &&
+    patientProfile?.id &&
+    !getSupportedCountryOption(activeCountry)
+  ) {
+    return (
+      <CountrySelectionScreen
+        selectedCountry={activeCountry}
+        onContinue={handleLoggedInCountrySelected}
+        title="Choose your country"
+        subtitle="Choose this before care mode so package and wallet payments use the right Cashfree currency."
+        continueLabel="Save and continue"
+        saving={countrySaving}
+        error={countrySaveError}
+      />
     );
   }
 

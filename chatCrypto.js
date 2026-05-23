@@ -29,19 +29,20 @@ function normalizeBase64(value) {
 }
 
 function resolveKeyB64() {
-  // Best practice: inject at build time (EAS/CI) via EXPO_PUBLIC_* env var.
-  if (process.env.EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64) {
-    return String(process.env.EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64).trim();
-  }
-
-  // Fallback for classic manifests/config.
   const extra =
     Constants?.expoConfig?.extra ||
     Constants?.manifest?.extra ||
+    Constants?.manifest2?.extra?.expoClient?.extra ||
     Constants?.manifest2?.extra ||
     {};
   if (extra?.chatEncryptionKeyB64) {
-    return String(extra.chatEncryptionKeyB64).trim();
+    return String(extra.chatEncryptionKeyB64).trim().replace(/^['"]|['"]$/g, "");
+  }
+
+  if (process.env.EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64) {
+    return String(process.env.EXPO_PUBLIC_CHAT_ENCRYPTION_KEY_B64)
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
   }
 
   return "";

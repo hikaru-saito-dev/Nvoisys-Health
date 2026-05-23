@@ -19,6 +19,13 @@ const WEB_OAUTH2_RETURN_URL = "https://app.nvoisyshealth.com/authredirect";
 const APP_OAUTH2_RETURN_URL = "myapp://oauth2";
 const WEB_OAUTH2_RETURN_COOKIE = "nvoisys_oauth_return=web";
 
+const EXPO_EXTRA =
+  Constants?.expoConfig?.extra ||
+  Constants?.manifest?.extra ||
+  Constants?.manifest2?.extra?.expoClient?.extra ||
+  Constants?.manifest2?.extra ||
+  {};
+
 function getOAuth2RedirectUrl() {
   return OAUTH2_REDIRECT_URL;
 }
@@ -138,9 +145,8 @@ export const pb = new PocketBase(PB_URL, authStore);
  */
 export function getPbAppointmentsCollection() {
   return (
-    (typeof process !== "undefined" &&
-      process.env?.EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION) ||
-    Constants.expoConfig?.extra?.pbAppointmentsCollection ||
+    EXPO_EXTRA.pbAppointmentsCollection ||
+    process.env.EXPO_PUBLIC_PB_APPOINTMENTS_COLLECTION ||
     "appointments"
   );
 }
@@ -224,9 +230,8 @@ export async function recordPaymentTransaction({
 export function isPbAppointmentDoctorProfileRelation() {
   return (
     String(
-      (typeof process !== "undefined" &&
-        process.env?.EXPO_PUBLIC_PB_APPOINTMENT_DOCTOR_IS_PROFILE) ||
-        Constants.expoConfig?.extra?.pbAppointmentDoctorIsProfile ||
+      EXPO_EXTRA.pbAppointmentDoctorIsProfile ||
+        process.env.EXPO_PUBLIC_PB_APPOINTMENT_DOCTOR_IS_PROFILE ||
         "",
     ).toLowerCase() === "true"
   );
@@ -552,7 +557,23 @@ async function createPatientProfileRecord(userId, merged) {
     }
   }
 
-  return await pb.collection("patient_profile").create(payload);
+  const attempts = [payload];
+  if (payload.country) {
+    const withoutCountry = { ...payload };
+    delete withoutCountry.country;
+    attempts.push(withoutCountry);
+  }
+
+  let lastError = null;
+  for (const body of attempts) {
+    try {
+      return await pb.collection("patient_profile").create(body);
+    } catch (error) {
+      lastError = error;
+      if (error?.status !== 400) throw error;
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -630,6 +651,18 @@ async function createDoctorProfileRecord(userId, merged) {
     addAttempt({ doctor_type: doctorType });
   }
   addAttempt();
+  if (country) {
+    for (const body of attempts.slice()) {
+      if (!body.country) continue;
+      const withoutCountry = { ...body };
+      delete withoutCountry.country;
+      const key = JSON.stringify(withoutCountry);
+      if (!attemptKeys.has(key)) {
+        attemptKeys.add(key);
+        attempts.push(withoutCountry);
+      }
+    }
+  }
 
   let lastError = null;
   for (const payload of attempts) {

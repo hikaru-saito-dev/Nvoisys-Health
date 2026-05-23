@@ -15,6 +15,13 @@ import {
   recordPaymentTransaction,
 } from "./pocketbase";
 
+const EXPO_EXTRA =
+  Constants?.expoConfig?.extra ||
+  Constants?.manifest?.extra ||
+  Constants?.manifest2?.extra?.expoClient?.extra ||
+  Constants?.manifest2?.extra ||
+  {};
+
 export const CARE_MODE = {
   PACKAGE: "package_doctor",
   CASUAL: "casual",
@@ -55,9 +62,8 @@ const USERS_AUTH_FETCH_CHUNK = 45;
 /** Auth user rows may live in `UsersAuth`, `users`, or a custom collection (set `expo.extra.pbUsersCollection`). */
 function getAuthUsersCollectionCandidates() {
   const fromEnv =
-    (typeof process !== "undefined" &&
-      process.env?.EXPO_PUBLIC_PB_USERS_COLLECTION) ||
-    Constants?.expoConfig?.extra?.pbUsersCollection ||
+    EXPO_EXTRA.pbUsersCollection ||
+    process.env.EXPO_PUBLIC_PB_USERS_COLLECTION ||
     "";
   const primary = String(fromEnv || "UsersAuth").trim();
   return [...new Set([primary, "UsersAuth", "users"].filter(Boolean))];
