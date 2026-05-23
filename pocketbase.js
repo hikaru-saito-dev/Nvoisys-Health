@@ -536,6 +536,7 @@ async function createPatientProfileRecord(userId, merged) {
   }
   const textFields = [
     "marital_status",
+    "country",
     "district",
     "state",
     "smoking",
@@ -595,6 +596,8 @@ async function createDoctorProfileRecord(userId, merged) {
   };
   if (language) basePayload.language = language;
   if (phone) basePayload.phone = phone;
+  const country = String(merged.country || "").trim();
+  if (country) basePayload.country = country;
 
   const attempts = [];
   const attemptKeys = new Set();
@@ -689,7 +692,14 @@ async function createPharmacyProfileRecord(userId, merged) {
   const payload = { ...payloadBase };
   if (providerKind) payload.provider_kind = providerKind;
 
-  const textKeys = ["tagline", "address", "district", "state", "phone"];
+  const textKeys = [
+    "tagline",
+    "address",
+    "country",
+    "district",
+    "state",
+    "phone",
+  ];
   for (const key of textKeys) {
     const value = String(merged[key] || "").trim();
     if (value) payload[key] = value;
@@ -973,8 +983,14 @@ export async function requestPasswordReset(email) {
     .requestPasswordReset(normalizedEmail, { requestKey: null });
 }
 
-export async function signInWithOAuth({ providerName, selectedRole }) {
+export async function signInWithOAuth({
+  providerName,
+  selectedRole,
+  profileFields = {},
+}) {
   normalizeRole(selectedRole);
+  const { avatarAsset: _avatarAsset, ...rawProfile } = profileFields || {};
+  const profilePayload = compactProfileFields(rawProfile);
 
   try {
     const authMethods = await pb
@@ -1087,7 +1103,7 @@ export async function signInWithOAuth({ providerName, selectedRole }) {
       throw buildEmailVerificationRequiredError(user.email || "");
     }
 
-    const profile = await ensureRoleProfile();
+    const profile = await ensureRoleProfile(selectedRole, profilePayload);
     return getSessionPayload(profile);
   } catch (error) {
     console.log("Google auth error:", error);

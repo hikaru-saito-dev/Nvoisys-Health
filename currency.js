@@ -1,18 +1,59 @@
-import * as Localization from "expo-localization";
-
 export const BASE_CURRENCY = "INR";
 
-const CURRENCY_BY_REGION = {
+const CURRENCY_BY_COUNTRY = {
   AE: "AED",
   AU: "AUD",
   CA: "CAD",
-  EU: "EUR",
   GB: "GBP",
   IN: "INR",
   JP: "JPY",
   NZ: "NZD",
   SG: "SGD",
   US: "USD",
+  AD: "EUR",
+  AT: "EUR",
+  BE: "EUR",
+  CY: "EUR",
+  DE: "EUR",
+  EE: "EUR",
+  ES: "EUR",
+  EU: "EUR",
+  FI: "EUR",
+  FR: "EUR",
+  GR: "EUR",
+  HR: "EUR",
+  IE: "EUR",
+  IT: "EUR",
+  LT: "EUR",
+  LU: "EUR",
+  LV: "EUR",
+  MC: "EUR",
+  MT: "EUR",
+  NL: "EUR",
+  PT: "EUR",
+  SI: "EUR",
+  SK: "EUR",
+  SM: "EUR",
+  VA: "EUR",
+};
+
+const COUNTRY_ALIASES = {
+  AMERICA: "US",
+  AUSTRALIA: "AU",
+  BHARAT: "IN",
+  BRITAIN: "GB",
+  CANADA: "CA",
+  ENGLAND: "GB",
+  INDIA: "IN",
+  JAPAN: "JP",
+  NEWZEALAND: "NZ",
+  SINGAPORE: "SG",
+  UK: "GB",
+  UAE: "AE",
+  UNITEDARABEMIRATES: "AE",
+  UNITEDKINGDOM: "GB",
+  UNITEDSTATES: "US",
+  UNITEDSTATESOFAMERICA: "US",
 };
 
 // Static approximate rates from INR. Replace with a server-fed rate table when needed.
@@ -42,49 +83,40 @@ export const CURRENCY_SYMBOLS = {
   USD: "$",
 };
 
-function normalizeRegion(value) {
-  return String(value || "").trim().toUpperCase();
-}
+let userCountry = "";
 
-function localeHasIndiaRegion(locale) {
-  const region = normalizeRegion(locale?.regionCode);
-  if (region === "IN") return true;
-  const tag = String(locale?.languageTag || locale?.languageCode || "")
+function normalizeCountryKey(value) {
+  return String(value || "")
     .trim()
-    .toUpperCase();
-  return tag === "IN" || tag.endsWith("-IN") || tag.endsWith("_IN");
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "");
 }
 
-function timezoneLooksIndian(value) {
-  const tz = String(value || "").trim().toLowerCase();
-  return tz === "asia/kolkata" || tz === "asia/calcutta";
+function countryCodeFromInput(country) {
+  const key = normalizeCountryKey(country);
+  if (!key) return "";
+  if (CURRENCY_BY_COUNTRY[key]) return key;
+  return COUNTRY_ALIASES[key] || "";
 }
 
-export function getUserCurrencyInfo() {
-  const locales = Localization.getLocales?.() || [];
-  const calendars = Localization.getCalendars?.() || [];
-  const primary = locales[0] || {};
-  const region = normalizeRegion(primary.regionCode);
-  const rawCurrency = String(primary.currencyCode || "").toUpperCase();
-  const hasIndiaSignal =
-    locales.some(
-      (locale) =>
-        localeHasIndiaRegion(locale) ||
-        String(locale?.currencyCode || "").toUpperCase() === BASE_CURRENCY,
-    ) ||
-    calendars.some((calendar) => timezoneLooksIndian(calendar?.timeZone)) ||
-    timezoneLooksIndian(Intl.DateTimeFormat?.().resolvedOptions?.().timeZone);
-  const currency = hasIndiaSignal
-    ? BASE_CURRENCY
-    : INR_FX_RATES[rawCurrency]
-      ? rawCurrency
-      : CURRENCY_BY_REGION[region] || BASE_CURRENCY;
+export function setUserCurrencyCountry(country) {
+  userCountry = String(country || "").trim();
+}
+
+export function getCurrencyInfoForCountry(country) {
+  const region = countryCodeFromInput(country);
+  const currency = CURRENCY_BY_COUNTRY[region] || BASE_CURRENCY;
   return {
     currency,
-    region: hasIndiaSignal ? "IN" : region,
+    country: String(country || "").trim(),
+    region: region || "IN",
     symbol: CURRENCY_SYMBOLS[currency] || currency,
     rateFromInr: INR_FX_RATES[currency] || 1,
   };
+}
+
+export function getUserCurrencyInfo(countryOverride = null) {
+  return getCurrencyInfoForCountry(countryOverride ?? userCountry);
 }
 
 export function convertInrToCurrency(amountInr, currencyInfo = getUserCurrencyInfo()) {

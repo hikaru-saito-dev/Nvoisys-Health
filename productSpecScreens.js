@@ -3233,6 +3233,7 @@ export function QuickSolutionScreen({
   consultMinutesLimit = 0,
   /** async (question: string) => reply text */
   onAskAi,
+  showAi = true,
   scrollContentBottomInset = 100,
 }) {
   const insets = useSafeAreaInsets();
@@ -3581,96 +3582,100 @@ export function QuickSolutionScreen({
           )}
         </TouchableOpacity>
 
-        <Text
-          style={{
-            color: theme.textPrimary,
-            fontWeight: "800",
-            marginBottom: 8,
-            marginTop: 28,
-            fontSize: S.body,
-          }}
-        >
-          Instant AI guidance
-        </Text>
-        <Text
-          style={{
-            color: theme.textSecondary,
-            marginBottom: 10,
-            fontSize: S.small,
-          }}
-        >
-          AI-assisted answers for common concerns. This does not replace your
-          doctor; urgent issues need emergency care.
-        </Text>
-        <TextInput
-          placeholder="Ask anything (symptoms, medicines, lifestyle)…"
-          placeholderTextColor={theme.textTertiary}
-          multiline
-          value={aiQuestion}
-          onChangeText={setAiQuestion}
-          onFocus={() => {
-            if (Platform.OS === "ios") {
-              requestAnimationFrame(() =>
-                scrollRef.current?.scrollTo({ y: 0, animated: true }),
-              );
-            }
-          }}
-          style={{
-            minHeight: 100,
-            backgroundColor: theme.card,
-            borderRadius: 14,
-            padding: 14,
-            color: theme.textPrimary,
-            borderWidth: 1,
-            borderColor: theme.cardBorder,
-            textAlignVertical: "top",
-            marginBottom: 10,
-          }}
-        />
-        <TouchableOpacity
-          onPress={runAi}
-          disabled={aiBusy}
-          style={{
-            backgroundColor: theme.accent,
-            padding: 14,
-            borderRadius: 14,
-            alignItems: "center",
-            marginBottom: 16,
-          }}
-        >
-          {aiBusy ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={{ color: "#fff", fontWeight: "800" }}>
-              Get AI answer
-            </Text>
-          )}
-        </TouchableOpacity>
-        {aiReply ? (
-          <View
-            style={{
-              backgroundColor: theme.card,
-              padding: 14,
-              borderRadius: 14,
-              marginBottom: 20,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.cardBorder,
-            }}
-          >
+        {showAi ? (
+          <>
             <Text
               style={{
-                color: theme.textTertiary,
-                fontSize: 11,
-                fontWeight: "700",
-                marginBottom: 6,
+                color: theme.textPrimary,
+                fontWeight: "800",
+                marginBottom: 8,
+                marginTop: 28,
+                fontSize: S.body,
               }}
             >
-              AI REPLY
+              Instant AI guidance
             </Text>
-            <Text style={{ color: theme.textPrimary, lineHeight: 22 }}>
-              {aiReply}
+            <Text
+              style={{
+                color: theme.textSecondary,
+                marginBottom: 10,
+                fontSize: S.small,
+              }}
+            >
+              AI-assisted answers for common concerns. This does not replace your
+              doctor; urgent issues need emergency care.
             </Text>
-          </View>
+            <TextInput
+              placeholder="Ask anything (symptoms, medicines, lifestyle)…"
+              placeholderTextColor={theme.textTertiary}
+              multiline
+              value={aiQuestion}
+              onChangeText={setAiQuestion}
+              onFocus={() => {
+                if (Platform.OS === "ios") {
+                  requestAnimationFrame(() =>
+                    scrollRef.current?.scrollTo({ y: 0, animated: true }),
+                  );
+                }
+              }}
+              style={{
+                minHeight: 100,
+                backgroundColor: theme.card,
+                borderRadius: 14,
+                padding: 14,
+                color: theme.textPrimary,
+                borderWidth: 1,
+                borderColor: theme.cardBorder,
+                textAlignVertical: "top",
+                marginBottom: 10,
+              }}
+            />
+            <TouchableOpacity
+              onPress={runAi}
+              disabled={aiBusy}
+              style={{
+                backgroundColor: theme.accent,
+                padding: 14,
+                borderRadius: 14,
+                alignItems: "center",
+                marginBottom: 16,
+              }}
+            >
+              {aiBusy ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={{ color: "#fff", fontWeight: "800" }}>
+                  Get AI answer
+                </Text>
+              )}
+            </TouchableOpacity>
+            {aiReply ? (
+              <View
+                style={{
+                  backgroundColor: theme.card,
+                  padding: 14,
+                  borderRadius: 14,
+                  marginBottom: 20,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.cardBorder,
+                }}
+              >
+                <Text
+                  style={{
+                    color: theme.textTertiary,
+                    fontSize: 11,
+                    fontWeight: "700",
+                    marginBottom: 6,
+                  }}
+                >
+                  AI REPLY
+                </Text>
+                <Text style={{ color: theme.textPrimary, lineHeight: 22 }}>
+                  {aiReply}
+                </Text>
+              </View>
+            ) : null}
+          </>
         ) : null}
       </ScrollView>
     </View>

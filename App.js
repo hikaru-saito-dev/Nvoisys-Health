@@ -77,8 +77,10 @@ import {
 } from "./aiConfig";
 import {
   cashfreeAmountForInr,
+  getCurrencyInfoForCountry,
   formatCurrencyFromInr,
   getUserCurrencyInfo,
+  setUserCurrencyCountry,
 } from "./currency";
 import {
   ensureRoleProfile,
@@ -3203,6 +3205,7 @@ const ALCOHOL_OPTIONS = [
 
 const PATIENT_HEALTH_TEXT_KEYS = [
   "marital_status",
+  "country",
   "district",
   "state",
   "smoking",
@@ -3245,6 +3248,7 @@ const validatePatientHealthProfileComplete = (values) => {
   need("weight_kg", "weight (kg)");
   need("height_cm", "height (cm)");
   need("marital_status", "marital status");
+  need("country", "country");
   need("district", "district");
   need("state", "state");
   need("smoking", "smoking");
@@ -3328,6 +3332,7 @@ const patientHealthValuesFromProfile = (profile) => ({
   weight_kg: profile?.weight_kg != null ? String(profile.weight_kg) : "",
   height_cm: profile?.height_cm != null ? String(profile.height_cm) : "",
   marital_status: String(profile?.marital_status || ""),
+  country: String(profile?.country || profile?.demographics_country || ""),
   district: String(profile?.district || ""),
   state: String(profile?.state || ""),
   smoking: String(profile?.smoking || ""),
@@ -3341,6 +3346,7 @@ const emptyPatientHealthValues = () => ({
   weight_kg: "",
   height_cm: "",
   marital_status: "",
+  country: "",
   district: "",
   state: "",
   smoking: "",
@@ -3463,6 +3469,7 @@ const PatientHealthProfileFields = ({
       {renderChips("alcohol", "Alcohol", ALCOHOL_OPTIONS)}
 
       <Text style={sectionStyle}>Location</Text>
+      {renderText("country", "Country", "e.g. India")}
       <View style={{ flexDirection: "row" }}>
         <View style={{ flex: 1, marginRight: RFValue(8) }}>
           {renderText("district", "District", "e.g. Pune")}
@@ -5705,7 +5712,6 @@ const PatientHomeScreen = () => {
     fetchHospitals,
     patientProfile,
     fetchApprovedDoctors,
-    fetchPharmacies,
     patientCareMode,
     patientPrimaryCarePaths,
     nearbyPharmaciesOpenNonce,
@@ -5730,6 +5736,8 @@ const PatientHomeScreen = () => {
       .trim()
       .split(/\s+/)[0] || "Patient";
   const packageStyleHome = patientCareMode === CARE_MODE.PACKAGE;
+  const aiAssistantAvailable =
+    !patientCareModeUsesQuickDoctorsOnly(patientCareMode);
   const tabNav = useMainTabNav();
   const [quickRequestsRefreshKey, setQuickRequestsRefreshKey] = useState(0);
 
@@ -6072,6 +6080,9 @@ const PatientHomeScreen = () => {
     async (question) => {
       const text = String(question || "").trim();
       if (!text) return "";
+      if (!aiAssistantAvailable) {
+        return "AI chat is available only after you activate a package.";
+      }
       try {
         const conv = await ensureAssistantConversation();
         if (!conv?.id) return "Assistant is unavailable. Try again shortly.";
@@ -6086,6 +6097,7 @@ const PatientHomeScreen = () => {
     },
     [
       ensureAssistantConversation,
+      aiAssistantAvailable,
       patientQuickCareBinding?.consumerPlan,
       sendAssistantMessage,
     ],
@@ -6093,6 +6105,13 @@ const PatientHomeScreen = () => {
 
   /** Home quick action: open pinned Health Assistant chat for symptom questions. */
   const openSymptomsAssistant = useCallback(async () => {
+    if (!aiAssistantAvailable) {
+      Alert.alert(
+        "Package required",
+        "AI chat is available only after you activate a package.",
+      );
+      return;
+    }
     try {
       const conv = await ensureAssistantConversation();
       if (!conv?.id) {
@@ -6110,7 +6129,12 @@ const PatientHomeScreen = () => {
         e?.message || "Could not open the assistant.",
       );
     }
-  }, [ensureAssistantConversation, requestOpenConversation, tabNav]);
+  }, [
+    aiAssistantAvailable,
+    ensureAssistantConversation,
+    requestOpenConversation,
+    tabNav,
+  ]);
 
   const openFeelingCheckInModal = useCallback(
     async (mood) => {
@@ -6371,7 +6395,8 @@ const PatientHomeScreen = () => {
         loadQuickPickDoctors={() =>
           fetchApprovedDoctors({ quickServiceOnly: true })
         }
-        onAskAi={runQuickSolveAi}
+        onAskAi={aiAssistantAvailable ? runQuickSolveAi : null}
+        showAi={aiAssistantAvailable}
         consultMinutesUsed={
           patientQuickCareBinding?.consultMinutesUsed ?? 0
         }
@@ -6485,7 +6510,7 @@ const PatientHomeScreen = () => {
   if (showPharmacy)
     return (
       <SlideScreen onBack={() => setShowPharmacy(false)}>
-        <PharmacyDirectoryScreen onBack={null} />
+        <MedicineOrdersComingSoonScreen onBack={null} />
       </SlideScreen>
     );
   if (showAppointments)
@@ -7230,41 +7255,43 @@ const PatientHomeScreen = () => {
                     justifyContent: "flex-start",
                   }}
                 >
-                  <TouchableOpacity
-                    onPress={() => void openSymptomsAssistant()}
-                    style={{
-                      alignItems: "center",
-                      width: packageStyleHome ? "25%" : "33.333%",
-                    }}
-                  >
-                    <View
+                  {aiAssistantAvailable ? (
+                    <TouchableOpacity
+                      onPress={() => void openSymptomsAssistant()}
                       style={{
-                        width: RFValue(48),
-                        height: RFValue(48),
-                        borderRadius: RFValue(14),
-                        backgroundColor: theme.bg,
-                        justifyContent: "center",
                         alignItems: "center",
-                        marginBottom: RFValue(6),
+                        width: packageStyleHome ? "25%" : "33.333%",
                       }}
                     >
-                      <Ionicons
-                        name="chatbubbles-outline"
-                        size={RFValue(24)}
-                        color={theme.accent}
-                      />
-                    </View>
-                    <Text
-                      style={{
-                        fontSize: RFValue(12),
-                        color: theme.textSecondary,
-                        fontWeight: "600",
-                        textAlign: "center",
-                      }}
-                    >
-                      AI Chat
-                    </Text>
-                  </TouchableOpacity>
+                      <View
+                        style={{
+                          width: RFValue(48),
+                          height: RFValue(48),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.bg,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginBottom: RFValue(6),
+                        }}
+                      >
+                        <Ionicons
+                          name="chatbubbles-outline"
+                          size={RFValue(24)}
+                          color={theme.accent}
+                        />
+                      </View>
+                      <Text
+                        style={{
+                          fontSize: RFValue(12),
+                          color: theme.textSecondary,
+                          fontWeight: "600",
+                          textAlign: "center",
+                        }}
+                      >
+                        AI Chat
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity
                     onPress={() => setShowPharmacy(true)}
                     style={{
@@ -9763,6 +9790,8 @@ const PatientChatScreen = () => {
 
   const isAssistantConversation = (conversation) =>
     conversation?.kind === ASSISTANT_CONVERSATION_KIND;
+  const aiAssistantAvailable =
+    !patientCareModeUsesQuickDoctorsOnly(patientCareMode);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   // Step 9: the Health Assistant thread is always pinned to the top so
@@ -9780,6 +9809,9 @@ const PatientChatScreen = () => {
       .filter(Boolean),
   );
   const visibleConversations = sortedConversations.filter((conversation) => {
+    if (isAssistantConversation(conversation) && !aiAssistantAvailable) {
+      return false;
+    }
     if (
       userRole !== "patient" ||
       !patientCareModeUsesQuickDoctorsOnly(patientCareMode) ||
@@ -9801,6 +9833,13 @@ const PatientChatScreen = () => {
       c.lastMsg.toLowerCase().includes(normalizedQuery)
     );
   });
+
+  useEffect(() => {
+    if (!aiAssistantAvailable && isAssistantConversation(selectedContact)) {
+      setSelectedContact(null);
+      setContactMessages([]);
+    }
+  }, [aiAssistantAvailable, selectedContact, selectedContact?.id]);
 
   const formatDirectoryContact = (user) => {
     const role = normalizeUserRole(user?.role);
@@ -10137,6 +10176,13 @@ const PatientChatScreen = () => {
     const text = message.trim();
     // Step 9: Health Assistant — show the user's question immediately, then typing, then reply.
     if (isAssistantConversation(selectedContact)) {
+      if (!aiAssistantAvailable) {
+        Alert.alert(
+          "Package required",
+          "AI chat is available only after you activate a package.",
+        );
+        return;
+      }
       if (assistantThinking) return;
       const optimisticId = `pending-assistant-user-${Date.now()}`;
       const optimisticUserMessage = {
@@ -10200,6 +10246,8 @@ const PatientChatScreen = () => {
         );
         if (error?.code === "AI_DAILY_LIMIT_REACHED") {
           Alert.alert("Limit reached", error.message);
+        } else if (error?.code === "AI_PACKAGE_REQUIRED") {
+          Alert.alert("Package required", error.message);
         }
         setMessage(text);
       } finally {
@@ -17576,6 +17624,7 @@ const AuthScreen = ({ onLogin }) => {
   const [pharmacySignupProviderKind, setPharmacySignupProviderKind] =
     useState("");
   const [registrationLanguage, setRegistrationLanguage] = useState("");
+  const [registrationCountry, setRegistrationCountry] = useState("");
   const [regTermsAccepted, setRegTermsAccepted] = useState(false);
 
   const [forgotEmail, setForgotEmail] = useState("");
@@ -17699,6 +17748,51 @@ const AuthScreen = ({ onLogin }) => {
     }
   };
 
+  const signupCountryValue = () =>
+    String(
+      role === "patient" ? patientHealthValues?.country : registrationCountry,
+    ).trim();
+
+  const signupCurrencyInfo = getCurrencyInfoForCountry(signupCountryValue());
+
+  const buildSignupProfileFields = () => {
+    const country = signupCountryValue();
+    if (role === "patient") {
+      return {
+        phone: String(profilePhone || "").replace(/\D/g, ""),
+        primary_condition: patientCondition.trim(),
+        gender: patientGender,
+        avatarAsset: patientRegAvatar,
+        ...buildPatientHealthPayload(patientHealthValues),
+        ...(country ? { country } : {}),
+        ...(registrationLanguage.trim()
+          ? { language: registrationLanguage.trim() }
+          : {}),
+      };
+    }
+    if (role === "doctor") {
+      return {
+        phone: String(profilePhone || "").replace(/\D/g, ""),
+        specialty: doctorSpecialtyField.trim(),
+        practitioner_tier: "rmp",
+        clinic_or_hospital: doctorClinic.trim(),
+        ...(country ? { country } : {}),
+        ...(registrationLanguage.trim()
+          ? { language: registrationLanguage.trim() }
+          : {}),
+      };
+    }
+    if (role === "pharmacy") {
+      return {
+        provider_kind: normalizePharmacyProviderKind(pharmacySignupProviderKind),
+        store_name: name.trim(),
+        phone: String(profilePhone || "").replace(/\D/g, ""),
+        ...(country ? { country } : {}),
+      };
+    }
+    return country ? { country } : {};
+  };
+
   const handlePocketBaseAuth = async () => {
     try {
       setAuthLoading(true);
@@ -17713,6 +17807,10 @@ const AuthScreen = ({ onLogin }) => {
         }
         if (!name.trim()) {
           throw new Error("Please enter your name");
+        }
+
+        if (!signupCountryValue()) {
+          throw new Error("Please enter your country.");
         }
 
         if (password.trim().length < 8) {
@@ -17772,37 +17870,7 @@ const AuthScreen = ({ onLogin }) => {
           password: password.trim(),
           passwordConfirm: passwordConfirm.trim(),
           role,
-          profileFields:
-            role === "patient"
-              ? {
-                  phone: phoneDigits,
-                  primary_condition: patientCondition.trim(),
-                  gender: patientGender,
-                  avatarAsset: patientRegAvatar,
-                  ...buildPatientHealthPayload(patientHealthValues),
-                  ...(registrationLanguage.trim()
-                    ? { language: registrationLanguage.trim() }
-                    : {}),
-                }
-              : role === "doctor"
-                ? {
-                    phone: phoneDigits,
-                    specialty: doctorSpecialtyField.trim(),
-                    practitioner_tier: "rmp",
-                    clinic_or_hospital: doctorClinic.trim(),
-                    ...(registrationLanguage.trim()
-                      ? { language: registrationLanguage.trim() }
-                      : {}),
-                  }
-                : role === "pharmacy"
-                  ? {
-                      provider_kind: normalizePharmacyProviderKind(
-                        pharmacySignupProviderKind,
-                      ),
-                      store_name: name.trim(),
-                      phone: phoneDigits,
-                    }
-                  : {},
+          profileFields: buildSignupProfileFields(),
         });
 
         setAuthSuccess(
@@ -17869,9 +17937,16 @@ const AuthScreen = ({ onLogin }) => {
         return;
       }
 
+      if (authMode === "signup" && !signupCountryValue()) {
+        setAuthError("Please enter your country.");
+        return;
+      }
+
       const result = await signInWithOAuth({
         providerName: "google",
         selectedRole: role,
+        profileFields:
+          authMode === "signup" ? buildSignupProfileFields() : undefined,
       });
 
       onLogin({
@@ -17899,9 +17974,16 @@ const AuthScreen = ({ onLogin }) => {
         return;
       }
 
+      if (authMode === "signup" && !signupCountryValue()) {
+        setAuthError("Please enter your country.");
+        return;
+      }
+
       const result = await signInWithOAuth({
         providerName: "apple",
         selectedRole: role,
+        profileFields:
+          authMode === "signup" ? buildSignupProfileFields() : undefined,
       });
 
       onLogin({
@@ -18527,6 +18609,52 @@ const AuthScreen = ({ onLogin }) => {
                     </Text>
                   </TouchableOpacity>
                 ) : null}
+              </>
+            )}
+
+            {authMode === "signup" && role !== "patient" && (
+              <>
+                <Text
+                  style={{
+                    fontSize: RFValue(13),
+                    fontWeight: "700",
+                    color: theme.textSecondary,
+                    marginBottom: RFValue(8),
+                  }}
+                >
+                  Country
+                </Text>
+                <TextInput
+                  placeholder="e.g. India"
+                  value={registrationCountry}
+                  onChangeText={(value) => {
+                    setRegistrationCountry(value);
+                    if (authError) setAuthError("");
+                    if (authSuccess) setAuthSuccess("");
+                  }}
+                  style={{
+                    backgroundColor: theme.card,
+                    borderRadius: RFValue(14),
+                    paddingHorizontal: RFValue(16),
+                    paddingVertical: RFValue(16),
+                    marginBottom: RFValue(8),
+                    borderWidth: 1,
+                    borderColor: theme.inputBorder,
+                    fontSize: RFValue(15),
+                    color: theme.textPrimary,
+                  }}
+                  placeholderTextColor={theme.textTertiary}
+                />
+                <Text
+                  style={{
+                    color: theme.textTertiary,
+                    fontSize: RFValue(12),
+                    marginBottom: RFValue(14),
+                  }}
+                >
+                  Currency will be set to {signupCurrencyInfo.currency} from
+                  your country.
+                </Text>
               </>
             )}
 
@@ -28656,6 +28784,94 @@ const PharmacyDetailScreen = ({ pharmacy, onBack }) => {
   );
 };
 
+const MedicineOrdersComingSoonScreen = ({ onBack }) => {
+  const { theme } = useTheme();
+  return (
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.bg }}
+      edges={["left", "right"]}
+    >
+      <StatusBar barStyle={theme.statusBarStyle} backgroundColor={theme.card} />
+      <View
+        style={{
+          backgroundColor: theme.card,
+          paddingHorizontal: RFValue(16),
+          paddingVertical: RFValue(14),
+          flexDirection: "row",
+          alignItems: "center",
+          borderBottomWidth: 1,
+          borderBottomColor: theme.cardBorder,
+        }}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{ marginRight: RFValue(10), padding: 4 }}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={RFValue(22)}
+            color={theme.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text
+          style={{
+            fontSize: RFValue(18),
+            fontWeight: "800",
+            color: theme.textPrimary,
+          }}
+        >
+          Order Medicines
+        </Text>
+      </View>
+      <View
+        style={{
+          flex: 1,
+          padding: RFValue(24),
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <View
+          style={{
+            width: RFValue(72),
+            height: RFValue(72),
+            borderRadius: RFValue(24),
+            backgroundColor: theme.successLight,
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: RFValue(18),
+          }}
+        >
+          <Ionicons name="cart" size={RFValue(34)} color={theme.success} />
+        </View>
+        <Text
+          style={{
+            fontSize: RFValue(24),
+            fontWeight: "900",
+            color: theme.textPrimary,
+            textAlign: "center",
+          }}
+        >
+          Coming soon
+        </Text>
+        <Text
+          style={{
+            marginTop: RFValue(10),
+            fontSize: RFValue(14),
+            lineHeight: RFValue(20),
+            color: theme.textSecondary,
+            textAlign: "center",
+          }}
+        >
+          Medicine ordering is not available yet. We are preparing this service
+          before patients can buy medicines through the app.
+        </Text>
+      </View>
+    </SafeAreaView>
+  );
+};
+
+// eslint-disable-next-line no-unused-vars
 const PharmacyDirectoryScreen = ({ onBack }) => {
   const { theme } = useTheme();
   const { pharmacies, pharmaciesLoading, fetchPharmacies, patientProfile } =
@@ -32001,6 +32217,10 @@ export default function App() {
   }, [theme.bg]);
 
   useEffect(() => {
+    setUserCurrencyCountry(patientProfile?.country || currentUser?.country || "");
+  }, [currentUser?.country, patientProfile?.country]);
+
+  useEffect(() => {
     if (userRole !== "patient" || !currentUser?.id) {
       setLocalCareMode("");
       return;
@@ -35002,6 +35222,14 @@ export default function App() {
   // -------------------------------------------------------------------------
   const ensureAssistantConversation = async () => {
     if (!currentUser?.id) return null;
+    if (
+      userRole === "patient" &&
+      patientCareModeUsesQuickDoctorsOnly(
+        effectiveCareMode(patientProfile, localCareMode),
+      )
+    ) {
+      return null;
+    }
     // Fast-path: check in-memory conversations first.
     const cached = conversations.find(
       (conv) => conv.kind === ASSISTANT_CONVERSATION_KIND,
@@ -35056,6 +35284,18 @@ export default function App() {
 
   const sendAssistantMessage = async (conversationId, text, options = {}) => {
     if (!conversationId || !currentUser?.id) return null;
+    if (
+      userRole === "patient" &&
+      patientCareModeUsesQuickDoctorsOnly(
+        effectiveCareMode(patientProfile, localCareMode),
+      )
+    ) {
+      const error = new Error(
+        "AI chat is available only after you activate a package.",
+      );
+      error.code = "AI_PACKAGE_REQUIRED";
+      throw error;
+    }
     const trimmed = String(text || "").trim();
     if (!trimmed) return null;
     if (options?.consumerPlan) {
@@ -35155,6 +35395,13 @@ export default function App() {
   // Health Assistant thread once per prescription (persisted id list per user).
   useEffect(() => {
     if (!currentUser?.id || userRole !== "patient") return undefined;
+    if (
+      patientCareModeUsesQuickDoctorsOnly(
+        effectiveCareMode(patientProfile, localCareMode),
+      )
+    ) {
+      return undefined;
+    }
     if (!prescriptions?.length) return undefined;
 
     let cancelled = false;
@@ -35267,7 +35514,14 @@ export default function App() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [prescriptions, currentUser, userRole, patientProfile, conversations]);
+  }, [
+    prescriptions,
+    currentUser,
+    userRole,
+    patientProfile,
+    localCareMode,
+    conversations,
+  ]);
 
   useEffect(() => {
     (async () => {
@@ -35329,6 +35583,13 @@ export default function App() {
   // same tick as heavy post-login layout + PocketBase realtime.
   useEffect(() => {
     if (!currentUser?.id || userRole !== "patient") return;
+    if (
+      patientCareModeUsesQuickDoctorsOnly(
+        effectiveCareMode(patientProfile, localCareMode),
+      )
+    ) {
+      return;
+    }
     let cancelled = false;
     const delayMs = Platform.OS === "android" ? 2000 : 0;
     const t = setTimeout(() => {
@@ -35341,7 +35602,7 @@ export default function App() {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [currentUser?.id, userRole]);
+  }, [currentUser?.id, userRole, patientProfile, localCareMode]);
 
   // Doctors: same deferred permission so package-sale realtime alerts can show.
   useEffect(() => {
