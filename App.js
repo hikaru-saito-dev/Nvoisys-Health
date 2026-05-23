@@ -7322,6 +7322,43 @@ const PatientHomeScreen = () => {
                       </Text>
                     </TouchableOpacity>
                   ) : null}
+                  {!aiAssistantAvailable ? (
+                    <TouchableOpacity
+                      onPress={() => setShowPrescription(true)}
+                      style={{
+                        alignItems: "center",
+                        width: "33.333%",
+                      }}
+                    >
+                      <View
+                        style={{
+                          width: RFValue(48),
+                          height: RFValue(48),
+                          borderRadius: RFValue(14),
+                          backgroundColor: theme.warningLight,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          marginBottom: RFValue(6),
+                        }}
+                      >
+                        <Ionicons
+                          name="document-text"
+                          size={RFValue(24)}
+                          color={theme.warning}
+                        />
+                      </View>
+                      <Text
+                        style={{
+                          fontSize: RFValue(12),
+                          color: theme.textSecondary,
+                          fontWeight: "600",
+                          textAlign: "center",
+                        }}
+                      >
+                        Prescription
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity
                     onPress={() => setShowPharmacy(true)}
                     style={{
