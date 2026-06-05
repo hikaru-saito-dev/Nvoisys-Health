@@ -42,7 +42,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.nvoisys.health",
-      "versionCode": 9,
+      "versionCode": 5,
       "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
@@ -98,6 +98,6 @@
       "signalingUrl": "",
       "pbUsersCollection": ""
     },
-    "owner": "kokoshiro_dev_8"
+    "owner": "hikaru-saito"
   }
 }
